@@ -184,6 +184,33 @@ class Idea(models.Model):
         return f"Idea({self.group or self.status}): {self.title[:50]}"
 
 
+class IdeaMedia(models.Model):
+    """Media attachment on an idea, with stable ordering."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    idea = models.ForeignKey(
+        Idea,
+        on_delete=models.CASCADE,
+        related_name="media_attachments",
+    )
+    media_asset = models.ForeignKey(
+        "media_library.MediaAsset",
+        on_delete=models.CASCADE,
+        related_name="idea_attachments",
+    )
+    position = models.PositiveIntegerField(default=0, help_text="Ordering position on the idea.")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "composer_idea_media"
+        ordering = ["position", "created_at"]
+        unique_together = [("idea", "media_asset")]
+
+    def __str__(self):
+        return f"IdeaMedia(pos={self.position}): {self.media_asset.filename}"
+
+
 class Post(models.Model):
     """A piece of content created in the composer.
 
