@@ -86,22 +86,40 @@
     <form method="POST" class="mb-10">
         {% csrf_token %}
         <input type="hidden" name="action" value="update_password">
-        <div class="flex items-end gap-4">
-            <div class="flex-1">
-                <label for="password" class="block text-sm font-semibold mb-2" style="color: var(--text-primary);">Password</label>
-                <input type="password" id="password" name="password" placeholder="New password" minlength="8"
+        <div class="space-y-4">
+            <div>
+                <label for="current_password" class="block text-sm font-semibold mb-2" style="color: var(--text-primary);">Current password</label>
+                <input type="password" id="current_password" name="current_password" placeholder="Current password" required
                        class="w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
                        style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);"
                        onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 3px var(--primary-ring)'"
                        onblur="this.style.borderColor='var(--border)'; this.style.boxShadow='none'">
             </div>
-            <button type="submit"
-                    class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer whitespace-nowrap"
-                    style="background: var(--neutral-100); color: var(--text-primary);"
-                    onmouseenter="this.style.background='var(--neutral-200)'"
-                    onmouseleave="this.style.background='var(--neutral-100)'">
-                Change Password
-            </button>
+            <div>
+                <label for="password" class="block text-sm font-semibold mb-2" style="color: var(--text-primary);">New password</label>
+                <input type="password" id="password" name="password" placeholder="New password" minlength="8" required
+                       class="w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
+                       style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);"
+                       onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 3px var(--primary-ring)'"
+                       onblur="this.style.borderColor='var(--border)'; this.style.boxShadow='none'">
+            </div>
+            <div>
+                <label for="password_confirm" class="block text-sm font-semibold mb-2" style="color: var(--text-primary);">Confirm new password</label>
+                <input type="password" id="password_confirm" name="password_confirm" placeholder="Confirm new password" minlength="8" required
+                       class="w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
+                       style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);"
+                       onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 3px var(--primary-ring)'"
+                       onblur="this.style.borderColor='var(--border)'; this.style.boxShadow='none'">
+            </div>
+            <div>
+                <button type="submit"
+                        class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer whitespace-nowrap"
+                        style="background: var(--neutral-100); color: var(--text-primary);"
+                        onmouseenter="this.style.background='var(--neutral-200)'"
+                        onmouseleave="this.style.background='var(--neutral-100)'">
+                    Change Password
+                </button>
+            </div>
         </div>
     </form>
 
@@ -132,10 +150,8 @@
     <hr class="my-10" style="border-color: var(--border);">
 
     <!-- Delete account section -->
-    <form method="POST" x-data="{ confirming: false }">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="delete_account">
-        <div class="flex items-start justify-between">
+    <div x-data="{ showDeleteModal: false }">
+        <div class="flex items-start justify-between gap-4">
             <div>
                 <h3 class="text-base font-semibold mb-1" style="color: var(--text-primary);">Delete your account</h3>
                 <p class="text-sm" style="color: var(--text-secondary); max-width: 480px;">
@@ -143,32 +159,66 @@
                 </p>
             </div>
 
-            <template x-if="!confirming">
-                <button type="button" @click="confirming = true"
-                        class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer whitespace-nowrap"
-                        style="background: var(--error-soft, #FEE2E2); color: var(--error);"
-                        onmouseenter="this.style.background='var(--error)'; this.style.color='white'"
-                        onmouseleave="this.style.background='var(--error-soft, #FEE2E2)'; this.style.color='var(--error)'">
-                    Delete Account
-                </button>
-            </template>
-            <template x-if="confirming">
-                <div class="flex items-center gap-2">
-                    <button type="button" @click="confirming = false"
-                            class="px-4 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
-                            style="background: var(--neutral-100); color: var(--text-primary);"
-                            onmouseenter="this.style.background='var(--neutral-200)'"
-                            onmouseleave="this.style.background='var(--neutral-100)'">
-                        Cancel
-                    </button>
-                    <button type="submit"
-                            class="px-5 py-2 text-sm font-semibold rounded-full transition-colors cursor-pointer whitespace-nowrap"
-                            style="background: var(--error); color: white;">
-                        Yes, delete my account
-                    </button>
-                </div>
-            </template>
+            <button type="button" @click="showDeleteModal = true"
+                    class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                    style="background: var(--error-soft, #FEE2E2); color: var(--error-500, #EF4444);"
+                    onmouseenter="this.style.background='var(--error-500, #EF4444)'; this.style.color='white'"
+                    onmouseleave="this.style.background='var(--error-soft, #FEE2E2)'; this.style.color='var(--error-500, #EF4444)'">
+                Delete Account
+            </button>
         </div>
-    </form>
+
+        <!-- Delete confirmation modal -->
+        <template x-teleport="body">
+            <div x-show="showDeleteModal" x-transition.opacity
+                 @keydown.escape.window="showDeleteModal = false"
+                 class="fixed inset-0 z-50 flex items-center justify-center"
+                 style="background: rgba(0,0,0,0.4);">
+                <div @click.outside="showDeleteModal = false"
+                     x-show="showDeleteModal"
+                     x-transition
+                     class="w-full max-w-md rounded-xl shadow-xl"
+                     style="background: var(--surface-0);">
+
+                    <!-- Header -->
+                    <div class="flex items-center justify-between px-6 py-4" style="border-bottom: 1px solid var(--border);">
+                        <h3 class="text-base font-semibold" style="color: var(--text-primary);">Delete your account</h3>
+                        <button type="button" @click="showDeleteModal = false" class="cursor-pointer" style="color: var(--text-tertiary);">
+                            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                    </div>
+
+                    <!-- Body -->
+                    <div class="px-6 py-5">
+                        <p class="text-sm" style="color: var(--text-secondary);">
+                            Are you sure you want to delete your account? This action is permanent and cannot be undone. You will lose access to all Brightbean services, and your personal data will be permanently deleted.
+                        </p>
+                    </div>
+
+                    <!-- Footer -->
+                    <div class="flex justify-end gap-3 px-6 py-4" style="border-top: 1px solid var(--border);">
+                        <button type="button" @click="showDeleteModal = false"
+                                class="px-5 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
+                                style="background: var(--neutral-100); color: var(--text-primary);"
+                                onmouseenter="this.style.background='var(--neutral-200)'"
+                                onmouseleave="this.style.background='var(--neutral-100)'">
+                            Cancel
+                        </button>
+                        <form method="POST">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="delete_account">
+                            <button type="submit"
+                                    class="px-5 py-2 text-sm font-semibold rounded-full cursor-pointer transition-colors whitespace-nowrap"
+                                    style="background: var(--error-500, #EF4444); color: white;"
+                                    onmouseenter="this.style.opacity='0.9'"
+                                    onmouseleave="this.style.opacity='1'">
+                                Yes, delete my account
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
 </div>
 {% endblock %}

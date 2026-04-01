@@ -1,22 +1,122 @@
 import calendar as cal_mod
 from collections import defaultdict
 from datetime import date, timedelta
+from zoneinfo import available_timezones
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.shortcuts import render
-
+from django.core.exceptions import PermissionDenied
+from django.shortcuts import redirect, render
+from django.utils import timezone as django_tz
+from django.views.decorators.http import require_http_methods
 from apps.composer.models import Post, Tag
 from apps.members.decorators import require_org_role
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
+COMMON_TIMEZONES = [
+    "US/Eastern",
+    "US/Central",
+    "US/Mountain",
+    "US/Pacific",
+    "Canada/Eastern",
+    "Canada/Central",
+    "Canada/Pacific",
+    "Europe/London",
+    "Europe/Paris",
+    "Europe/Berlin",
+    "Europe/Amsterdam",
+    "Europe/Madrid",
+    "Europe/Rome",
+    "Europe/Zurich",
+    "Europe/Stockholm",
+    "Europe/Istanbul",
+    "Asia/Dubai",
+    "Asia/Kolkata",
+    "Asia/Singapore",
+    "Asia/Tokyo",
+    "Asia/Shanghai",
+    "Australia/Sydney",
+    "Australia/Melbourne",
+    "Pacific/Auckland",
+]
+
 
 @login_required
 @require_org_role(OrgMembership.OrgRole.ADMIN)
+@require_http_methods(["GET", "POST"])
 def settings_view(request):
     org = request.org
-    return render(request, "organizations/settings.html", {"organization": org, "settings_active": "general"})
+    is_owner = request.org_membership.org_role == OrgMembership.OrgRole.OWNER
+
+    if request.method == "POST":
+        action = request.POST.get("action")
+        if action == "update_name":
+            _handle_name_update(request, org)
+        elif action == "update_timezone":
+            _handle_tz_update(request, org)
+        elif action == "delete_organization":
+            return _handle_org_deletion(request, org)
+        elif action == "cancel_deletion":
+            _handle_cancel_deletion(request, org)
+        return redirect("organizations:settings")
+
+    context = {
+        "organization": org,
+        "settings_active": "general",
+        "is_owner": is_owner,
+        "common_timezones": COMMON_TIMEZONES,
+        "all_timezones": sorted(available_timezones()),
+    }
+    return render(request, "organizations/settings.html", context)
+
+
+def _handle_name_update(request, org):
+    """Handle organization name change."""
+    name = request.POST.get("name", "").strip()
+    if not name:
+        messages.error(request, "Organization name cannot be empty.")
+        return
+
+    org.name = name
+    org.save(update_fields=["name"])
+    messages.success(request, "Organization name updated.")
+
+
+def _handle_tz_update(request, org):
+    """Handle default timezone change."""
+    tz = request.POST.get("timezone", "").strip()
+    if tz not in available_timezones():
+        messages.error(request, "Invalid timezone.")
+        return
+
+    org.default_timezone = tz
+    org.save(update_fields=["default_timezone"])
+    messages.success(request, "Default timezone updated.")
+
+
+def _handle_org_deletion(request, org):
+    """Handle organization soft-deletion (owner only)."""
+    if request.org_membership.org_role != OrgMembership.OrgRole.OWNER:
+        raise PermissionDenied
+
+    org.deletion_requested_at = django_tz.now()
+    org.deletion_scheduled_for = django_tz.now() + timedelta(days=14)
+    org.save(update_fields=["deletion_requested_at", "deletion_scheduled_for"])
+    messages.success(request, "Organization scheduled for deletion in 14 days.")
+    return redirect("organizations:settings")
+
+
+def _handle_cancel_deletion(request, org):
+    """Cancel a pending organization deletion (owner only)."""
+    if request.org_membership.org_role != OrgMembership.OrgRole.OWNER:
+        raise PermissionDenied
+
+    org.deletion_requested_at = None
+    org.deletion_scheduled_for = None
+    org.save(update_fields=["deletion_requested_at", "deletion_scheduled_for"])
+    messages.success(request, "Organization deletion cancelled.")
 
 
 @login_required
