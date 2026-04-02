@@ -1,5 +1,6 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.http import Http404
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_http_methods, require_POST
@@ -19,20 +20,18 @@ def workspace_list(request):
 
 @login_required
 @require_POST
-@require_org_role("admin")
+@require_org_role(OrgMembership.OrgRole.ADMIN)
 def workspace_create(request):
     """Create a new workspace in the user's organization."""
     name = request.POST.get("name", "").strip()
     if not name:
         return redirect("dashboard")
 
-    # Get the user's organization
-    org_membership = OrgMembership.objects.filter(user=request.user).select_related("organization").first()
-    if not org_membership:
+    if not request.org:
         return redirect("dashboard")
 
     workspace = Workspace.objects.create(
-        organization=org_membership.organization,
+        organization=request.org,
         name=name,
     )
 
@@ -57,10 +56,54 @@ def workspace_settings(request, workspace_id):
     except Workspace.DoesNotExist:
         raise Http404 from None
 
-    if not WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).exists():
+    membership = WorkspaceMembership.objects.filter(user=request.user, workspace=workspace).first()
+    if not membership:
         raise Http404
 
+    is_owner_or_manager = membership.workspace_role in (
+        WorkspaceMembership.WorkspaceRole.OWNER,
+        WorkspaceMembership.WorkspaceRole.MANAGER,
+    )
+
     if request.method == "POST":
+        action = request.POST.get("action")
+
+        if action == "archive_workspace" and is_owner_or_manager:
+            with transaction.atomic():
+                active_count = (
+                    Workspace.objects.select_for_update()
+                    .filter(organization=workspace.organization, is_archived=False)
+                    .count()
+                )
+                if active_count <= 1:
+                    messages.error(request, "Cannot archive the last workspace in the organization.")
+                    return redirect("workspaces:settings", workspace_id=workspace.id)
+                workspace.is_archived = True
+                workspace.save(update_fields=["is_archived"])
+            messages.success(request, f'Workspace "{workspace.name}" has been archived.')
+            return redirect("organizations:workspaces")
+
+        if action == "unarchive_workspace" and is_owner_or_manager:
+            workspace.is_archived = False
+            workspace.save(update_fields=["is_archived"])
+            messages.success(request, f'Workspace "{workspace.name}" has been restored.')
+            return redirect("workspaces:settings", workspace_id=workspace.id)
+
+        if action == "delete_workspace" and is_owner_or_manager:
+            with transaction.atomic():
+                active_count = (
+                    Workspace.objects.select_for_update()
+                    .filter(organization=workspace.organization, is_archived=False)
+                    .count()
+                )
+                if active_count <= 1 and not workspace.is_archived:
+                    messages.error(request, "Cannot delete the last workspace in the organization.")
+                    return redirect("workspaces:settings", workspace_id=workspace.id)
+                workspace_name = workspace.name
+                workspace.delete()
+            messages.success(request, f'Workspace "{workspace_name}" has been permanently deleted.')
+            return redirect("organizations:workspaces")
+
         name = request.POST.get("name", "").strip()
 
         if name:
@@ -95,11 +138,21 @@ def workspace_settings(request, workspace_id):
         messages.success(request, "Workspace settings updated.")
         return redirect("workspaces:settings", workspace_id=workspace.id)
 
+    active_count = Workspace.objects.filter(
+        organization=workspace.organization, is_archived=False
+    ).count()
+    is_last_active = active_count <= 1 and not workspace.is_archived
+    can_archive = is_owner_or_manager and not workspace.is_archived and not is_last_active
+    can_delete = is_owner_or_manager and not is_last_active
+
     return render(
         request,
         "workspaces/settings.html",
         {
             "workspace": workspace,
             "settings_active": "general",
+            "is_owner_or_manager": is_owner_or_manager,
+            "can_archive": can_archive,
+            "can_delete": can_delete,
         },
     )

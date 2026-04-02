@@ -1,0 +1,58 @@
+<!-- Workspace header -->
+<div class="flex items-center gap-3">
+    <!-- Workspace icon -->
+    {% if item.workspace.icon %}
+    <img src="{{ item.workspace.icon.url }}" alt="" class="w-10 h-10 rounded-full object-cover flex-shrink-0">
+    {% else %}
+    <div class="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-semibold"
+         style="background: var(--neutral-200); color: var(--text-secondary);">
+        {{ item.workspace.name|first|upper }}
+    </div>
+    {% endif %}
+
+    <!-- Name & member count -->
+    <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2">
+            <span class="text-sm font-medium truncate" style="color: var(--text-primary);">
+                {{ item.workspace.name }}
+            </span>
+            {% if item.workspace.is_archived %}
+            <span class="text-xs px-2 py-0.5 rounded-full" style="background: #FEF3C7; color: #92400E;">Archived</span>
+            {% endif %}
+        </div>
+        <div class="text-xs" style="color: var(--text-tertiary);">
+            {{ item.member_count }} member{{ item.member_count|pluralize }}
+        </div>
+    </div>
+
+    <!-- Settings link for owner/manager -->
+    {% if item.can_manage %}
+    <a href="{% url 'workspaces:settings' workspace_id=item.workspace.id %}"
+       class="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full transition-colors"
+       style="background: var(--neutral-100); color: var(--text-secondary);"
+       onmouseenter="this.style.background='var(--neutral-200)'"
+       onmouseleave="this.style.background='var(--neutral-100)'">
+        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.32 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        Settings
+    </a>
+    {% endif %}
+</div>
+
+<!-- Members list -->
+{% if item.members %}
+<div class="flex items-center flex-wrap gap-2 mt-3">
+    {% for membership in item.members %}
+    <span class="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full"
+          style="background: var(--neutral-100); color: var(--text-secondary);"
+          title="{{ membership.user.display_name }} ({{ membership.get_workspace_role_display }})">
+        <span class="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-semibold flex-shrink-0"
+              style="background: var(--neutral-200); color: var(--text-tertiary);">
+            {{ membership.user.display_name|first|upper }}
+        </span>
+        {{ membership.user.display_name }}
+    </span>
+    {% endfor %}
+</div>
+{% else %}
+<div class="mt-3 text-xs" style="color: var(--text-tertiary);">No members assigned</div>
+{% endif %}
