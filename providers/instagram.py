@@ -323,6 +323,7 @@ class InstagramProvider(SocialProvider):
             "POST",
             f"{BASE_URL}/{post_id}/comments",
             access_token=access_token,
+            params={"fields": "id"},
             json={"message": text},
         )
         data = resp.json()

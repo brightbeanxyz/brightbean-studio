@@ -342,6 +342,10 @@ class PublishEngine:
             platform_extra = platform_post.platform_extra or {}
             extra.update(platform_extra)
 
+            # Inject page_id for Facebook from the connected account.
+            if platform == "facebook" and "page_id" not in extra:
+                extra["page_id"] = account.account_platform_id
+
             # Pop link_url from extra and set on PublishContent directly
             link_url = extra.pop("link_url", None)
 
