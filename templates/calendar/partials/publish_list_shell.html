@@ -56,7 +56,7 @@ Tab switching is HTMX partial swaps only - no full page reload.
                 <svg class="publish-filter-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                 <select class="publish-filter-select has-icon" x-model="displayTimezone" @change="reloadTab()">
                     {% for tz in timezone_choices %}
-                    <option value="{{ tz }}" {% if tz == display_timezone %}selected{% endif %}>{{ tz }}{% if tz == workspace_timezone %} (workspace){% endif %}</option>
+                    <option value="{{ tz }}" {% if tz == display_timezone %}selected{% endif %}>{{ tz|cut:"America/"|cut:"Europe/"|cut:"Asia/"|cut:"US/"|cut:"Pacific/"|cut:"Australia/" }}{% if tz == workspace_timezone %} (workspace){% endif %}</option>
                     {% endfor %}
                 </select>
             </div>

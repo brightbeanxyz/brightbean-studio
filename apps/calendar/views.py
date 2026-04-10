@@ -362,13 +362,18 @@ def _render_calendar_partial(request, workspace, view_type, target_date, context
 
 def _month_view_data(request, workspace, target_date, context):
     """Populate context with month view data (no rendering)."""
+    import zoneinfo
+
+    display_tz = zoneinfo.ZoneInfo(context.get("display_timezone", "UTC"))
+
     year, month = target_date.year, target_date.month
     cal = cal_mod.Calendar(firstweekday=0)  # Monday first
     weeks = cal.monthdatescalendar(year, month)
 
     # Get all platform posts for this month range (one chip per PlatformPost)
-    first_day = weeks[0][0]
-    last_day = weeks[-1][6]
+    # Widen by ±1 day to handle timezone boundary shifts
+    first_day = weeks[0][0] - timedelta(days=1)
+    last_day = weeks[-1][6] + timedelta(days=1)
     platform_posts = (
         _get_filtered_platform_posts(workspace, request)
         .filter(
@@ -388,26 +393,28 @@ def _month_view_data(request, workspace, target_date, context):
         .order_by("-updated_at")[:10]
     )
 
-    # Group PlatformPosts by date
+    # Group PlatformPosts by date in the display timezone
     posts_by_date = defaultdict(list)
     for pp in platform_posts:
         if pp.effective_at:
-            posts_by_date[pp.effective_at.date()].append(pp)
+            posts_by_date[pp.effective_at.astimezone(display_tz).date()].append(pp)
 
     # Holiday overlay
     holidays_by_date = {}
     if context.get("show_holidays"):
-        holidays_by_date = get_holidays_for_range(first_day, last_day)
+        holidays_by_date = get_holidays_for_range(weeks[0][0], weeks[-1][6])
 
     # Custom calendar events
     custom_events = (
         CustomCalendarEvent.objects.for_workspace(workspace.id)
-        .filter(start_date__lte=last_day, end_date__gte=first_day)
+        .filter(start_date__lte=weeks[-1][6], end_date__gte=weeks[0][0])
         .order_by("start_date")
     )
 
     # Build weeks data
-    today = date.today()
+    from django.utils import timezone as _tz
+
+    today = _tz.now().astimezone(display_tz).date()
     calendar_weeks = []
     for week in weeks:
         week_data = []
@@ -455,26 +462,33 @@ def _month_view(request, workspace, target_date, context):
 
 def _week_view_data(request, workspace, target_date, context):
     """Populate context with week view data (no rendering)."""
+    import zoneinfo
+
+    display_tz = zoneinfo.ZoneInfo(context.get("display_timezone", "UTC"))
+
     # Find Monday of the target week
     monday = target_date - timedelta(days=target_date.weekday())
     week_days = [monday + timedelta(days=i) for i in range(7)]
 
+    # Widen query by ±1 day to handle timezone boundary shifts
     platform_posts = (
         _get_filtered_platform_posts(workspace, request)
         .filter(
-            effective_at__date__gte=week_days[0],
-            effective_at__date__lte=week_days[6],
+            effective_at__date__gte=week_days[0] - timedelta(days=1),
+            effective_at__date__lte=week_days[6] + timedelta(days=1),
         )
         .order_by("effective_at")
     )
 
-    # Group PlatformPosts by (date, hour)
+    # Group PlatformPosts by (date, hour) in the display timezone
+    week_days_set = set(week_days)
     posts_by_slot = defaultdict(list)
     for pp in platform_posts:
         if pp.effective_at:
-            local_dt = pp.effective_at
-            key = (local_dt.date(), local_dt.hour)
-            posts_by_slot[key].append(pp)
+            local_dt = pp.effective_at.astimezone(display_tz)
+            if local_dt.date() in week_days_set:
+                key = (local_dt.date(), local_dt.hour)
+                posts_by_slot[key].append(pp)
 
     hours = list(range(0, 24))
 
@@ -490,13 +504,13 @@ def _week_view_data(request, workspace, target_date, context):
 
     from django.utils import timezone as _tz
 
-    now = _tz.now()
+    now = _tz.now().astimezone(display_tz)
     context.update(
         {
             "week_days": week_days,
             "hours": hours,
             "week_slots": week_slots,
-            "today": date.today(),
+            "today": now.date(),
             "current_hour": now.hour,
             "prev_date": (monday - timedelta(weeks=1)).isoformat(),
             "next_date": (monday + timedelta(weeks=1)).isoformat(),
@@ -514,18 +528,27 @@ def _week_view(request, workspace, target_date, context):
 
 def _day_view_data(request, workspace, target_date, context):
     """Populate context with day view data (no rendering)."""
+    import zoneinfo
+
+    display_tz = zoneinfo.ZoneInfo(context.get("display_timezone", "UTC"))
+
+    # Widen query by ±1 day to handle timezone boundary shifts
     platform_posts = (
         _get_filtered_platform_posts(workspace, request)
         .filter(
-            effective_at__date=target_date,
+            effective_at__date__gte=target_date - timedelta(days=1),
+            effective_at__date__lte=target_date + timedelta(days=1),
         )
         .order_by("effective_at")
     )
 
+    # Group by hour in the display timezone, filtering to the target date
     posts_by_hour = defaultdict(list)
     for pp in platform_posts:
         if pp.effective_at:
-            posts_by_hour[pp.effective_at.hour].append(pp)
+            local_dt = pp.effective_at.astimezone(display_tz)
+            if local_dt.date() == target_date:
+                posts_by_hour[local_dt.hour].append(pp)
 
     hours = list(range(0, 24))
 
@@ -534,14 +557,14 @@ def _day_view_data(request, workspace, target_date, context):
 
     from django.utils import timezone as _tz
 
-    now = _tz.now()
+    now = _tz.now().astimezone(display_tz)
     context.update(
         {
             "day_slots": day_slots,
             "hours": hours,
             "target_date": target_date,
-            "is_today": target_date == date.today(),
-            "is_past_day": target_date < date.today(),
+            "is_today": target_date == now.date(),
+            "is_past_day": target_date < now.date(),
             "current_hour": now.hour,
             "prev_date": (target_date - timedelta(days=1)).isoformat(),
             "next_date": (target_date + timedelta(days=1)).isoformat(),

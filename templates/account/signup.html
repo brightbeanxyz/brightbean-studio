@@ -114,3 +114,15 @@
     </p>
 </div>
 {% endblock %}
+
+{% block extra_js %}
+<script>
+    // Detect browser timezone so the server can set it as the organization default on signup.
+    try {
+        var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (tz) {
+            document.cookie = "browser_timezone=" + encodeURIComponent(tz) + ";path=/;SameSite=Lax;max-age=300";
+        }
+    } catch (e) {}
+</script>
+{% endblock %}

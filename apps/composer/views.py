@@ -474,6 +474,11 @@ def save_post(request, workspace_id, post_id=None):
             tz = zoneinfo.ZoneInfo(ws_tz)
             naive_dt = datetime.combine(sched_date, sched_time)
             aware_dt = naive_dt.replace(tzinfo=tz)
+            if aware_dt <= timezone.now():
+                return JsonResponse(
+                    {"errors": {"schedule": "Scheduled time must be in the future."}},
+                    status=400,
+                )
             post.scheduled_at = aware_dt
             # Propagate the manually chosen time to every PlatformPost so all
             # selected platforms publish at the same moment.
