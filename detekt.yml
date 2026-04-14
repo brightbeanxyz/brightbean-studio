@@ -1,6 +1,6 @@
 build:
   maxIssues: 0
-  excludeWarnigns: true
+  excludeWarnings: true
 
 style:
   active: true
