@@ -18,6 +18,11 @@
 
     <dependencies>
         <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-stdlib</artifactId>
+            <version>${kotlin.version}</version>
+        </dependency>
+        <dependency>
             <groupId>com.brightbean</groupId>
             <artifactId>studio-application</artifactId>
             <version>${project.version}</version>

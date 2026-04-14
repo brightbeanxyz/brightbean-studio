@@ -35,12 +35,21 @@
         </pluginManagement>
         <plugins>
             <plugin>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>versions-maven-plugin</artifactId>
                 <version>2.16.2</version>
                 <configuration>
                     <processDependencyUpdates>true</processDependencyUpdates>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>io.gitlab.arturbosler.detekt</groupId>
+                <artifactId>detekt-maven-plugin</artifactId>
+                <version>1.23.5</version>
             </plugin>
             <plugin>
                 <groupId>com.diffplug.spotless</groupId>
