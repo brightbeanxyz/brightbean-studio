@@ -1,0 +1,9 @@
+build:
+  maxIssues: 0
+  excludeWarnigns: true
+
+style:
+  active: true
+  returnCount:
+    active: true
+    max: 3

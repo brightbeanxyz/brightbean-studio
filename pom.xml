@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.brightbean</groupId>
+    <artifactId>studio</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>BrightBean Studio</name>
+    <description>Social Media Management Platform</description>
+
+    <modules>
+        <module>studio-domain</module>
+        <module>studio-infrastructure</module>
+        <module>studio-application</module>
+        <module>studio-web</module>
+    </modules>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>versions-maven-plugin</artifactId>
+                <version>2.16.2</version>
+                <configuration>
+                    <processDependencyUpdates>true</processDependencyUpdates>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.facebook</groupId>
+                <artifactId>ktfmt-maven-plugin</artifactId>
+                <version>0.50</version>
+            </plugin>
+            <plugin>
+                <groupId>com.lemonappdev.konsist</groupId>
+                <artifactId>konsist-maven-plugin</artifactId>
+                <version>1.4.1</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>
