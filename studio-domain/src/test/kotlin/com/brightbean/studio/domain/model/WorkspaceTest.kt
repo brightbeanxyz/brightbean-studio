@@ -1,8 +1,7 @@
 package com.brightbean.studio.domain.model
 
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertTrue
 
 class WorkspaceTest {
 
@@ -10,9 +9,8 @@ class WorkspaceTest {
     fun `workspace settings have default values`() {
         val settings = WorkspaceSettings()
         
-        assertTrue(settings.isPublic)
-        assertFalse(settings.allowMemberInvite)
-        assertFalse(settings.allowBoardCreation)
-        assertFalse(settings.allowCardCreation)
+        assertEquals("en", settings.defaultLanguage)
+        assertEquals("UTC", settings.timezone)
+        assertEquals(25, settings.postsPerPage)
     }
 }
