@@ -207,8 +207,6 @@ marimo/_lsp/
 __marimo__/
 # Project-specific
 staticfiles/
-media/
-test_media/
 node_modules/
 theme/static/css/dist/
 *.sqlite3
