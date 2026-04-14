@@ -16,10 +16,12 @@
         <kotlin.version>1.9.23</kotlin.version>
         <outerstellar.version>1.0.0</outerstellar.version>
         <postgresql.version>42.7.2</postgresql.version>
+        <jdbi3.version>3.45.1</jdbi3.version>
         <versions-maven-plugin.version>2.16.2</versions-maven-plugin.version>
         <detekt-maven-plugin.version>1.23.5</detekt-maven-plugin.version>
         <spotless-maven-plugin.version>6.25.0</spotless-maven-plugin.version>
         <konsist.version>0.17.3</konsist.version>
+        <jackson.version>2.17.0</jackson.version>
     </properties>
 
     <dependencyManagement>
@@ -28,6 +30,46 @@
                 <groupId>org.postgresql</groupId>
                 <artifactId>postgresql</artifactId>
                 <version>${postgresql.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jdbi</groupId>
+                <artifactId>jdbi3-core</artifactId>
+                <version>${jdbi3.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jdbi</groupId>
+                <artifactId>jdbi3-postgres</artifactId>
+                <version>${jdbi3.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jdbi</groupId>
+                <artifactId>jdbi3-sqlobject</artifactId>
+                <version>${jdbi3.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.module</groupId>
+                <artifactId>jackson-module-kotlin</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jdbi</groupId>
+                <artifactId>jdbi3-kotlin</artifactId>
+                <version>${jdbi3.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jdbi</groupId>
+                <artifactId>jdbi3-kotlin-sqlobject</artifactId>
+                <version>${jdbi3.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter-api</artifactId>
+                <version>5.10.2</version>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter-engine</artifactId>
+                <version>5.10.2</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
