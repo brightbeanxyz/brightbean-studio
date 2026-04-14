@@ -37,8 +37,20 @@ class ServerTest {
     }
 
     @Test
-    fun `health handler returns UP status`() {
-        val handler = HealthHandler()
-        assertNotNull(handler)
+    fun `health endpoint returns UP status`() {
+        val server = BrightBeanServer(ServerConfig(port = 8085))
+        server.start()
+        try {
+            val client = HttpClient.newHttpClient()
+            val request = HttpRequest.newBuilder()
+                .uri(URI("http://localhost:8085/health"))
+                .GET()
+                .build()
+            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+            assertEquals(200, response.statusCode())
+            assertEquals("""{"status":"UP"}""", response.body())
+        } finally {
+            server.stop()
+        }
     }
 }

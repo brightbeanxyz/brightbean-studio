@@ -10,9 +10,10 @@ class BrightBeanServer(
     private var server: HttpServer? = null
 
     fun start() {
+        val healthHandler = Middleware.corsMiddleware(config.corsOrigins, HealthHandler())
         server = HttpServer.create(InetSocketAddress(config.host, config.port), 0).apply {
-            createContext("/health", HealthHandler())
-            createContext("/", HealthHandler())
+            createContext("/health", healthHandler)
+            createContext("/", healthHandler)
             executor = null
             start()
         }
