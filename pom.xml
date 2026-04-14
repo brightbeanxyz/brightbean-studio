@@ -12,6 +12,10 @@
     <name>BrightBean Studio</name>
     <description>Social Media Management Platform</description>
 
+    <properties>
+        <kotlin.version>1.9.23</kotlin.version>
+    </properties>
+
     <modules>
         <module>studio-domain</module>
         <module>studio-infrastructure</module>
@@ -20,6 +24,15 @@
     </modules>
 
     <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.jetbrains.kotlin</groupId>
+                    <artifactId>kotlin-maven-plugin</artifactId>
+                    <version>${kotlin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
@@ -30,14 +43,19 @@
                 </configuration>
             </plugin>
             <plugin>
-                <groupId>com.facebook</groupId>
-                <artifactId>ktfmt-maven-plugin</artifactId>
-                <version>0.50</version>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>6.25.0</version>
+                <configuration>
+                    <kotlin>
+                        <ktfmt/>
+                    </kotlin>
+                </configuration>
             </plugin>
             <plugin>
-                <groupId>com.lemonappdev.konsist</groupId>
-                <artifactId>konsist-maven-plugin</artifactId>
-                <version>1.4.1</version>
+                <groupId>com.lemonappdev</groupId>
+                <artifactId>konsist</artifactId>
+                <version>0.17.3</version>
             </plugin>
         </plugins>
     </build>
