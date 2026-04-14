@@ -27,6 +27,10 @@
             <artifactId>studio-domain</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.rygel</groupId>
+            <artifactId>outerstellar-platform-private</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

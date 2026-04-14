@@ -27,6 +27,10 @@
             <artifactId>studio-application</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.rygel</groupId>
+            <artifactId>fragments4k</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

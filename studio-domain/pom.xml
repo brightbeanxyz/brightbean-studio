@@ -22,6 +22,10 @@
             <artifactId>kotlin-stdlib</artifactId>
             <version>${kotlin.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.rygel</groupId>
+            <artifactId>outerstellar-platform</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

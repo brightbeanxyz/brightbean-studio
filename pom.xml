@@ -14,7 +14,33 @@
 
     <properties>
         <kotlin.version>1.9.23</kotlin.version>
+        <outerstellar.version>LATEST</outerstellar.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.rygel</groupId>
+                <artifactId>outerstellar-bom</artifactId>
+                <version>${outerstellar.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <repositories>
+        <repository>
+            <id>github-outerstellar</id>
+            <url>https://maven.pkg.github.com/outerstellar/*</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
 
     <modules>
         <module>studio-domain</module>
