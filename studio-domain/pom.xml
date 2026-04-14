@@ -12,9 +12,12 @@
 
     <artifactId>studio-domain</artifactId>
     <packaging>jar</packaging>
-
     <name>BrightBean Studio Domain</name>
     <description>Domain models and interfaces</description>
+
+    <properties>
+        <kotlin.sourceDirectory>src/main/kotlin</kotlin.sourceDirectory>
+    </properties>
 
     <dependencies>
         <dependency>
@@ -23,22 +26,55 @@
             <version>${kotlin.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.rygel</groupId>
-            <artifactId>outerstellar-platform</artifactId>
-            <version>${outerstellar.version}</version>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <version>5.10.2</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <version>5.10.2</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
     <build>
+        <sourceDirectory>src/main/kotlin</sourceDirectory>
+        <testSourceDirectory>src/test/kotlin</testSourceDirectory>
         <plugins>
             <plugin>
                 <groupId>org.jetbrains.kotlin</groupId>
                 <artifactId>kotlin-maven-plugin</artifactId>
                 <configuration>
-                    <compilerOptions>
-                        <strict>true</strict>
-                    </compilerOptions>
+                    <sourceDirs>
+                        <sourceDir>src/main/kotlin</sourceDir>
+                    </sourceDirs>
                 </configuration>
+                <executions>
+                    <execution>
+                        <id>compile</id>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>test-compile</id>
+                        <goals>
+                            <goal>test-compile</goal>
+                        </goals>
+                        <configuration>
+                            <sourceDirs>
+                                <sourceDir>src/test/kotlin</sourceDir>
+                            </sourceDirs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
             </plugin>
         </plugins>
     </build>
