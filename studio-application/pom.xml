@@ -30,6 +30,7 @@
         <dependency>
             <groupId>com.rygel</groupId>
             <artifactId>outerstellar-platform-private</artifactId>
+            <version>${outerstellar.version}</version>
         </dependency>
     </dependencies>
 

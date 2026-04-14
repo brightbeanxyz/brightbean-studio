@@ -30,6 +30,7 @@
         <dependency>
             <groupId>com.rygel</groupId>
             <artifactId>fragments4k</artifactId>
+            <version>${outerstellar.version}</version>
         </dependency>
     </dependencies>
 

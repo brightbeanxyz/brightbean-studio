@@ -25,6 +25,7 @@
         <dependency>
             <groupId>com.rygel</groupId>
             <artifactId>outerstellar-platform</artifactId>
+            <version>${outerstellar.version}</version>
         </dependency>
     </dependencies>
 

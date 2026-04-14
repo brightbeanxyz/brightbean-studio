@@ -30,6 +30,7 @@
         <dependency>
             <groupId>com.rygel</groupId>
             <artifactId>outerstellar-framework</artifactId>
+            <version>${outerstellar.version}</version>
         </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
