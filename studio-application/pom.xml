@@ -27,6 +27,11 @@
             <artifactId>studio-domain</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.brightbean</groupId>
+            <artifactId>studio-infrastructure</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!-- outerstellar-framework dependency removed for testing - uncomment when available -->
         <!--
         <dependency>
