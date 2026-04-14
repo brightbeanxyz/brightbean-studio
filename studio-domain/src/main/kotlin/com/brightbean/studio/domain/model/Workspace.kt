@@ -6,16 +6,15 @@ import java.util.UUID
 data class Workspace(
     val id: UUID,
     val name: String,
-    val description: String,
-    val organizationId: UUID,
+    val slug: String,
+    val ownerId: UUID,
     val settings: WorkspaceSettings,
     val createdAt: Instant,
     val updatedAt: Instant,
 )
 
 data class WorkspaceSettings(
-    val isPublic: Boolean = true,
-    val allowMemberInvite: Boolean = false,
-    val allowBoardCreation: Boolean = false,
-    val allowCardCreation: Boolean = false,
+    val defaultLanguage: String = "en",
+    val timezone: String = "UTC",
+    val postsPerPage: Int = 25,
 )

@@ -5,9 +5,9 @@ import java.util.UUID
 
 data class Organization(
     val id: UUID,
+    val workspaceId: UUID,
     val name: String,
-    val description: String,
-    val ownerId: UUID,
+    val logoUrl: String? = null,
+    val website: String? = null,
     val createdAt: Instant,
-    val updatedAt: Instant,
 )

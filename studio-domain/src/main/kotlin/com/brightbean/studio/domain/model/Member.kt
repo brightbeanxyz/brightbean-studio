@@ -6,14 +6,15 @@ import java.util.UUID
 enum class MemberRole {
     OWNER,
     ADMIN,
-    MEMBER,
-    GUEST,
+    EDITOR,
+    VIEWER,
 }
 
 data class Member(
     val id: UUID,
+    val workspaceId: UUID,
     val userId: UUID,
-    val organizationId: UUID,
     val role: MemberRole,
+    val invitedBy: UUID? = null,
     val joinedAt: Instant,
 )
