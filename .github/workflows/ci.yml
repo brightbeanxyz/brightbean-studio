@@ -2,80 +2,53 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
-# Principle of least privilege: default to read-only for every job.
-# Individual jobs can opt into more permissions if needed.
-permissions:
-  contents: read
+permissions: {}
 
-# Cancel in-progress runs when a new commit is pushed to the same branch/PR.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   lint:
-    name: Lint (ruff)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
-        with:
-          python-version: "3.12"
-          cache: "pip"
-
-      - name: Install ruff
-        run: pip install "ruff==0.15.9"
-
-      - name: ruff check
-        run: ruff check .
-
-      - name: ruff format --check
-        run: ruff format --check .
-
-  typecheck:
-    name: Type check (mypy)
+    name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      # mypy loads Django settings during type inference; it never hits a DB.
-      SECRET_KEY: test-secret-key-not-for-production
     steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
-          python-version: "3.12"
-          cache: "pip"
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: ktfmt check
+        run: mvn spotless:check -T 4
 
-      - name: mypy
-        run: mypy apps/ config/ providers/ tests/ --ignore-missing-imports
+      - name: detekt
+        run: mvn detekt:detekt -T 4
+
+      - name: konsist
+        run: mvn konsist:konsist -T 4
+
+      - name: versions check
+        run: mvn versions:display-dependency-updates -T 4
 
   test:
-    name: Test (pytest)
+    name: Test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: brightbean_test
+          POSTGRES_DB: studio_test
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports:
@@ -86,76 +59,54 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      DJANGO_SETTINGS_MODULE: config.settings.test
-      SECRET_KEY: test-secret-key-not-for-production
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/brightbean_test
       DB_HOST: localhost
       DB_USER: postgres
       DB_PASSWORD: postgres
+      DB_NAME: studio_test
     steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
-          python-version: "3.12"
-          cache: "pip"
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Verify
+        run: mvn verify -T 4
 
-      - name: pytest
-        run: pytest --cov=apps --cov-report=term-missing
+      - if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: test-reports
+          path: '**/target/surefire-reports/'
+          retention-days: 14
 
   build:
-    name: Docker build
+    name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint, typecheck, test]
+    needs: [lint, test]
+    permissions:
+      contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
-
-      - name: Build image
-        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355 # v6.10.0
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
-          context: .
-          push: false
-          tags: brightbean:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
 
-  secrets-scan:
-    name: Secret scan (gitleaks)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # We invoke the gitleaks binary directly rather than using
-    # gitleaks/gitleaks-action, because that action now requires a paid
-    # license for GitHub organizations. The binary itself remains free
-    # and open source under the MIT license.
-    env:
-      GITLEAKS_VERSION: "8.24.3"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build JAR
+        run: mvn package -DskipTests -T 4
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Install gitleaks
-        run: |
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            | tar -xz -C /tmp gitleaks
-          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
-          gitleaks version
-
-      - name: Run gitleaks
-        run: gitleaks detect --source . --redact --verbose --no-banner
+          name: studio-jar
+          path: '**/target/*.jar'
+          retention-days: 5
