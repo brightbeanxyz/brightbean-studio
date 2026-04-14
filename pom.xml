@@ -14,17 +14,20 @@
 
     <properties>
         <kotlin.version>1.9.23</kotlin.version>
-        <outerstellar.version>LATEST</outerstellar.version>
+        <outerstellar.version>1.0.0</outerstellar.version>
+        <postgresql.version>42.7.2</postgresql.version>
+        <versions-maven-plugin.version>2.16.2</versions-maven-plugin.version>
+        <detekt-maven-plugin.version>1.23.5</detekt-maven-plugin.version>
+        <spotless-maven-plugin.version>6.25.0</spotless-maven-plugin.version>
+        <konsist.version>0.17.3</konsist.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>com.rygel</groupId>
-                <artifactId>outerstellar-bom</artifactId>
-                <version>${outerstellar.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
+                <groupId>org.postgresql</groupId>
+                <artifactId>postgresql</artifactId>
+                <version>${postgresql.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -32,7 +35,7 @@
     <repositories>
         <repository>
             <id>github-outerstellar</id>
-            <url>https://maven.pkg.github.com/outerstellar/*</url>
+            <url>https://maven.pkg.github.com/outerstellar/outerstellar-bom</url>
             <releases>
                 <enabled>true</enabled>
             </releases>
@@ -64,33 +67,33 @@
                 <groupId>org.jetbrains.kotlin</groupId>
                 <artifactId>kotlin-maven-plugin</artifactId>
             </plugin>
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>versions-maven-plugin</artifactId>
-                <version>2.16.2</version>
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>versions-maven-plugin</artifactId>
+                    <version>${versions-maven-plugin.version}</version>
                 <configuration>
                     <processDependencyUpdates>true</processDependencyUpdates>
                 </configuration>
             </plugin>
-            <plugin>
-                <groupId>io.gitlab.arturbosler.detekt</groupId>
-                <artifactId>detekt-maven-plugin</artifactId>
-                <version>1.23.5</version>
+                <plugin>
+                    <groupId>io.gitlab.arturbosler.detekt</groupId>
+                    <artifactId>detekt-maven-plugin</artifactId>
+                    <version>${detekt-maven-plugin.version}</version>
             </plugin>
-            <plugin>
-                <groupId>com.diffplug.spotless</groupId>
-                <artifactId>spotless-maven-plugin</artifactId>
-                <version>6.25.0</version>
+                <plugin>
+                    <groupId>com.diffplug.spotless</groupId>
+                    <artifactId>spotless-maven-plugin</artifactId>
+                    <version>${spotless-maven-plugin.version}</version>
                 <configuration>
                     <kotlin>
                         <ktfmt/>
                     </kotlin>
                 </configuration>
             </plugin>
-            <plugin>
-                <groupId>com.lemonappdev</groupId>
-                <artifactId>konsist</artifactId>
-                <version>0.17.3</version>
+                <plugin>
+                    <groupId>com.lemonappdev</groupId>
+                    <artifactId>konsist</artifactId>
+                    <version>${konsist.version}</version>
             </plugin>
         </plugins>
     </build>
