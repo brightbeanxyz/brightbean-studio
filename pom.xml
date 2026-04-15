@@ -22,6 +22,7 @@
         <spotless-maven-plugin.version>6.25.0</spotless-maven-plugin.version>
         <konsist.version>0.17.3</konsist.version>
         <jackson.version>2.17.0</jackson.version>
+        <sonar-maven-plugin.version>3.12.1.5339</sonar-maven-plugin.version>
     </properties>
 
     <dependencyManagement>
@@ -140,7 +141,7 @@
             <plugin>
                 <groupId>org.sonarsource.scanner.maven</groupId>
                 <artifactId>sonar-maven-plugin</artifactId>
-                <version>3.12.1.5339</version>
+                <version>${sonar-maven-plugin.version}</version>
             </plugin>
         </plugins>
     </build>
