@@ -22,10 +22,6 @@
         <spotless-maven-plugin.version>6.25.0</spotless-maven-plugin.version>
         <konsist.version>0.17.3</konsist.version>
         <jackson.version>2.17.0</jackson.version>
-        <sonar-maven-plugin.version>3.11.0.3922</sonar-maven-plugin.version>
-        <sonar.projectKey>com.brightbean:studio</sonar.projectKey>
-        <sonar.organization>brightbean</sonar.organization>
-        <sonar.host.url>https://sonarcloud.io</sonar.host.url>
     </properties>
 
     <dependencyManagement>
@@ -141,10 +137,10 @@
                     <artifactId>konsist</artifactId>
                     <version>${konsist.version}</version>
             </plugin>
-                <plugin>
-                    <groupId>org.sonarsource.scanner.maven</groupId>
-                    <artifactId>sonar-maven-plugin</artifactId>
-                    <version>${sonar-maven-plugin.version}</version>
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>3.12.1.5339</version>
             </plugin>
         </plugins>
     </build>
