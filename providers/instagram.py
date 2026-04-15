@@ -460,3 +460,75 @@ class InstagramProvider(SocialProvider):
             "No Instagram Business Account found linked to any Facebook Page",
             platform=self.platform_name,
         )
+
+    # ------------------------------------------------------------------
+    # Analytics — recent post metrics
+    # ------------------------------------------------------------------
+
+    def get_recent_post_metrics(
+        self, access_token: str, account_platform_id: str, limit: int = 20
+    ) -> list[PostMetrics]:
+        # Step 1: Fetch recent media IDs and metadata
+        media_resp = self._request(
+            "GET",
+            f"{BASE_URL}/{account_platform_id}/media",
+            access_token=access_token,
+            params={
+                "fields": "id,caption,media_type,timestamp,permalink",
+                "limit": limit,
+            },
+        )
+        media_items = media_resp.json().get("data", [])
+
+        results = []
+        for item in media_items:
+            media_id = item["id"]
+            # Step 2: Fetch insights for each post
+            try:
+                insights_resp = self._request(
+                    "GET",
+                    f"{BASE_URL}/{media_id}/insights",
+                    access_token=access_token,
+                    params={
+                        "metric": "impressions,reach,likes,comments,shares,saved",
+                    },
+                )
+                metrics_data = {
+                    m["name"]: m["values"][0]["value"]
+                    for m in insights_resp.json().get("data", [])
+                }
+            except APIError:
+                logger.warning("Failed to fetch insights for media %s", media_id)
+                continue
+
+            likes = metrics_data.get("likes", 0)
+            comments_count = metrics_data.get("comments", 0)
+            shares = metrics_data.get("shares", 0)
+            saves = metrics_data.get("saved", 0)
+
+            media_type = item.get("media_type", "IMAGE").lower()
+            post_type_map = {
+                "image": "image",
+                "video": "video",
+                "carousel_album": "carousel",
+                "reel": "reel",
+            }
+
+            results.append(PostMetrics(
+                impressions=metrics_data.get("impressions", 0),
+                reach=metrics_data.get("reach", 0),
+                likes=likes,
+                comments=comments_count,
+                shares=shares,
+                saves=saves,
+                engagements=likes + comments_count + shares + saves,
+                extra={
+                    "platform_post_id": media_id,
+                    "post_url": item.get("permalink", ""),
+                    "post_text": item.get("caption", ""),
+                    "posted_at": item.get("timestamp", ""),
+                    "post_type": post_type_map.get(media_type, media_type),
+                },
+            ))
+
+        return results
