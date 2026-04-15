@@ -14,6 +14,7 @@ from .types import (
     InboxMessage,
     MediaType,
     OAuthTokens,
+    PostMetrics,
     PostType,
     PublishContent,
     PublishResult,
@@ -368,6 +369,53 @@ class TikTokProvider(SocialProvider):
             platform_message_id=data.get("comment_id", ""),
             extra=data,
         )
+
+    # ------------------------------------------------------------------
+    # Analytics — recent post metrics
+    # ------------------------------------------------------------------
+
+    def get_recent_post_metrics(
+        self, access_token: str, account_platform_id: str, limit: int = 20
+    ) -> list[PostMetrics]:
+        resp = self._request(
+            "POST",
+            f"{API_BASE}/video/list/",
+            access_token=access_token,
+            json={
+                "max_count": limit,
+            },
+        )
+        body = resp.json()
+        videos = body.get("data", {}).get("videos", [])
+
+        results = []
+        for video in videos:
+            likes = video.get("like_count", 0)
+            comments_count = video.get("comment_count", 0)
+            shares = video.get("share_count", 0)
+            views = video.get("view_count", 0)
+
+            # Convert Unix timestamp to ISO 8601
+            create_time = video.get("create_time", 0)
+            posted_at = datetime.fromtimestamp(create_time, tz=UTC).isoformat()
+
+            results.append(PostMetrics(
+                likes=likes,
+                comments=comments_count,
+                shares=shares,
+                video_views=views,
+                engagements=likes + comments_count + shares,
+                impressions=views,
+                extra={
+                    "platform_post_id": video.get("id", ""),
+                    "post_url": video.get("share_url", ""),
+                    "post_text": video.get("title", ""),
+                    "posted_at": posted_at,
+                    "post_type": "video",
+                },
+            ))
+
+        return results
 
     # ------------------------------------------------------------------
     # Token management
