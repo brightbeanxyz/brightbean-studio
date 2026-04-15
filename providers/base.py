@@ -133,6 +133,23 @@ class SocialProvider(ABC):
         """Fetch audience demographic data."""
         raise NotImplementedError(f"{self.platform_name} does not support demographics")
 
+    def get_recent_post_metrics(
+        self, access_token: str, account_platform_id: str, limit: int = 20
+    ) -> list[PostMetrics]:
+        """Fetch engagement metrics for recent posts.
+
+        Returns a list of PostMetrics. Post identification metadata is carried
+        in the extra dict with these required keys:
+        - extra["platform_post_id"] — native post ID
+        - extra["post_url"] — permalink to the post
+        - extra["post_text"] — caption/title text
+        - extra["posted_at"] — ISO 8601 timestamp string
+        - extra["post_type"] — image, video, reel, carousel, story, short, pin
+        """
+        raise NotImplementedError(
+            f"{self.platform_name} does not support recent post metrics"
+        )
+
     # ------------------------------------------------------------------
     # Inbox (optional - override per provider)
     # ------------------------------------------------------------------
