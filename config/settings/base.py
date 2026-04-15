@@ -248,12 +248,13 @@ TAILWIND_APP_NAME = "theme"
 # CSP - Using Alpine.js CSP build (@alpinejs/csp) which does not require
 # unsafe-eval. Styles use unsafe-inline because Tailwind utility classes are inline.
 CSP_DEFAULT_SRC = ("'self'",)
-CSP_SCRIPT_SRC = ("'self'",)  # Alpine.js CSP build (@alpinejs/csp) eliminates unsafe-eval
-CSP_STYLE_SRC = ("'self'", "'unsafe-inline'")  # Tailwind inline styles
+CSP_SCRIPT_SRC = ("'self'", "https://cdn.jsdelivr.net")
+CSP_STYLE_SRC = ("'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net")
 CSP_IMG_SRC = ("'self'", "data:", "https:")
 CSP_FONT_SRC = ("'self'",)
 CSP_CONNECT_SRC = ("'self'",)
 CSP_FORM_ACTION = ("'self'", "https://accounts.google.com")
+CSP_INCLUDE_NONCE_IN = ["script-src"]
 
 # Media Library
 MEDIA_LIBRARY_MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB

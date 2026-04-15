@@ -323,7 +323,7 @@
 
 {% block extra_js %}
 <script src="{% static 'js/media-library.js' %}"></script>
-<script>
+<script nonce="{{ request.csp_nonce }}">
 function mediaLibrary() {
   return {
     viewMode: 'grid',

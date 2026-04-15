@@ -12,7 +12,7 @@
     <link rel="manifest" href="{% static 'favicon/site.webmanifest' %}">
     <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
-    <script>
+    <script nonce="{{ request.csp_nonce }}">
         // Set sidebar state class on <html> before first paint to prevent flash
         if (localStorage.getItem('sidebarCollapsed') === 'true') {
             document.documentElement.classList.add('sidebar-is-collapsed');
@@ -207,7 +207,7 @@
 </head>
 <body class="text-gray-900 min-h-screen" style="background: var(--surface-page);">
     {% csrf_token %}
-    <script>
+    <script nonce="{{ request.csp_nonce }}">
         document.body.addEventListener('htmx:configRequest', function(event) {
             event.detail.headers['X-CSRFToken'] = document.querySelector('[name=csrfmiddlewaretoken]').value;
         });
@@ -841,7 +841,7 @@
 
     <!-- Vendored JS -->
     <script src="{% static 'js/htmx.min.js' %}"></script>
-    <script>
+    <script nonce="{{ request.csp_nonce }}">
         /* Notification bell - Alpine.js component */
         function notificationBell() {
             return {
@@ -888,7 +888,7 @@
     </script>
     <script src="{% static 'js/alpine.min.js' %}" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
-    <script>
+    <script nonce="{{ request.csp_nonce }}">
         document.addEventListener('DOMContentLoaded', function() {
             document.querySelectorAll('.form-datetime[type="date"]').forEach(function(el) {
                 var fp = flatpickr(el, {
@@ -915,7 +915,7 @@
         });
     </script>
     {% if request.workspace %}
-    <script>
+    <script nonce="{{ request.csp_nonce }}">
         window.ideaModalHelpers = window.ideaModalHelpers || {
             mediaAssetIdsCsv(items) {
                 return (items || []).map(function(item) { return item.asset_id; }).join(',');

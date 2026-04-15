@@ -217,7 +217,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script>
+<script nonce="{{ request.csp_nonce }}">
 function inboxController() {
     return {
         activePanel: 'list',

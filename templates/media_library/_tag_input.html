@@ -49,7 +49,7 @@
   {% endif %}
 </div>
 
-<script>
+<script nonce="{{ request.csp_nonce }}">
 function tagInput(initialTags) {
   return {
     tags: initialTags || [],
