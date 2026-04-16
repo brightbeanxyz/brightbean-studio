@@ -1,4 +1,37 @@
 {% extends "base.html" %}
+
+{% block title %}{{ workspace.name }} Analytics{% endblock %}
+
 {% block content %}
-{{ workspace.name }}
+<div class="max-w-7xl mx-auto px-4 py-8" id="dashboard-content">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <a href="{% url 'analytics:brand_list' %}" class="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mb-1 inline-block">&larr; All Brands</a>
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ workspace.name }}</h1>
+      {% if last_refresh %}
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Last refreshed {{ last_refresh.completed_at|timesince }} ago</p>
+      {% endif %}
+    </div>
+    <button hx-post="{% url 'analytics:refresh_metrics' workspace.id %}"
+            hx-target="#dashboard-content"
+            hx-swap="innerHTML"
+            hx-indicator="#refresh-spinner"
+            class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium">
+      <span id="refresh-spinner" class="htmx-indicator">
+        <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+      </span>
+      Refresh
+    </button>
+  </div>
+
+  {% if account_sections %}
+    {% include "analytics/partials/_summary_bar.html" %}
+
+    {% for section in account_sections %}
+      {% include "analytics/partials/_account_section.html" with account=section.account snapshots=section.snapshots last_log=section.last_log chart_labels=section.chart_labels chart_data=section.chart_data chart_tooltips=section.chart_tooltips chart_color=section.chart_color %}
+    {% endfor %}
+  {% else %}
+    {% include "analytics/partials/_empty_state.html" %}
+  {% endif %}
+</div>
 {% endblock %}
