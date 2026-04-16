@@ -1,0 +1,13 @@
+{% if last_log and last_log.status == "error" %}
+<div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 mb-4">
+  <p class="text-sm text-red-700 dark:text-red-400">
+    Could not refresh {{ account.get_platform_display }} — last data from {{ last_log.completed_at|timesince }} ago. Try again.
+  </p>
+</div>
+{% elif last_log and last_log.status == "rate_limited" %}
+<div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 mb-4">
+  <p class="text-sm text-yellow-700 dark:text-yellow-400">
+    Rate limited — try again later.
+  </p>
+</div>
+{% endif %}

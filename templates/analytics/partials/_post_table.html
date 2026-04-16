@@ -1,0 +1,37 @@
+{% if snapshots %}
+<div class="overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-gray-200 dark:border-gray-700 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+        <th class="pb-3 pr-4">Post</th>
+        <th class="pb-3 px-2 text-right">Likes</th>
+        <th class="pb-3 px-2 text-right">Comments</th>
+        <th class="pb-3 px-2 text-right">Shares</th>
+        <th class="pb-3 px-2 text-right">Saves</th>
+        <th class="pb-3 pl-2 text-right">Eng. Rate</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for snap in snapshots %}
+      <tr class="border-b border-gray-100 dark:border-gray-800">
+        <td class="py-3 pr-4">
+          <a href="{{ snap.post_url }}" target="_blank" rel="noopener"
+             class="text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400">
+            <span class="inline-block px-1.5 py-0.5 rounded text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 mr-2">{{ snap.post_type }}</span>
+            {{ snap.post_text|truncatechars:50 }}
+          </a>
+          <div class="text-xs text-gray-400 mt-0.5">{{ snap.posted_at|timesince }} ago</div>
+        </td>
+        <td class="py-3 px-2 text-right text-pink-500 font-medium">{{ snap.likes }}</td>
+        <td class="py-3 px-2 text-right text-indigo-500 font-medium">{{ snap.comments }}</td>
+        <td class="py-3 px-2 text-right text-emerald-500 font-medium">{{ snap.shares }}</td>
+        <td class="py-3 px-2 text-right text-amber-500 font-medium">{{ snap.saves }}</td>
+        <td class="py-3 pl-2 text-right font-medium text-gray-900 dark:text-white">{{ snap.engagement_rate }}%</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-gray-400 dark:text-gray-500 text-sm py-4">No posts found for this account in the last 14 days.</p>
+{% endif %}

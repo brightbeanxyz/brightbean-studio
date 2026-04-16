@@ -1,0 +1,70 @@
+<div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 mb-4"
+     x-data="{ open: true }">
+  <button @click="open = !open"
+          class="w-full flex items-center justify-between p-4 text-left">
+    <div class="flex items-center gap-3">
+      {% if account.avatar_url %}
+      <img src="{{ account.avatar_url }}" alt="" class="w-8 h-8 rounded-full">
+      {% endif %}
+      <div>
+        <span class="font-semibold text-gray-900 dark:text-white">{{ account.account_name }}</span>
+        <span class="text-gray-500 dark:text-gray-400 text-sm ml-1">@{{ account.account_handle }}</span>
+        <span class="text-xs text-gray-400 dark:text-gray-500 ml-2">{{ account.get_platform_display }}</span>
+      </div>
+    </div>
+    <div class="flex items-center gap-4">
+      <span class="text-sm text-gray-500 dark:text-gray-400">{{ account.follower_count|floatformat:0 }} followers</span>
+      <svg :class="open ? 'rotate-180' : ''" class="w-5 h-5 text-gray-400 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+      </svg>
+    </div>
+  </button>
+
+  <div x-show="open" x-collapse class="px-4 pb-4">
+    {% include "analytics/partials/_error_banner.html" with last_log=last_log account=account %}
+
+    {% if account.connection_status == "disconnected" or account.connection_status == "error" %}
+    <p class="text-gray-400 text-sm py-4">Account disconnected — reconnect in Settings to fetch metrics.</p>
+    {% else %}
+      {% if snapshots %}
+      <div x-data x-init="
+        const ctx = $refs.chart.getContext('2d');
+        new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: {{ chart_labels|safe }},
+            datasets: [{
+              data: {{ chart_data|safe }},
+              backgroundColor: '{{ chart_color }}',
+              borderRadius: 4,
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  afterBody: function(items) {
+                    const idx = items[0].dataIndex;
+                    const details = {{ chart_tooltips|safe }}[idx];
+                    return details;
+                  }
+                }
+              }
+            },
+            scales: {
+              y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } },
+              x: { grid: { display: false } }
+            }
+          }
+        });
+      " class="mb-6">
+        <canvas x-ref="chart" height="120"></canvas>
+      </div>
+      {% endif %}
+
+      {% include "analytics/partials/_post_table.html" with snapshots=snapshots %}
+    {% endif %}
+  </div>
+</div>

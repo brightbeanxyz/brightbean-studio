@@ -62,6 +62,7 @@ LOCAL_APPS = [
     "apps.approvals",
     "apps.client_portal",
     "apps.onboarding",
+    "apps.analytics",
     "theme",
 ]
 

@@ -1,0 +1,18 @@
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+  <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 text-center">
+    <div class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Likes</div>
+    <div class="text-2xl font-bold text-pink-500">{{ summary.likes|floatformat:0 }}</div>
+  </div>
+  <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 text-center">
+    <div class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Comments</div>
+    <div class="text-2xl font-bold text-indigo-500">{{ summary.comments|floatformat:0 }}</div>
+  </div>
+  <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 text-center">
+    <div class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Shares</div>
+    <div class="text-2xl font-bold text-emerald-500">{{ summary.shares|floatformat:0 }}</div>
+  </div>
+  <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 text-center">
+    <div class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Saves</div>
+    <div class="text-2xl font-bold text-amber-500">{{ summary.saves|floatformat:0 }}</div>
+  </div>
+</div>

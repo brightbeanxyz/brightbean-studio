@@ -450,6 +450,69 @@ class YouTubeProvider(SocialProvider):
             },
         )
 
+    def get_recent_post_metrics(
+        self, access_token: str, account_platform_id: str, limit: int = 20
+    ) -> list[PostMetrics]:
+        # Step 1: Search for the user's recent videos
+        search_resp = self._request(
+            "GET",
+            f"{API_BASE}/search",
+            access_token=access_token,
+            params={
+                "forMine": "true",
+                "type": "video",
+                "order": "date",
+                "maxResults": limit,
+                "part": "id",
+            },
+        )
+        video_ids = [
+            item["id"]["videoId"]
+            for item in search_resp.json().get("items", [])
+            if "videoId" in item.get("id", {})
+        ]
+
+        if not video_ids:
+            return []
+
+        # Step 2: Batch fetch statistics and snippets
+        videos_resp = self._request(
+            "GET",
+            f"{API_BASE}/videos",
+            access_token=access_token,
+            params={
+                "id": ",".join(video_ids),
+                "part": "statistics,snippet",
+            },
+        )
+
+        results = []
+        for item in videos_resp.json().get("items", []):
+            stats = item.get("statistics", {})
+            snippet = item.get("snippet", {})
+            video_id = item["id"]
+
+            views = int(stats.get("viewCount", 0))
+            likes = int(stats.get("likeCount", 0))
+            comments_count = int(stats.get("commentCount", 0))
+
+            results.append(PostMetrics(
+                video_views=views,
+                likes=likes,
+                comments=comments_count,
+                engagements=likes + comments_count,
+                impressions=views,
+                extra={
+                    "platform_post_id": video_id,
+                    "post_url": f"https://www.youtube.com/watch?v={video_id}",
+                    "post_text": snippet.get("title", ""),
+                    "posted_at": snippet.get("publishedAt", ""),
+                    "post_type": "video",
+                },
+            ))
+
+        return results
+
     # ------------------------------------------------------------------
     # Token management
     # ------------------------------------------------------------------
