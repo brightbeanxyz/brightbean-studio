@@ -1,0 +1,4 @@
+{% extends "base.html" %}
+{% block content %}
+{% for item in workspace_data %}{{ item.workspace.name }}{% endfor %}
+{% endblock %}
