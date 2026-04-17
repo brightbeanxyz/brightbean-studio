@@ -111,9 +111,11 @@ def _get_filtered_posts(workspace, request):
     if tags:
         from django.db.models import Q
 
+        from apps.utils import json_tag_contains
+
         tag_q = Q()
         for tag in tags:
-            tag_q |= Q(tags__contains=[tag])
+            tag_q |= json_tag_contains("tags", tag)
         qs = qs.filter(tag_q)
 
     # Date range
@@ -167,9 +169,11 @@ def _get_filtered_platform_posts(workspace, request):
     if tags:
         from django.db.models import Q
 
+        from apps.utils import json_tag_contains
+
         tag_q = Q()
         for tag in tags:
-            tag_q |= Q(post__tags__contains=[tag])
+            tag_q |= json_tag_contains("post__tags", tag)
         qs = qs.filter(tag_q)
 
     return qs
@@ -228,7 +232,9 @@ def _apply_publish_filters(qs, request):
 
     tag = request.GET.get("tag")
     if tag:
-        qs = qs.filter(tags__contains=[tag])
+        from apps.utils import json_tag_contains
+
+        qs = qs.filter(json_tag_contains("tags", tag))
 
     return qs
 
@@ -241,7 +247,9 @@ def _apply_pp_publish_filters(qs, request):
 
     tag = request.GET.get("tag")
     if tag:
-        qs = qs.filter(post__tags__contains=[tag])
+        from apps.utils import json_tag_contains
+
+        qs = qs.filter(json_tag_contains("post__tags", tag))
 
     return qs
 

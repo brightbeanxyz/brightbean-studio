@@ -8,7 +8,7 @@
                name="q"
                value="{{ active_filters.q|default:'' }}"
                placeholder="Search messages..."
-               class="w-full pl-8 pr-3 py-1.5 text-[12px] bg-white border border-stone-200 rounded-md focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 transition-all"
+               class="w-full pl-8 pr-3 py-1.5 text-[12px] bg-white border border-stone-200 rounded-lg focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 transition-all"
                hx-get="{% url 'inbox:feed' workspace_id=workspace.id %}"
                hx-target="#inbox-message-list"
                hx-swap="innerHTML"
@@ -17,52 +17,118 @@
     </div>
 
     <!-- Platform filter -->
-    <select name="platform" class="filter-select"
-            hx-get="{% url 'inbox:feed' workspace_id=workspace.id %}"
-            hx-target="#inbox-message-list"
-            hx-swap="innerHTML"
-            hx-include="[name='q'],[name='type'],[name='status'],[name='sentiment']">
-        <option value="">All platforms</option>
-        {% for account in social_accounts %}
-        <option value="{{ account.platform }}" {% if account.platform in active_filters.platform %}selected{% endif %}>{{ account.get_platform_display|default:account.platform|title }}</option>
-        {% endfor %}
-    </select>
+    <div x-data="{
+            open: false,
+            value: '{{ active_filters.platform|default:'' }}',
+            pos: { top: 0, left: 0 },
+            updatePos() { const r = this.$refs.btn.getBoundingClientRect(); this.pos = { top: r.bottom + 4 + 'px', left: r.left + 'px' }; },
+            select(v) { this.value = v; this.open = false; htmx.trigger(document.querySelector('[name=q]'), 'change'); }
+         }" @click.away="open = false">
+        <input type="hidden" name="platform" :value="value">
+        <button @click="open = !open; if (open) updatePos()" x-ref="btn" type="button"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium rounded-lg border transition-all cursor-pointer whitespace-nowrap"
+                :class="value ? 'bg-orange-50 border-orange-200 text-orange-700' : 'bg-white border-stone-200 text-stone-500 hover:border-stone-300'">
+            <span x-text="value ? (document.querySelector('[data-plat=\'' + value + '\']')?.textContent || value) : 'All platforms'"></span>
+            <svg class="w-3 h-3 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <template x-teleport="body">
+            <div x-show="open" x-transition:enter="transition ease-out duration-100" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100" x-transition:leave="transition ease-in duration-75"
+                 :style="'position:fixed; top:' + pos.top + '; left:' + pos.left + '; z-index:9999;'"
+                 class="w-48 bg-white rounded-xl shadow-lg ring-1 ring-stone-200 overflow-hidden" x-cloak>
+                <div class="p-1.5 max-h-48 overflow-y-auto">
+                    <button @click="select('')" type="button" class="w-full text-left px-3 py-1.5 text-[12px] font-medium rounded-lg transition-colors" :class="!value ? 'bg-orange-50 text-orange-700' : 'text-stone-600 hover:bg-stone-50'">All platforms</button>
+                    {% for account in social_accounts %}
+                    <button @click="select('{{ account.platform }}')" type="button" class="w-full text-left px-3 py-1.5 text-[12px] font-medium rounded-lg transition-colors" :class="value === '{{ account.platform }}' ? 'bg-orange-50 text-orange-700' : 'text-stone-600 hover:bg-stone-50'" data-plat="{{ account.platform }}">{{ account.get_platform_display|default:account.platform|title }}</button>
+                    {% endfor %}
+                </div>
+            </div>
+        </template>
+    </div>
 
     <!-- Type filter -->
-    <select name="type" class="filter-select"
-            hx-get="{% url 'inbox:feed' workspace_id=workspace.id %}"
-            hx-target="#inbox-message-list"
-            hx-swap="innerHTML"
-            hx-include="[name='q'],[name='platform'],[name='status'],[name='sentiment']">
-        <option value="">All types</option>
-        <option value="comment" {% if 'comment' in active_filters.type %}selected{% endif %}>Comments</option>
-        <option value="mention" {% if 'mention' in active_filters.type %}selected{% endif %}>Mentions</option>
-        <option value="dm" {% if 'dm' in active_filters.type %}selected{% endif %}>DMs</option>
-        <option value="review" {% if 'review' in active_filters.type %}selected{% endif %}>Reviews</option>
-    </select>
+    <div x-data="{
+            open: false,
+            value: '{{ active_filters.type|default:'' }}',
+            pos: { top: 0, left: 0 },
+            labels: { comment: 'Comments', mention: 'Mentions', dm: 'DMs', review: 'Reviews' },
+            updatePos() { const r = this.$refs.btn.getBoundingClientRect(); this.pos = { top: r.bottom + 4 + 'px', left: r.left + 'px' }; },
+            select(v) { this.value = v; this.open = false; htmx.trigger(document.querySelector('[name=q]'), 'change'); }
+         }" @click.away="open = false">
+        <input type="hidden" name="type" :value="value">
+        <button @click="open = !open; if (open) updatePos()" x-ref="btn" type="button"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium rounded-lg border transition-all cursor-pointer whitespace-nowrap"
+                :class="value ? 'bg-orange-50 border-orange-200 text-orange-700' : 'bg-white border-stone-200 text-stone-500 hover:border-stone-300'">
+            <span x-text="value ? labels[value] : 'All types'"></span>
+            <svg class="w-3 h-3 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <template x-teleport="body">
+            <div x-show="open" x-transition:enter="transition ease-out duration-100" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100" x-transition:leave="transition ease-in duration-75"
+                 :style="'position:fixed; top:' + pos.top + '; left:' + pos.left + '; z-index:9999;'"
+                 class="w-40 bg-white rounded-xl shadow-lg ring-1 ring-stone-200 overflow-hidden" x-cloak>
+                <div class="p-1.5">
+                    <template x-for="opt in [{v:'',l:'All types'},{v:'comment',l:'Comments'},{v:'mention',l:'Mentions'},{v:'dm',l:'DMs'},{v:'review',l:'Reviews'}]">
+                        <button @click="select(opt.v)" type="button" class="w-full text-left px-3 py-1.5 text-[12px] font-medium rounded-lg transition-colors" :class="value === opt.v ? 'bg-orange-50 text-orange-700' : 'text-stone-600 hover:bg-stone-50'" x-text="opt.l"></button>
+                    </template>
+                </div>
+            </div>
+        </template>
+    </div>
 
     <!-- Status filter -->
-    <select name="status" class="filter-select"
-            hx-get="{% url 'inbox:feed' workspace_id=workspace.id %}"
-            hx-target="#inbox-message-list"
-            hx-swap="innerHTML"
-            hx-include="[name='q'],[name='platform'],[name='type'],[name='sentiment']">
-        <option value="">All statuses</option>
-        <option value="unread" {% if 'unread' in active_filters.status %}selected{% endif %}>Unread</option>
-        <option value="open" {% if 'open' in active_filters.status %}selected{% endif %}>Open</option>
-        <option value="resolved" {% if 'resolved' in active_filters.status %}selected{% endif %}>Resolved</option>
-        <option value="archived" {% if 'archived' in active_filters.status %}selected{% endif %}>Archived</option>
-    </select>
+    <div x-data="{
+            open: false,
+            value: '{{ active_filters.status|default:'' }}',
+            pos: { top: 0, left: 0 },
+            labels: { unread: 'Unread', open: 'Open', resolved: 'Resolved', archived: 'Archived' },
+            updatePos() { const r = this.$refs.btn.getBoundingClientRect(); this.pos = { top: r.bottom + 4 + 'px', left: r.left + 'px' }; },
+            select(v) { this.value = v; this.open = false; htmx.trigger(document.querySelector('[name=q]'), 'change'); }
+         }" @click.away="open = false">
+        <input type="hidden" name="status" :value="value">
+        <button @click="open = !open; if (open) updatePos()" x-ref="btn" type="button"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium rounded-lg border transition-all cursor-pointer whitespace-nowrap"
+                :class="value ? 'bg-orange-50 border-orange-200 text-orange-700' : 'bg-white border-stone-200 text-stone-500 hover:border-stone-300'">
+            <span x-text="value ? labels[value] : 'All statuses'"></span>
+            <svg class="w-3 h-3 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <template x-teleport="body">
+            <div x-show="open" x-transition:enter="transition ease-out duration-100" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100" x-transition:leave="transition ease-in duration-75"
+                 :style="'position:fixed; top:' + pos.top + '; left:' + pos.left + '; z-index:9999;'"
+                 class="w-40 bg-white rounded-xl shadow-lg ring-1 ring-stone-200 overflow-hidden" x-cloak>
+                <div class="p-1.5">
+                    <template x-for="opt in [{v:'',l:'All statuses'},{v:'unread',l:'Unread'},{v:'open',l:'Open'},{v:'resolved',l:'Resolved'},{v:'archived',l:'Archived'}]">
+                        <button @click="select(opt.v)" type="button" class="w-full text-left px-3 py-1.5 text-[12px] font-medium rounded-lg transition-colors" :class="value === opt.v ? 'bg-orange-50 text-orange-700' : 'text-stone-600 hover:bg-stone-50'" x-text="opt.l"></button>
+                    </template>
+                </div>
+            </div>
+        </template>
+    </div>
 
     <!-- Sentiment filter -->
-    <select name="sentiment" class="filter-select"
-            hx-get="{% url 'inbox:feed' workspace_id=workspace.id %}"
-            hx-target="#inbox-message-list"
-            hx-swap="innerHTML"
-            hx-include="[name='q'],[name='platform'],[name='type'],[name='status']">
-        <option value="">All sentiment</option>
-        <option value="positive" {% if 'positive' in active_filters.sentiment %}selected{% endif %}>Positive</option>
-        <option value="neutral" {% if 'neutral' in active_filters.sentiment %}selected{% endif %}>Neutral</option>
-        <option value="negative" {% if 'negative' in active_filters.sentiment %}selected{% endif %}>Negative</option>
-    </select>
+    <div x-data="{
+            open: false,
+            value: '{{ active_filters.sentiment|default:'' }}',
+            pos: { top: 0, left: 0 },
+            labels: { positive: 'Positive', neutral: 'Neutral', negative: 'Negative' },
+            updatePos() { const r = this.$refs.btn.getBoundingClientRect(); this.pos = { top: r.bottom + 4 + 'px', left: r.left + 'px' }; },
+            select(v) { this.value = v; this.open = false; htmx.trigger(document.querySelector('[name=q]'), 'change'); }
+         }" @click.away="open = false">
+        <input type="hidden" name="sentiment" :value="value">
+        <button @click="open = !open; if (open) updatePos()" x-ref="btn" type="button"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium rounded-lg border transition-all cursor-pointer whitespace-nowrap"
+                :class="value ? 'bg-orange-50 border-orange-200 text-orange-700' : 'bg-white border-stone-200 text-stone-500 hover:border-stone-300'">
+            <span x-text="value ? labels[value] : 'All sentiment'"></span>
+            <svg class="w-3 h-3 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <template x-teleport="body">
+            <div x-show="open" x-transition:enter="transition ease-out duration-100" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100" x-transition:leave="transition ease-in duration-75"
+                 :style="'position:fixed; top:' + pos.top + '; left:' + pos.left + '; z-index:9999;'"
+                 class="w-40 bg-white rounded-xl shadow-lg ring-1 ring-stone-200 overflow-hidden" x-cloak>
+                <div class="p-1.5">
+                    <template x-for="opt in [{v:'',l:'All sentiment'},{v:'positive',l:'Positive'},{v:'neutral',l:'Neutral'},{v:'negative',l:'Negative'}]">
+                        <button @click="select(opt.v)" type="button" class="w-full text-left px-3 py-1.5 text-[12px] font-medium rounded-lg transition-colors" :class="value === opt.v ? 'bg-orange-50 text-orange-700' : 'text-stone-600 hover:bg-stone-50'" x-text="opt.l"></button>
+                    </template>
+                </div>
+            </div>
+        </template>
+    </div>
 </div>
