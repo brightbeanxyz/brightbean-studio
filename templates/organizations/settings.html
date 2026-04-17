@@ -28,29 +28,68 @@
     </form>
 
     <!-- Default Timezone section -->
-    <form method="POST" class="mb-10">
+    <form method="POST" class="mb-10"
+          x-data="{
+              open: false,
+              search: '',
+              selected: '{{ organization.default_timezone }}',
+              pos: { top: 0, left: 0, width: 0 },
+              updatePos() {
+                  const r = this.$refs.tzBtn.getBoundingClientRect();
+                  this.pos = { top: r.bottom + 4 + 'px', left: r.left + 'px', width: r.width + 'px' };
+              },
+              toggle() {
+                  this.open = !this.open;
+                  if (this.open) { this.updatePos(); this.$nextTick(() => this.$refs.tzInput.focus()); }
+                  else { this.search = ''; }
+              },
+              pick(tz) { this.selected = tz; this.open = false; this.search = ''; }
+          }">
         {% csrf_token %}
         <input type="hidden" name="action" value="update_timezone">
+        <input type="hidden" name="timezone" :value="selected">
         <div class="flex items-end gap-4">
-            <div class="flex-1">
-                <label for="timezone" class="block text-sm font-semibold mb-1" style="color: var(--text-primary);">Default Timezone</label>
+            <div class="flex-1" @click.away="open = false; search = ''">
+                <label class="block text-sm font-semibold mb-1" style="color: var(--text-primary);">Default Timezone</label>
                 <p class="text-xs mb-2" style="color: var(--text-tertiary);">Used as the fallback for workspaces that don't set their own.</p>
-                <select id="timezone" name="timezone"
-                        class="w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
-                        style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);"
-                        onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 3px var(--primary-ring)'"
-                        onblur="this.style.borderColor='var(--border)'; this.style.boxShadow='none'">
-                    <optgroup label="Common">
-                        {% for tz in common_timezones %}
-                        <option value="{{ tz }}" {% if tz == organization.default_timezone %}selected{% endif %}>{{ tz }}</option>
-                        {% endfor %}
-                    </optgroup>
-                    <optgroup label="All Timezones">
-                        {% for tz in all_timezones %}
-                        <option value="{{ tz }}" {% if tz == organization.default_timezone %}selected{% endif %}>{{ tz }}</option>
-                        {% endfor %}
-                    </optgroup>
-                </select>
+                <button @click="toggle()" type="button" x-ref="tzBtn"
+                        class="w-full flex items-center justify-between px-3 py-2 text-sm rounded-lg outline-none transition-colors text-left border border-stone-200 bg-white"
+                        :class="open ? 'border-orange-400 ring-2 ring-orange-100' : 'hover:border-stone-300'">
+                    <span x-text="selected || 'Select timezone'"></span>
+                    <svg class="w-4 h-4 transition-transform flex-shrink-0" :class="open && 'rotate-180'" style="color: var(--text-tertiary);" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                </button>
+                <template x-teleport="body">
+                    <div x-show="open"
+                         x-transition:enter="transition ease-out duration-100" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100"
+                         x-transition:leave="transition ease-in duration-75"
+                         :style="'position:fixed; top:' + pos.top + '; left:' + pos.left + '; width:' + pos.width + '; z-index:9999;'"
+                         class="bg-white rounded-xl shadow-lg ring-1 ring-stone-200 overflow-hidden" x-cloak>
+                        <div class="p-2 border-b border-stone-100">
+                            <input type="text" x-ref="tzInput" x-model="search" placeholder="Search timezones..."
+                                   class="w-full px-2.5 py-1.5 text-sm bg-stone-50 border border-stone-200 rounded-lg focus:outline-none focus:border-orange-300 focus:ring-1 focus:ring-orange-100">
+                        </div>
+                        <div class="max-h-64 overflow-y-auto">
+                            <div class="px-2 pt-2 pb-1">
+                                <p class="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider" style="color: var(--text-tertiary);">Common</p>
+                                {% for tz in common_timezones %}
+                                <button @click="pick('{{ tz }}')" type="button"
+                                        x-show="!search || '{{ tz }}'.toLowerCase().includes(search.toLowerCase())"
+                                        class="w-full text-left px-3 py-1.5 text-sm font-medium rounded-lg transition-colors"
+                                        :class="selected === '{{ tz }}' ? 'bg-orange-50 text-orange-700' : 'text-stone-600 hover:bg-stone-50'">{{ tz }}</button>
+                                {% endfor %}
+                            </div>
+                            <div class="px-2 pb-2">
+                                <p class="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider" style="color: var(--text-tertiary);">All Timezones</p>
+                                {% for tz in all_timezones %}
+                                <button @click="pick('{{ tz }}')" type="button"
+                                        x-show="!search || '{{ tz }}'.toLowerCase().includes(search.toLowerCase())"
+                                        class="w-full text-left px-3 py-1.5 text-sm font-medium rounded-lg transition-colors"
+                                        :class="selected === '{{ tz }}' ? 'bg-orange-50 text-orange-700' : 'text-stone-600 hover:bg-stone-50'">{{ tz }}</button>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </template>
             </div>
             <button type="submit"
                     class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer whitespace-nowrap"

@@ -11,7 +11,7 @@ import httpx
 from dateutil import parser as date_parser
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import models, transaction
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -338,8 +338,19 @@ def compose(request, workspace_id, post_id=None):
         try:
             tpl = PostTemplate.objects.get(id=template_id, workspace=workspace)
             template_data = tpl.template_data
-        except PostTemplate.DoesNotExist:
-            pass
+        except (PostTemplate.DoesNotExist, ValidationError):
+            # Fall back to built-in template by integer ID
+            from apps.composer.builtin_templates import TEMPLATES as BUILTIN_TEMPLATES
+
+            builtin = next((t for t in BUILTIN_TEMPLATES if str(t["id"]) == template_id), None)
+            if builtin:
+                template_data = {"body": builtin.get("body", ""), "title": builtin.get("title", "")}
+
+    # Pre-fill caption from template data
+    if template_data and not post:
+        body = template_data.get("body", "")
+        if body:
+            form.initial["caption"] = body
 
     # Approval workflow context
     workflow_mode = workspace.approval_workflow_mode
@@ -1411,7 +1422,9 @@ def _idea_columns(workspace, tag=None):
         .order_by("position", "-created_at")
     )
     if tag:
-        ideas_qs = ideas_qs.filter(tags__contains=[tag])
+        from apps.utils import json_tag_contains
+
+        ideas_qs = ideas_qs.filter(json_tag_contains("tags", tag))
 
     grouped_ideas = {str(grp.id): [] for grp in groups}
     for idea in ideas_qs:

@@ -1,7 +1,56 @@
 {% extends "layouts/settings.html" %}
-{% block title %}Profile - Settings - Brightbean{% endblock %}
+{% block title %}{% if settings_active == 'preferences' %}Preferences{% else %}Profile{% endif %} - Settings - Brightbean{% endblock %}
 {% block content %}
 <div class="max-w-2xl">
+
+{% if settings_active == 'preferences' %}
+    <!-- ==================== PREFERENCES TAB ==================== -->
+    <h2 class="text-xl font-semibold mb-2" style="color: var(--text-primary);">Preferences</h2>
+    <p class="text-sm mb-8" style="color: var(--text-secondary);">Manage how and when you receive notifications.</p>
+
+    <form method="POST">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="update_notifications">
+
+        <div class="rounded-xl overflow-hidden" style="border: 1px solid var(--border);">
+            <!-- Table header -->
+            <div class="grid gap-0 px-5 py-3" style="background: var(--neutral-50); border-bottom: 1px solid var(--border); grid-template-columns: 1fr repeat({{ notification_channels|length }}, 80px);">
+                <span class="text-xs font-semibold uppercase tracking-wider" style="color: var(--text-tertiary);">Event</span>
+                {% for ch_value, ch_label in notification_channels %}
+                <span class="text-xs font-semibold uppercase tracking-wider text-center" style="color: var(--text-tertiary);">{{ ch_label }}</span>
+                {% endfor %}
+            </div>
+
+            <!-- Rows -->
+            {% for pref in notification_prefs %}
+            <div class="grid gap-0 px-5 py-3 items-center"
+                 style="{% if not forloop.last %}border-bottom: 1px solid var(--border);{% endif %} grid-template-columns: 1fr repeat({{ notification_channels|length }}, 80px);">
+                <span class="text-sm" style="color: var(--text-primary);">{{ pref.label }}</span>
+                {% for ch in pref.channel_list %}
+                <label class="flex items-center justify-center cursor-pointer">
+                    <input type="checkbox" name="{{ ch.field_name }}"
+                           {% if ch.is_enabled %}checked{% endif %}
+                           class="w-4 h-4 rounded cursor-pointer"
+                           style="accent-color: var(--primary);">
+                </label>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="mt-6">
+            <button type="submit"
+                    class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
+                    style="background: var(--primary); color: white;"
+                    onmouseenter="this.style.opacity='0.9'"
+                    onmouseleave="this.style.opacity='1'">
+                Save Preferences
+            </button>
+        </div>
+    </form>
+
+{% else %}
+    <!-- ==================== PROFILE TAB ==================== -->
     <h2 class="text-xl font-semibold mb-8" style="color: var(--text-primary);">Profile</h2>
 
     <!-- Photo section -->
@@ -220,5 +269,6 @@
             </div>
         </template>
     </div>
+{% endif %}
 </div>
 {% endblock %}

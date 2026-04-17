@@ -129,21 +129,25 @@
     <div class="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-5 py-3 border-b border-stone-200 flex-shrink-0">
         <div class="flex items-center gap-3 sm:gap-4">
             <h1 class="text-base font-semibold text-stone-900" style="letter-spacing: -0.01em;">Inbox</h1>
-            <div class="flex items-center gap-1 bg-stone-50 rounded-full p-0.5">
+            <div class="flex items-center gap-1 bg-stone-50 rounded-full p-0.5"
+                 x-data="{ active: '{{ current_view|default:'all' }}' }">
                 <a href="{% url 'inbox:feed' workspace_id=workspace.id %}"
-                   class="inbox-tab {% if current_view == 'all' %}active{% endif %}"
+                   class="inbox-tab" :class="active === 'all' && 'active'"
+                   @click="active = 'all'"
                    hx-get="{% url 'inbox:feed' workspace_id=workspace.id %}?view=all"
                    hx-target="#inbox-message-list"
                    hx-swap="innerHTML"
                    hx-push-url="true">All</a>
                 <a href="{% url 'inbox:feed' workspace_id=workspace.id %}?view=mine"
-                   class="inbox-tab {% if current_view == 'mine' %}active{% endif %}"
+                   class="inbox-tab" :class="active === 'mine' && 'active'"
+                   @click="active = 'mine'"
                    hx-get="{% url 'inbox:feed' workspace_id=workspace.id %}?view=mine"
                    hx-target="#inbox-message-list"
                    hx-swap="innerHTML"
                    hx-push-url="true">My Queue</a>
                 <a href="{% url 'inbox:feed' workspace_id=workspace.id %}?view=unassigned"
-                   class="inbox-tab {% if current_view == 'unassigned' %}active{% endif %}"
+                   class="inbox-tab" :class="active === 'unassigned' && 'active'"
+                   @click="active = 'unassigned'"
                    hx-get="{% url 'inbox:feed' workspace_id=workspace.id %}?view=unassigned"
                    hx-target="#inbox-message-list"
                    hx-swap="innerHTML"

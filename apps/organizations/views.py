@@ -223,7 +223,9 @@ def cross_workspace_calendar(request):
     # Tag filter
     tag = request.GET.get("tag")
     if tag:
-        base_pps = base_pps.filter(post__tags__contains=[tag])
+        from apps.utils import json_tag_contains
+
+        base_pps = base_pps.filter(json_tag_contains("post__tags", tag))
 
     # Status filter — editorial status now lives on the PlatformPost itself.
     status = request.GET.get("status")

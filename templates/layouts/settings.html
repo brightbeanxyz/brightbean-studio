@@ -40,6 +40,10 @@
     <svg class="flex-shrink-0" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
     <span class="sidebar-nav-label">Media Library</span>
 </a>
+<a href="{% url 'credentials:list' %}" class="sidebar-nav-item mb-1 {% if settings_active == 'credentials' %}active{% endif %}">
+    <svg class="flex-shrink-0" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7h3a5 5 0 010 10h-3m-6 0H6A5 5 0 016 7h3"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+    <span class="sidebar-nav-label">Platform Credentials</span>
+</a>
 {% endblock %}
 
 {% block content %}
