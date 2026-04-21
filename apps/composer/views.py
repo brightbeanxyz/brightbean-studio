@@ -370,6 +370,27 @@ def compose(request, workspace_id, post_id=None):
     ws_role = membership.workspace_role if membership else None
     can_view_internal_notes = ws_role not in ("client", "viewer") if ws_role else True
 
+    # Template data pre-fill (if using a template)
+    template_id = request.GET.get("template")
+    template_data = None
+    if template_id and not post:
+        try:
+            tpl = PostTemplate.objects.get(id=template_id, workspace=workspace)
+            template_data = tpl.template_data
+        except (PostTemplate.DoesNotExist, ValidationError):
+            # Fall back to built-in template by integer ID
+            from apps.composer.builtin_templates import TEMPLATES as BUILTIN_TEMPLATES
+
+            builtin = next((t for t in BUILTIN_TEMPLATES if str(t["id"]) == template_id), None)
+            if builtin:
+                template_data = {"body": builtin.get("body", ""), "title": builtin.get("title", "")}
+
+    # Pre-fill caption from template data
+    if template_data and not post:
+        body = template_data.get("body", "")
+        if body:
+            form.initial["caption"] = body
+
     # Approval workflow context
     workflow_mode = workspace.approval_workflow_mode
     show_submit_button = workflow_mode != "none"
@@ -1440,7 +1461,9 @@ def _idea_columns(workspace, tag=None):
         .order_by("position", "-created_at")
     )
     if tag:
-        ideas_qs = ideas_qs.filter(tags__contains=[tag])
+        from apps.utils import json_tag_contains
+
+        ideas_qs = ideas_qs.filter(json_tag_contains("tags", tag))
 
     grouped_ideas = {str(grp.id): [] for grp in groups}
     for idea in ideas_qs:

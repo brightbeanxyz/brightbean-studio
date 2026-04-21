@@ -52,6 +52,9 @@ def account_settings(request):
             _handle_password_update(request, user)
         elif action == "delete_account":
             return _handle_account_deletion(request, user)
+        elif action == "update_notifications":
+            _handle_notification_prefs(request, user)
+            return redirect("/accounts/settings/?tab=preferences")
 
         return redirect("accounts:settings")
 
@@ -60,14 +63,38 @@ def account_settings(request):
 
     org_membership = OrgMembership.objects.filter(user=user).select_related("organization").first()
 
-    return render(
-        request,
-        "accounts/settings.html",
-        {
-            "settings_active": settings_active,
-            "org_membership": org_membership,
-        },
-    )
+    context = {
+        "settings_active": settings_active,
+        "org_membership": org_membership,
+    }
+
+    # For the preferences tab, load notification preferences
+    if settings_active == "preferences":
+        from apps.notifications.models import Channel, EventType, NotificationPreference
+
+        # Build a lookup of existing preferences
+        prefs = NotificationPreference.objects.filter(user=user)
+        pref_lookup = {(p.event_type, p.channel): p.is_enabled for p in prefs}
+
+        # Build structured data for the template — each row has a flat list of channel entries
+        event_types = [(et.value, et.label) for et in EventType]
+        channels = [(ch.value, ch.label) for ch in Channel]
+        notification_prefs = []
+        for et_value, et_label in event_types:
+            channel_list = []
+            for ch_value, ch_label in channels:
+                channel_list.append({
+                    "value": ch_value,
+                    "label": ch_label,
+                    "field_name": f"notif_{et_value}_{ch_value}",
+                    "is_enabled": pref_lookup.get((et_value, ch_value), True),
+                })
+            notification_prefs.append({"event_type": et_value, "label": et_label, "channel_list": channel_list})
+
+        context["notification_prefs"] = notification_prefs
+        context["notification_channels"] = channels
+
+    return render(request, "accounts/settings.html", context)
 
 
 def _handle_photo_update(request, user):
@@ -217,6 +244,23 @@ def accept_terms(request):
         messages.error(request, "You must agree to the Terms of Service and Privacy Policy to continue.")
 
     return render(request, "account/accept_terms.html")
+
+
+def _handle_notification_prefs(request, user):
+    """Handle notification preference updates."""
+    from apps.notifications.models import Channel, EventType, NotificationPreference
+
+    for et in EventType:
+        for ch in Channel:
+            key = f"notif_{et.value}_{ch.value}"
+            is_enabled = key in request.POST
+            NotificationPreference.objects.update_or_create(
+                user=user,
+                event_type=et.value,
+                channel=ch.value,
+                defaults={"is_enabled": is_enabled},
+            )
+    messages.success(request, "Notification preferences updated.")
 
 
 def logout_view(request):

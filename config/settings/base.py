@@ -179,6 +179,9 @@ if STORAGE_BACKEND.lower() == "s3":
         "CacheControl": "max-age=86400",
     }
 else:
+    STORAGES["default"] = {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    }
     MEDIA_ROOT = env("MEDIA_ROOT", default=str(BASE_DIR / "media"))
     MEDIA_URL = "/media/"
 
