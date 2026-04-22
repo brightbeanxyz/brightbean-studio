@@ -24,11 +24,13 @@ from datetime import timedelta
 from background_task import background
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.composer.models import PlatformPost
 from apps.credentials.models import PlatformCredential
+from apps.social_accounts.models import SocialAccount
 from providers import get_provider
 from providers.types import AuthType, PostType, PublishContent
 
@@ -89,6 +91,18 @@ FIRST_COMMENT_DELAY = getattr(settings, "PUBLISHER_FIRST_COMMENT_DELAY", 120)
 MAX_CONCURRENT_PUBLISHES = getattr(settings, "PUBLISHER_MAX_CONCURRENT_PUBLISHES", 10)
 MAX_CONCURRENT_POSTS = getattr(settings, "PUBLISHER_MAX_CONCURRENT_POSTS", 4)
 
+NON_RETRYABLE_AUTH_PATTERNS = (
+    "active access token must be used",
+    "error validating access token",
+    "invalid oauth access token",
+    "invalid or expired token",
+    "session has expired",
+)
+
+if "sqlite" in str(settings.DATABASES.get("default", {}).get("ENGINE", "")).lower():
+    # SQLite suffers from coarse write locks; keep publisher group processing serial.
+    MAX_CONCURRENT_POSTS = 1
+
 
 class PublishEngine:
     """Orchestrates the publishing of scheduled posts."""
@@ -99,6 +113,8 @@ class PublishEngine:
         Called every ~15 seconds by the background worker. Groups due
         PlatformPosts by parent Post and publishes each group.
         """
+        self._normalize_tokenless_error_accounts()
+        self._recover_reconnect_ready_posts()
         due_pps = self._get_due_platform_posts()
 
         # Group by parent post_id
@@ -130,12 +146,71 @@ class PublishEngine:
         return list(
             PlatformPost.objects.filter(
                 status=PlatformPost.Status.SCHEDULED,
+                social_account__connection_status=SocialAccount.ConnectionStatus.CONNECTED,
             )
             .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
             .filter(effective_at__lte=now)
             .select_related("post__workspace", "social_account")
             .order_by("effective_at")[:MAX_CONCURRENT_PUBLISHES]
         )
+
+    def _normalize_tokenless_error_accounts(self):
+        """Downgrade tokenless errored accounts to disconnected automatically."""
+        now = timezone.now()
+        normalized_count = 0
+        errored_accounts = SocialAccount.objects.filter(
+            connection_status=SocialAccount.ConnectionStatus.ERROR,
+        )
+
+        for account in errored_accounts:
+            if self._has_any_oauth_token(account):
+                continue
+
+            account.connection_status = SocialAccount.ConnectionStatus.DISCONNECTED
+            account.last_health_check_at = now
+            if not (account.last_error or "").strip():
+                account.last_error = "Tokenless account downgraded to disconnected."
+                account.save(update_fields=["connection_status", "last_health_check_at", "last_error", "updated_at"])
+            else:
+                account.save(update_fields=["connection_status", "last_health_check_at", "updated_at"])
+            normalized_count += 1
+
+        if normalized_count:
+            logger.info(
+                "Downgraded %d tokenless account(s) from error to disconnected",
+                normalized_count,
+            )
+
+        return normalized_count
+
+    def _recover_reconnect_ready_posts(self):
+        """Requeue auth-failed posts once the account is connected again."""
+        auth_error_filter = Q()
+        for pattern in NON_RETRYABLE_AUTH_PATTERNS:
+            auth_error_filter |= Q(publish_error__icontains=pattern)
+
+        if not auth_error_filter.children:
+            return 0
+
+        recovered_count = (
+            PlatformPost.objects.filter(
+                status=PlatformPost.Status.FAILED,
+                social_account__connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+            )
+            .filter(auth_error_filter)
+            .update(
+                status=PlatformPost.Status.SCHEDULED,
+                retry_count=0,
+                next_retry_at=None,
+                publish_error="",
+                updated_at=timezone.now(),
+            )
+        )
+
+        if recovered_count:
+            logger.info("Recovered %d auth-failed PlatformPost(s) after account reconnect", recovered_count)
+
+        return recovered_count
 
     def _publish_post_group(self, post, due_pps):
         """Publish a group of due PlatformPosts belonging to the same Post.
@@ -431,6 +506,28 @@ class PublishEngine:
                     os.unlink(path)
 
     @staticmethod
+    def _has_any_oauth_token(account) -> bool:
+        return bool((account.oauth_access_token or "").strip() or (account.oauth_refresh_token or "").strip())
+
+    @staticmethod
+    def _is_non_retryable_auth_error(error_msg: str) -> bool:
+        message = (error_msg or "").lower()
+        if not message:
+            return False
+        return any(pattern in message for pattern in NON_RETRYABLE_AUTH_PATTERNS)
+
+    @staticmethod
+    def _mark_account_reconnect_required(account, error_msg: str):
+        account.connection_status = (
+            account.ConnectionStatus.ERROR
+            if PublishEngine._has_any_oauth_token(account)
+            else account.ConnectionStatus.DISCONNECTED
+        )
+        account.last_error = (error_msg or "")[:2000]
+        account.last_health_check_at = timezone.now()
+        account.save(update_fields=["connection_status", "last_error", "last_health_check_at", "updated_at"])
+
+    @staticmethod
     def _resolve_post_type(
         platform: str,
         platform_extra: dict,
@@ -474,10 +571,24 @@ class PublishEngine:
 
     def _schedule_retry(self, platform_post, error_msg):
         """Schedule a retry with exponential backoff."""
+        if self._is_non_retryable_auth_error(error_msg):
+            platform_post.status = PlatformPost.Status.FAILED
+            platform_post.publish_error = error_msg
+            platform_post.save(update_fields=["status", "publish_error", "updated_at"])
+            self._mark_account_reconnect_required(platform_post.social_account, error_msg)
+            logger.warning(
+                "PlatformPost %s marked failed (non-retryable auth error): %s",
+                platform_post.id,
+                error_msg,
+            )
+            return
+
         if platform_post.retry_count >= MAX_RETRIES:
             platform_post.status = PlatformPost.Status.FAILED
             platform_post.publish_error = error_msg
-            platform_post.save()
+            platform_post.save(update_fields=["status", "publish_error", "updated_at"])
+            if self._is_non_retryable_auth_error(error_msg):
+                self._mark_account_reconnect_required(platform_post.social_account, error_msg)
             logger.warning(
                 "PlatformPost %s failed after %d retries: %s",
                 platform_post.id,
@@ -493,7 +604,7 @@ class PublishEngine:
         # once next_retry_at passes.
         platform_post.status = PlatformPost.Status.SCHEDULED
         platform_post.publish_error = error_msg
-        platform_post.save()
+        platform_post.save(update_fields=["retry_count", "next_retry_at", "status", "publish_error", "updated_at"])
 
         logger.info(
             "Scheduled retry %d for PlatformPost %s in %d seconds",
@@ -510,6 +621,7 @@ class PublishEngine:
             retry_count__gt=0,
             retry_count__lte=MAX_RETRIES,
             next_retry_at__lte=now,
+            social_account__connection_status=SocialAccount.ConnectionStatus.CONNECTED,
         ).select_related("social_account", "post")
 
         for pp in retry_posts:
