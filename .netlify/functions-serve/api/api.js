@@ -1,0 +1,1 @@
+module.exports = require('./design/netlify/functions/api.js')
