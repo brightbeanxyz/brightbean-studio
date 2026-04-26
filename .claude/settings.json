@@ -24,6 +24,11 @@
             "type": "command",
             "command": "jq -n --arg d \"$(date +%Y-%m-%d)\" '{\"systemMessage\": \"Session \\($d) — brightbean-studio (ADR-0006 proposed, not yet adopted). Multi-tenant Django app. No cross-tenant queries. No hardcoded credentials. ACC integration boundary: publisher/composer apps only.\"}'",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "out=$(bash $HOME/dev/ai-brain/scripts/session-start-check.sh brightbean-studio 2>/dev/null); if [ -n \"$out\" ]; then jq -n --arg m \"$out\" '{\"systemMessage\": (\"Unapplied ADR entries affecting brightbean-studio:\\n\\n\" + $m)}'; fi",
+            "timeout": 10
           }
         ]
       }
