@@ -1,9 +1,0 @@
-Hi there,
-
-{{ invited_by.display_name }} has invited you to join {{ org_name }} as a team member on Brightbean.
-
-Accept the invitation by visiting the link below:
-
-{{ accept_url }}
-
-This invitation expires in 7 days. If it expires, ask your team admin for a new one.

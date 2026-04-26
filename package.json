@@ -1,8 +1,10 @@
 {
-  "name": "brightbean-studio",
+  "name": "social-marketing-readonly-dashboard",
   "private": true,
   "scripts": {
-    "heroku-postbuild": "cd theme/static_src && npm ci && npm run build"
-  },
-  "cacheDirectories": ["theme/static_src/node_modules"]
+    "dev": "npm --prefix design run dev",
+    "build": "npm --prefix design run build",
+    "lint": "npm --prefix design run lint",
+    "install:frontend": "npm --prefix design install"
+  }
 }

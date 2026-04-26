@@ -1,0 +1,169 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* 1. COLORS - Premium Dark SaaS Palette */
+  /* Base Obsidian Scale */
+  --color-obsidian-950: #050505; /* Deepest background */
+  --color-obsidian-900: #0a0a0c; /* Main app background */
+  --color-obsidian-800: #121215; /* Card background level 1 */
+  --color-obsidian-700: #1a1a1f; /* Card background level 2 */
+  --color-obsidian-600: #27272f; /* Borders, subtle hover */
+  
+  /* Semantic Backgrounds & Surfaces */
+  --color-bg-primary: var(--color-obsidian-900);
+  --color-bg-secondary: var(--color-obsidian-950);
+  --color-surface-card: var(--color-obsidian-800);
+  --color-surface-elevated: var(--color-obsidian-700);
+  --color-border-subtle: rgba(255, 255, 255, 0.05);
+  --color-border-default: rgba(255, 255, 255, 0.1);
+
+  /* Accents */
+  --color-accent-gold: #e4c580;
+  --color-accent-blue: #3b82f6;
+  --color-accent-emerald: #10b981;
+  --color-accent-violet: #8b5cf6;
+
+  /* Status Colors */
+  --color-danger: #ef4444;
+  --color-warning: #f59e0b;
+  --color-success: #10b981;
+  --color-info: #3b82f6;
+
+  /* Platform Colors */
+  --color-platform-facebook: #1877f2;
+  --color-platform-youtube: #ff0000;
+  --color-platform-tiktok: #00f2fe;
+
+  /* Text Colors */
+  --color-text-primary: #ededed;
+  --color-text-secondary: #a1a1aa;
+  --color-text-tertiary: #71717a; /* Muted */
+
+  /* 3. SHADOWS */
+  --shadow-soft-inset: inset 0 1px 1px 0 rgba(255, 255, 255, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --shadow-elevated: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --shadow-hover-elevation: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-glow-gold: 0 0 20px 0 rgba(228, 197, 128, 0.15), inset 0 0 0 1px rgba(228, 197, 128, 0.3);
+  --shadow-glow-blue: 0 0 20px 0 rgba(59, 130, 246, 0.15), inset 0 0 0 1px rgba(59, 130, 246, 0.3);
+  --shadow-glow-emerald: 0 0 20px 0 rgba(16, 185, 129, 0.15), inset 0 0 0 1px rgba(16, 185, 129, 0.3);
+  --shadow-glow-violet: 0 0 20px 0 rgba(139, 92, 246, 0.15), inset 0 0 0 1px rgba(139, 92, 246, 0.3);
+
+  /* 4. MOTION EASE & TIMING */
+  --duration-120: 120ms;
+  --duration-180: 180ms;
+  --duration-240: 240ms;
+  --duration-320: 320ms;
+  --ease-fluid: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-bouncy: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@layer base {
+  html.light {
+    --color-obsidian-950: #f1f5f9;
+    --color-obsidian-900: #f8fafc;
+    --color-obsidian-800: #ffffff;
+    --color-obsidian-700: #f1f5f9;
+    --color-obsidian-600: #e2e8f0;
+
+    --color-bg-primary: var(--color-obsidian-900);
+    --color-bg-secondary: var(--color-obsidian-950);
+    --color-surface-card: var(--color-obsidian-800);
+    --color-surface-elevated: var(--color-obsidian-700);
+
+    --color-border-subtle: rgba(0, 0, 0, 0.05);
+    --color-border-default: rgba(0, 0, 0, 0.1);
+
+    --color-text-primary: #0f172a;
+    --color-text-secondary: #475569;
+    --color-text-tertiary: #64748b;
+
+    --color-white: #0f172a;
+
+    --shadow-soft-inset: inset 0 1px 1px 0 rgba(0, 0, 0, 0.05), inset 0 0 0 1px rgba(0, 0, 0, 0.02);
+    --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.05);
+    --shadow-elevated: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.05);
+    --shadow-hover-elevation: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.1);
+  }
+
+  body {
+    @apply bg-bg-primary text-text-primary font-sans antialiased selection:bg-accent-gold/30 selection:text-white;
+  }
+
+  .bg-accent-blue, .bg-accent-gold, .bg-accent-emerald, .bg-accent-violet, .bg-blue-600, .bg-red-500, .bg-cyan-500, .bg-obsidian-800, .bg-surface-elevated {
+    --color-white: #ffffff !important;
+  }
+}
+
+@layer utilities {
+  /* 2. TYPOGRAPHY - Design System Classes */
+  .ds-display {
+    @apply text-4xl md:text-[3rem] leading-[1.1] font-bold tracking-tight text-white;
+  }
+  .ds-heading {
+    @apply text-2xl md:text-[1.875rem] leading-[1.2] font-semibold tracking-tight text-white;
+  }
+  .ds-section-title {
+    @apply text-lg md:text-[1.25rem] leading-[1.4] font-medium text-text-primary;
+  }
+  .ds-body {
+    @apply text-sm md:text-[0.875rem] leading-[1.5] font-normal text-text-secondary;
+  }
+  .ds-label {
+    @apply text-xs md:text-[0.75rem] leading-[1.6] font-medium text-text-tertiary uppercase tracking-wider;
+  }
+  .ds-caption {
+    @apply text-[10px] md:text-[0.625rem] leading-[1.6] font-medium text-text-tertiary uppercase tracking-widest;
+  }
+  .ds-metric {
+    font-variant-numeric: tabular-nums;
+    @apply font-mono font-medium tracking-tight;
+  }
+
+  /* Structural/Surface Classes */
+  .ds-card {
+    @apply bg-surface-card rounded-xl border border-border-default shadow-card;
+  }
+  .ds-card-elevated {
+    @apply bg-surface-elevated rounded-xl border border-white/[0.08] shadow-elevated;
+  }
+  .ds-card-interactive {
+    @apply bg-surface-card rounded-xl border border-border-default shadow-card transition-all duration-240 ease-[var(--ease-fluid)] hover:shadow-hover-elevation hover:border-white/[0.15];
+  }
+
+  .glass-panel {
+    @apply bg-surface-card/80 backdrop-blur-xl border border-border-subtle shadow-elevated;
+  }
+  
+  .glass-panel-interactive {
+    @apply bg-surface-card/80 backdrop-blur-xl border border-border-subtle shadow-elevated transition-all duration-300 ease-[var(--ease-fluid)] hover:bg-surface-elevated/90 hover:border-border-default hover:shadow-hover-elevation;
+  }
+
+  .text-glow-gold { text-shadow: 0 0 20px rgba(228, 197, 128, 0.3); }
+  .text-glow-emerald { text-shadow: 0 0 20px rgba(16, 185, 129, 0.3); }
+  .text-glow-blue { text-shadow: 0 0 20px rgba(59, 130, 246, 0.3); }
+  .text-glow-violet { text-shadow: 0 0 20px rgba(139, 92, 246, 0.3); }
+
+  .grid-cols-24 {
+    grid-template-columns: repeat(24, minmax(0, 1fr));
+  }
+
+  /* Custom scrollbar for a sleek look */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-obsidian-600 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-text-tertiary;
+  }
+}

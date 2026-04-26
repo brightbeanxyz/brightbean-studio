@@ -1,9 +1,0 @@
-Hi {{ client_user.display_name }},
-
-{{ created_by.display_name }} has shared content for your review in {{ workspace.name }}.
-
-Click the link below to access your portal and approve or provide feedback on scheduled posts:
-
-{{ magic_url }}
-
-This link is valid for 30 days. If it expires, ask your account manager for a new one.

@@ -1,8 +1,0 @@
-{% load humanize %}
-{% if messages %}
-{% for msg in messages %}
-{% include "inbox/partials/_message_row.html" with message=msg %}
-{% endfor %}
-{% else %}
-{% include "inbox/partials/_empty_state.html" %}
-{% endif %}

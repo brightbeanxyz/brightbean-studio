@@ -1,4 +1,0 @@
-{% load allauth %}
-<div class="{% if 'error' in attrs.tags %}alert-error{% elif 'success' in attrs.tags %}alert-success{% else %}alert-info{% endif %} mb-4">
-    {% slot %}{% endslot %}
-</div>

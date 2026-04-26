@@ -1,9 +1,0 @@
-{{ notification.title }}
-
-{{ notification.body }}
-
-{% if notification.data.action_url %}View details: {{ notification.data.action_url }}{% endif %}
-
----
-You received this because of your notification settings.
-Manage preferences: {{ app_url }}/notifications/preferences/
