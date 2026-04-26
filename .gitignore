@@ -210,6 +210,8 @@ staticfiles/
 media/
 test_media/
 node_modules/
+!design/dist/
+!design/dist/**
 theme/static/css/dist/
 *.sqlite3
 /.claude/worktrees
