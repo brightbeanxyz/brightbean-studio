@@ -230,6 +230,13 @@ img.sidebar-logo-mark {
   background: var(--neutral-50) !important;
 }
 
+.btn-neutral-100 {
+  transition: background var(--dur-fast) ease;
+}
+.btn-neutral-100:hover {
+  background: var(--neutral-100) !important;
+}
+
 .btn-danger-soft {
   transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
@@ -238,8 +245,82 @@ img.sidebar-logo-mark {
   color: white !important;
 }
 
+.btn-danger-soft-bg {
+  transition: background var(--dur-fast) ease;
+}
+.btn-danger-soft-bg:hover {
+  background: #FEF2F2 !important;
+}
+
+.btn-primary-hover {
+  transition: background var(--dur-fast) ease;
+}
+.btn-primary-hover:hover {
+  background: var(--primary-hover) !important;
+}
+
+.btn-primary-lift {
+  transition: background var(--dur-fast) ease, transform var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.btn-primary-lift:hover {
+  background: var(--primary-hover) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(249,115,22,0.35);
+}
+
+.card-hover-lift {
+  transition: box-shadow var(--dur-fast) ease, border-color var(--dur-fast) ease, transform var(--dur-fast) ease;
+}
+.card-hover-lift:hover {
+  box-shadow: var(--shadow-lg) !important;
+  border-color: transparent !important;
+  transform: translateY(-2px);
+}
+
+.btn-surface-1:hover {
+  background: var(--surface-1) !important;
+}
+.btn-surface-2:hover {
+  background: var(--surface-2, #F5F5F4) !important;
+}
+
+.btn-error-darker {
+  transition: background var(--dur-fast) ease;
+}
+.btn-error-darker:hover {
+  background: var(--error-600, #DC2626) !important;
+}
+
 .btn-opacity:hover {
   opacity: 0.9;
+}
+
+.btn-surface-neutral-50 {
+  transition: background var(--dur-fast) ease;
+}
+.btn-surface-neutral-50:hover {
+  background: var(--neutral-50) !important;
+}
+
+.btn-amber {
+  transition: background var(--dur-fast) ease;
+}
+.btn-amber:hover {
+  background: #FDE68A !important;
+}
+
+.btn-danger-tint {
+  transition: background var(--dur-fast) ease;
+}
+.btn-danger-tint:hover {
+  background: rgba(239,68,68,0.08) !important;
+}
+
+.btn-primary-tint {
+  transition: background var(--dur-fast) ease;
+}
+.btn-primary-tint:hover {
+  background: rgba(var(--primary-rgb, 249, 115, 22), 0.2) !important;
 }
 
 .input-focus {
@@ -252,6 +333,20 @@ img.sidebar-logo-mark {
 .input-focus:not(:focus) {
   border-color: var(--border);
   box-shadow: none;
+}
+
+.input-focus-surface {
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+.input-focus-surface:focus {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 3px var(--primary-ring) !important;
+  background: var(--surface-0) !important;
+}
+.input-focus-surface:not(:focus) {
+  border-color: var(--border);
+  box-shadow: none;
+  background: var(--surface-1);
 }
 
 /* Form input base */

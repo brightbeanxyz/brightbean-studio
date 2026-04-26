@@ -3,7 +3,7 @@ Sent tab partial for the Publish page.
 Shows all published/partially_published platform posts. Loaded via HTMX into #tab-content.
 {% endcomment %}
 
-<div style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both">
+<div{% if is_htmx %} class="tab-slide-in"{% endif %}>
     {% if platform_posts %}
     <table class="w-full">
         <thead>

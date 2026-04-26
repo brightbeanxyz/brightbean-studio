@@ -40,10 +40,8 @@
               hx-swap="outerHTML">
             {% csrf_token %}
             <button type="submit"
-                    class="text-xs px-3 py-1.5 rounded-full font-medium cursor-pointer transition-colors"
-                    style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);"
-                    onmouseenter="this.style.background='var(--neutral-50)'"
-                    onmouseleave="this.style.background='var(--surface-0)'">
+                    class="btn-neutral-surface text-xs px-3 py-1.5 rounded-full font-medium cursor-pointer transition-colors"
+                    style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
                 Resend
             </button>
         </form>
@@ -53,10 +51,8 @@
               hx-confirm="Revoke invitation to {{ invite.email }}?">
             {% csrf_token %}
             <button type="submit"
-                    class="text-xs px-3 py-1.5 rounded-full font-medium cursor-pointer transition-colors"
-                    style="color: #DC2626; background: transparent;"
-                    onmouseenter="this.style.background='#FEF2F2'"
-                    onmouseleave="this.style.background='transparent'">
+                    class="btn-danger-soft-bg text-xs px-3 py-1.5 rounded-full font-medium cursor-pointer transition-colors"
+                    style="color: #DC2626; background: transparent;">
                 Revoke
             </button>
         </form>

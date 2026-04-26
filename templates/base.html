@@ -542,19 +542,15 @@
                                         <span style="width: 1px; height: 20px; background: var(--border);"></span>
                                     </span>
                                     <button type="button" @click="closeCreateModal()"
-                                            class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
-                                            style="background: var(--neutral-100); color: var(--text-primary);"
-                                            onmouseenter="this.style.background='var(--neutral-200)'"
-                                            onmouseleave="this.style.background='var(--neutral-100)'">
+                                            class="btn-neutral px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
+                                            style="background: var(--neutral-100); color: var(--text-primary);">
                                         Cancel
                                     </button>
                                     <button type="submit"
                                             :disabled="createMediaUploadCount > 0 || isCreateSaving"
                                             :class="(createMediaUploadCount > 0 || isCreateSaving) && 'opacity-50 cursor-not-allowed'"
-                                            class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
-                                            style="background: var(--neutral-100); color: var(--text-primary);"
-                                            onmouseenter="this.style.background='var(--neutral-200)'"
-                                            onmouseleave="this.style.background='var(--neutral-100)'">
+                                            class="btn-neutral px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
+                                            style="background: var(--neutral-100); color: var(--text-primary);">
                                         Save Idea
                                     </button>
                                 </div>

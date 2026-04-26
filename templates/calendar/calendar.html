@@ -10,7 +10,7 @@
     <div class="flex items-center gap-3">
         <!-- List / Calendar toggle -->
         <div class="flex items-center bg-stone-50 rounded-full p-0.5" x-data="{ activeMode: '{{ mode|default:'calendar' }}' }">
-            <button class="view-btn" :class="activeMode === 'list' && 'active'"
+            <button class="view-btn{% if mode == 'list' %} active{% endif %}" :class="{ active: activeMode === 'list' }"
                     @click="activeMode = 'list'"
                     hx-get="{% url 'calendar:calendar' workspace_id=workspace.id %}?mode=list&tab={{ active_tab|default:'queue' }}&_switch_mode=1"
                     hx-target="#publish-body"
@@ -19,7 +19,7 @@
                 <svg class="w-3.5 h-3.5 inline -mt-px mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
                 List
             </button>
-            <button class="view-btn" :class="activeMode === 'calendar' && 'active'"
+            <button class="view-btn{% if mode == 'calendar' %} active{% endif %}" :class="{ active: activeMode === 'calendar' }"
                     @click="activeMode = 'calendar'"
                     hx-get="{% url 'calendar:calendar' workspace_id=workspace.id %}?mode=calendar&view={{ view_type|default:'month' }}&_switch_mode=1"
                     hx-target="#publish-body"
@@ -240,6 +240,9 @@
         from { opacity: 0; transform: translateY(8px); }
         to   { opacity: 1; transform: translateY(0); }
     }
+
+    /* Play slideUp only on HTMX-swapped tab content, not initial server render */
+    .tab-slide-in { animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both; }
 </style>
 {% endblock %}
 

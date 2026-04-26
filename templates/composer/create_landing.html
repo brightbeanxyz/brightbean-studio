@@ -740,19 +740,15 @@
                     <button type="button" @click="createPostFromIdea($event, 'create')"
                             :disabled="createMediaUploadCount > 0 || isCreateSaving"
                             :class="(createMediaUploadCount > 0 || isCreateSaving) && 'opacity-50 cursor-not-allowed'"
-                            class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
-                            style="background: var(--neutral-100); color: var(--text-primary);"
-                            onmouseenter="this.style.background='var(--neutral-200)'"
-                            onmouseleave="this.style.background='var(--neutral-100)'">
+                            class="btn-neutral px-5 py-2 text-sm font-medium rounded-full cursor-pointer"
+                            style="background: var(--neutral-100); color: var(--text-primary);">
                         Create Post
                     </button>
                     <button type="submit"
                             :disabled="createMediaUploadCount > 0 || isCreateSaving"
                             :class="(createMediaUploadCount > 0 || isCreateSaving) && 'opacity-50 cursor-not-allowed'"
-                            class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
-                            style="background: var(--neutral-100); color: var(--text-primary);"
-                            onmouseenter="this.style.background='var(--neutral-200)'"
-                            onmouseleave="this.style.background='var(--neutral-100)'">
+                            class="btn-neutral px-5 py-2 text-sm font-medium rounded-full cursor-pointer"
+                            style="background: var(--neutral-100); color: var(--text-primary);">
                         Save Idea
                     </button>
                 </div>
@@ -912,28 +908,22 @@
                 <div class="idea-modal-footer" @click="editGroupDropdownOpen = false; editTagDropdownOpen = false">
                     <button type="button"
                             @click="showDeleteIdeaConfirm = true"
-                            class="px-4 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
-                            style="color: var(--danger, #ef4444); margin-right: auto; background: transparent;"
-                            onmouseenter="this.style.background='rgba(239,68,68,0.08)'"
-                            onmouseleave="this.style.background='transparent'">
+                            class="btn-danger-tint px-4 py-2 text-sm font-medium rounded-full cursor-pointer"
+                            style="color: var(--danger, #ef4444); margin-right: auto; background: transparent;">
                         Delete
                     </button>
                     <button type="button" @click="createPostFromIdea($event, 'edit')"
                             :disabled="editMediaUploadCount > 0 || isEditSaving"
                             :class="(editMediaUploadCount > 0 || isEditSaving) && 'opacity-50 cursor-not-allowed'"
-                            class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
-                            style="background: var(--neutral-100); color: var(--text-primary);"
-                            onmouseenter="this.style.background='var(--neutral-200)'"
-                            onmouseleave="this.style.background='var(--neutral-100)'">
+                            class="btn-neutral px-5 py-2 text-sm font-medium rounded-full cursor-pointer"
+                            style="background: var(--neutral-100); color: var(--text-primary);">
                         Create Post
                     </button>
                     <button type="submit"
                             :disabled="editMediaUploadCount > 0 || isEditSaving"
                             :class="(editMediaUploadCount > 0 || isEditSaving) && 'opacity-50 cursor-not-allowed'"
-                            class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
-                            style="background: var(--neutral-100); color: var(--text-primary);"
-                            onmouseenter="this.style.background='var(--neutral-200)'"
-                            onmouseleave="this.style.background='var(--neutral-100)'">
+                            class="btn-neutral px-5 py-2 text-sm font-medium rounded-full cursor-pointer"
+                            style="background: var(--neutral-100); color: var(--text-primary);">
                         Save Idea
                     </button>
                 </div>
@@ -1061,18 +1051,14 @@
                     <!-- Actions -->
                     <div class="flex items-center justify-end gap-2 mt-4 pt-3" style="border-top: 1px solid rgba(0,0,0,0.06);">
                         <button type="button" @click="copyTemplateBody()"
-                                class="w-9 h-9 rounded-lg border flex items-center justify-center transition-colors cursor-pointer"
+                                class="btn-neutral-100 w-9 h-9 rounded-lg border flex items-center justify-center cursor-pointer"
                                 style="border-color: var(--border); color: var(--text-tertiary);"
-                                onmouseenter="this.style.background='var(--neutral-100)'"
-                                onmouseleave="this.style.background='transparent'"
                                 title="Copy to clipboard">
                             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
                         </button>
                         <button type="button" @click="useTemplate()"
-                                class="inline-flex items-center border gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg transition-colors cursor-pointer"
-                                style="background: rgba(var(--primary-rgb, 249, 115, 22), 0.12); color: var(--primary);border-color: var(--primary); "
-                                onmouseenter="this.style.background='rgba(var(--primary-rgb, 249, 115, 22), 0.2)'"
-                                onmouseleave="this.style.background='rgba(var(--primary-rgb, 249, 115, 22), 0.12)'">
+                                class="btn-primary-tint inline-flex items-center border gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg cursor-pointer"
+                                style="background: rgba(var(--primary-rgb, 249, 115, 22), 0.12); color: var(--primary);border-color: var(--primary); ">
                             <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
                             Use Template
                         </button>

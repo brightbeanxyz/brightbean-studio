@@ -15,7 +15,7 @@ def sidebar_context(request):
         return {}
 
     from apps.members.models import WorkspaceMembership
-    from apps.social_accounts.models import SocialAccount
+    from apps.social_accounts.models import PlatformVisibility, SocialAccount
 
     # User's workspaces (non-archived)
     workspace_memberships = (
@@ -67,8 +67,11 @@ def sidebar_context(request):
         # always surfaces what can be connected. The connect page itself
         # handles the "not configured" case with an admin prompt.
         connected_platforms = {ch.platform for ch in sidebar_channels}
+        hidden_platforms = set(PlatformVisibility.objects.filter(is_visible=False).values_list("platform", flat=True))
         sidebar_connectable_platforms = [
-            (p, label) for p, label in _platform_display_names() if p not in connected_platforms
+            (p, label)
+            for p, label in _platform_display_names()
+            if p not in connected_platforms and p not in hidden_platforms
         ]
 
     # Unread inbox count for sidebar badge

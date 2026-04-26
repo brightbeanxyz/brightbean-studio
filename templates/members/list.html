@@ -7,10 +7,8 @@
         <h2 class="text-xl font-semibold" style="color: var(--text-primary);">Team Members</h2>
         {% if is_admin %}
         <button @click="showInviteModal = true"
-                class="px-5 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
-                style="background: var(--primary); color: white;"
-                onmouseenter="this.style.opacity='0.9'"
-                onmouseleave="this.style.opacity='1'">
+                class="btn-opacity px-5 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
+                style="background: var(--primary); color: white;">
             Invite Team Member
         </button>
         {% endif %}

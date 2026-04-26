@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from zoneinfo import available_timezones
 
 from django.contrib import messages
+from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.shortcuts import redirect, render
@@ -59,6 +60,8 @@ def settings_view(request):
             _handle_tz_update(request, org)
         elif action == "delete_organization":
             return _handle_org_deletion(request, org)
+        elif action == "delete_organization_now":
+            return _handle_immediate_org_deletion(request, org)
         elif action == "cancel_deletion":
             _handle_cancel_deletion(request, org)
         return redirect("organizations:settings")
@@ -135,21 +138,60 @@ def _handle_tz_update(request, org):
 
 
 def _handle_org_deletion(request, org):
-    """Handle organization soft-deletion (owner only)."""
+    """Schedule organization deletion for 14 days from now (owner only)."""
     if request.org_membership.org_role != OrgMembership.OrgRole.OWNER:
         raise PermissionDenied
 
+    from apps.organizations.tasks import execute_scheduled_org_deletion
+
+    grace = timedelta(days=14)
     org.deletion_requested_at = django_tz.now()
-    org.deletion_scheduled_for = django_tz.now() + timedelta(days=14)
+    org.deletion_scheduled_for = django_tz.now() + grace
     org.save(update_fields=["deletion_requested_at", "deletion_scheduled_for"])
+
+    execute_scheduled_org_deletion(str(org.id), schedule=grace)
+
     messages.success(request, "Organization scheduled for deletion in 14 days.")
     return redirect("organizations:settings")
 
 
-def _handle_cancel_deletion(request, org):
-    """Cancel a pending organization deletion (owner only)."""
+def _handle_immediate_org_deletion(request, org):
+    """Permanently delete an organization right now (owner only).
+
+    Since v1 is one-org-per-user, deleting the org leaves the user with no
+    workspace/org context. Log them out and send them to signup so they can
+    start fresh.
+    """
     if request.org_membership.org_role != OrgMembership.OrgRole.OWNER:
         raise PermissionDenied
+
+    from background_task.models import Task
+
+    Task.objects.filter(
+        task_name="apps.organizations.tasks.execute_scheduled_org_deletion",
+        task_params__contains=str(org.id),
+    ).delete()
+
+    org.hard_delete(requesting_user=request.user)
+    logout(request)
+    return redirect("account_signup")
+
+
+def _handle_cancel_deletion(request, org):
+    """Cancel a pending organization deletion (owner only).
+
+    Also removes the queued background-task row so the worker isn't holding
+    a no-op scheduled for 14 days out.
+    """
+    if request.org_membership.org_role != OrgMembership.OrgRole.OWNER:
+        raise PermissionDenied
+
+    from background_task.models import Task
+
+    Task.objects.filter(
+        task_name="apps.organizations.tasks.execute_scheduled_org_deletion",
+        task_params__contains=str(org.id),
+    ).delete()
 
     org.deletion_requested_at = None
     org.deletion_scheduled_for = None

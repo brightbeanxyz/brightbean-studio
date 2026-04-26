@@ -34,7 +34,7 @@ from .types import (
 
 logger = logging.getLogger(__name__)
 
-AUTH_URL = "https://api.instagram.com/oauth/authorize"
+AUTH_URL = "https://www.instagram.com/oauth/authorize"
 TOKEN_URL = "https://api.instagram.com/oauth/access_token"
 API_BASE = "https://graph.instagram.com/v21.0"
 

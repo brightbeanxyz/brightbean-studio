@@ -23,7 +23,7 @@ from apps.common.validators import is_safe_url as _is_safe_url
 from apps.credentials.models import PlatformCredential
 from apps.members.decorators import require_permission
 
-from .models import MastodonAppRegistration, SocialAccount
+from .models import MastodonAppRegistration, PlatformVisibility, SocialAccount
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,15 @@ def _get_provider_for_platform(platform: str, org_id, **extra_credentials):
         credentials = {**credentials, **extra_credentials}
 
     return get_provider(platform, credentials)
+
+
+def _get_visible_platform_choices():
+    """Return PlatformCredential.Platform.choices filtered to visible platforms.
+
+    Platforms without a PlatformVisibility row default to visible.
+    """
+    hidden = set(PlatformVisibility.objects.filter(is_visible=False).values_list("platform", flat=True))
+    return [(value, label) for value, label in PlatformCredential.Platform.choices if value not in hidden]
 
 
 def _get_configured_platforms(org_id):
@@ -190,7 +199,7 @@ def account_list(request, workspace_id):
 
 
 @csp_update(
-    FORM_ACTION="'self' https://accounts.google.com https://www.facebook.com https://api.instagram.com https://threads.net https://www.linkedin.com https://www.pinterest.com https://www.tiktok.com"
+    FORM_ACTION="'self' https://accounts.google.com https://www.facebook.com https://api.instagram.com https://www.instagram.com https://threads.net https://www.linkedin.com https://www.pinterest.com https://www.tiktok.com"
 )
 @login_required
 @require_permission("manage_social_accounts")
@@ -198,6 +207,7 @@ def account_list(request, workspace_id):
 def connect_platform(request, workspace_id):
     """GET: show platform grid. POST: initiate OAuth flow."""
     configured_platforms = _get_configured_platforms(request.org.id)
+    visible_platform_choices = _get_visible_platform_choices()
 
     if request.method == "GET":
         return render(
@@ -205,15 +215,15 @@ def connect_platform(request, workspace_id):
             "social_accounts/connect.html",
             {
                 "workspace_id": workspace_id,
-                "platform_choices": PlatformCredential.Platform.choices,
+                "platform_choices": visible_platform_choices,
                 "configured_platforms": configured_platforms,
             },
         )
 
     # POST: initiate OAuth
     platform = request.POST.get("platform", "").strip()
-    if platform not in dict(PlatformCredential.Platform.choices):
-        messages.error(request, "Invalid platform selected.")
+    if platform not in dict(visible_platform_choices):
+        messages.error(request, "This platform is not available.")
         return redirect("social_accounts:connect", workspace_id=workspace_id)
 
     if platform not in configured_platforms:
@@ -608,7 +618,7 @@ def connect_mastodon(request, workspace_id):
 
 
 @csp_update(
-    FORM_ACTION="'self' https://accounts.google.com https://www.facebook.com https://api.instagram.com https://threads.net https://www.linkedin.com https://www.pinterest.com https://www.tiktok.com"
+    FORM_ACTION="'self' https://accounts.google.com https://www.facebook.com https://api.instagram.com https://www.instagram.com https://threads.net https://www.linkedin.com https://www.pinterest.com https://www.tiktok.com"
 )
 @login_required
 @require_permission("manage_social_accounts")

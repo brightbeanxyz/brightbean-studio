@@ -75,23 +75,28 @@ def create_invitation(org, email, org_role, workspace_assignments, invited_by):
     return invitation
 
 
-def accept_invitation(invitation, user):
+def accept_invitation(invitation, user, *, require_email_match=True):
     """Accept an invitation: create org + workspace memberships.
 
     Args:
         invitation: The Invitation to accept.
         user: The User accepting.
+        require_email_match: When True (default), reject if the user's email
+            differs from the invitation's. The signup signal path passes
+            False because the session-bound token is itself proof of email
+            delivery (and social logins return whatever email the provider
+            owns, which often differs from the invited address).
 
     Raises:
-        ValueError: If the invitation is expired or already accepted.
+        ValueError: If the invitation is expired, already accepted, or the
+            user's email does not match (when require_email_match is True).
     """
     if invitation.is_expired:
         raise ValueError("This invitation has expired.")
     if invitation.is_accepted:
         raise ValueError("This invitation has already been accepted.")
 
-    # Verify the accepting user's email matches the invitation
-    if user.email.lower() != invitation.email.lower():
+    if require_email_match and user.email.lower() != invitation.email.lower():
         raise ValueError("This invitation was sent to a different email address.")
 
     # Create org membership (skip if exists, e.g. user was already added)

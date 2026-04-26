@@ -4,7 +4,7 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
 {% endcomment %}
 {% load tz %}
 
-<div style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both">
+<div{% if is_htmx %} class="tab-slide-in"{% endif %}>
     {% if platform_posts %}
     {% regroup platform_posts by effective_at.date as date_groups %}
     {% for group in date_groups %}

@@ -63,11 +63,9 @@ Tab switching is HTMX partial swaps only - no full page reload.
         </div>
     </div>
 
-    <!-- Tab content area (swapped by HTMX - no full page reload) -->
-    <div id="tab-content" class="mt-4 flex-1 min-h-0 overflow-y-auto flex justify-center [&>*]:w-full [&>*]:max-w-4xl" x-init="$nextTick(() => reloadTab())">
-        <!-- Initial content loaded via Alpine x-init -->
-        <div class="flex items-center justify-center py-12">
-            <div class="w-5 h-5 border-2 border-stone-300 border-t-orange-500 rounded-full animate-spin"></div>
-        </div>
+    <!-- Tab content area (swapped by HTMX on tab/filter changes). -->
+    <!-- Initial tab is rendered server-side to avoid a spinner-then-content shift. -->
+    <div id="tab-content" class="mt-4 flex-1 min-h-0 overflow-y-auto flex justify-center [&>*]:w-full [&>*]:max-w-4xl">
+        {% include initial_tab_template %}
     </div>
 </div>

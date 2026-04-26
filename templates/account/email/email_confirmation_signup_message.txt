@@ -1,0 +1,10 @@
+{% load account %}{% autoescape off %}{% user_display user as user_display %}Hi {{ user_display }},
+
+Thanks for signing up for Brightbean. Please confirm your email address by clicking the link below:
+
+{{ activate_url }}
+
+If you didn't sign up, you can safely ignore this email.
+
+— The Brightbean team
+{% endautoescape %}

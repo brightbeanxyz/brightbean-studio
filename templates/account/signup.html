@@ -80,6 +80,7 @@
                        {% if field.field.widget.attrs.placeholder %}placeholder="{{ field.field.widget.attrs.placeholder }}"{% endif %}
                        {% if field.field.widget.attrs.autocomplete %}autocomplete="{{ field.field.widget.attrs.autocomplete }}"{% endif %}
                        {% if field.field.required %}required{% endif %}
+                       {% if field.name == 'email' and invited_email_locked %}readonly{% endif %}
                        class="form-input-styled {% if field.errors %}is-error{% endif %}">
                 {% endif %}
                 {% if field.errors %}

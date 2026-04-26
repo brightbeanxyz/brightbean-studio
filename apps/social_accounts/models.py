@@ -178,3 +178,27 @@ class MastodonAppRegistration(models.Model):
 
     def __str__(self):
         return self.instance_url
+
+
+class PlatformVisibility(models.Model):
+    """Site-wide toggle controlling which platforms appear on the connect page."""
+
+    platform = models.CharField(
+        max_length=30,
+        choices=PlatformCredential.Platform.choices,
+        unique=True,
+    )
+    is_visible = models.BooleanField(
+        default=True,
+        help_text="If unchecked, this platform is hidden from the connect page.",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "social_accounts_platform_visibility"
+        verbose_name = "Connect page platform"
+        verbose_name_plural = "Connect page platforms"
+        ordering = ["platform"]
+
+    def __str__(self):
+        return f"{self.get_platform_display()} ({'visible' if self.is_visible else 'hidden'})"

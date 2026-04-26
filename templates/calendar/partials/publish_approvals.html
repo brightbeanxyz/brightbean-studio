@@ -6,7 +6,7 @@ All members can view; action buttons shown conditionally based on can_approve pe
 
 <div x-data="{ selectedPosts: [], showBulkBar: false }"
      x-effect="showBulkBar = selectedPosts.length > 0"
-     style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both">
+     {% if is_htmx %}class="tab-slide-in"{% endif %}>
 
     <!-- Filter sub-tabs -->
     <div class="flex flex-wrap gap-1.5 mb-5">

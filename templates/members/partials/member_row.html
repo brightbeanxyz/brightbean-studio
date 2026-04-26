@@ -37,10 +37,8 @@
         {% if is_admin and member.user.id != current_user.id %}
         <div class="flex-shrink-0 relative">
             <button @click="showActions = !showActions"
-                    class="p-1.5 rounded-lg transition-colors cursor-pointer"
-                    style="color: var(--text-tertiary);"
-                    onmouseenter="this.style.background='var(--neutral-100)'"
-                    onmouseleave="this.style.background='transparent'">
+                    class="btn-neutral-100 p-1.5 rounded-lg transition-colors cursor-pointer"
+                    style="color: var(--text-tertiary);">
                 <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
             </button>
 
@@ -76,10 +74,8 @@
                 <button @click="showWorkspaces = true; showActions = false"
                         hx-get="{% url 'members:manage_workspaces' membership_id=member.membership.id %}"
                         hx-target="#ws-modal-content"
-                        class="w-full text-left px-3 py-2 text-sm cursor-pointer transition-colors"
-                        style="color: var(--text-primary);"
-                        onmouseenter="this.style.background='var(--neutral-50)'"
-                        onmouseleave="this.style.background='transparent'">
+                        class="btn-neutral-surface w-full text-left px-3 py-2 text-sm cursor-pointer transition-colors"
+                        style="color: var(--text-primary);">
                     Manage Workspaces
                 </button>
 
@@ -90,10 +86,8 @@
                       hx-confirm="Remove {{ member.user.display_name }} from the organization? This will also remove them from all workspaces.">
                     {% csrf_token %}
                     <button type="submit"
-                            class="w-full text-left px-3 py-2 text-sm cursor-pointer transition-colors"
-                            style="color: #DC2626;"
-                            onmouseenter="this.style.background='#FEF2F2'"
-                            onmouseleave="this.style.background='transparent'">
+                            class="btn-danger-soft-bg w-full text-left px-3 py-2 text-sm cursor-pointer transition-colors"
+                            style="color: #DC2626;">
                         Remove from Organization
                     </button>
                 </form>
