@@ -147,10 +147,11 @@ class InstagramLoginProvider(SocialProvider):
         return self._exchange_for_long_lived_token(short_lived_token)
 
     def _exchange_for_long_lived_token(self, short_lived_token: str) -> OAuthTokens:
+        # Meta's long-lived token endpoint requires GET with query params
         resp = self._request(
-            "POST",
+            "GET",
             f"{GRAPH_HOST}/access_token",
-            data={
+            params={
                 "grant_type": "ig_exchange_token",
                 "client_secret": self.credentials["client_secret"],
                 "access_token": short_lived_token,
@@ -180,9 +181,9 @@ class InstagramLoginProvider(SocialProvider):
         no separate refresh token.
         """
         resp = self._request(
-            "POST",
+            "GET",
             f"{GRAPH_HOST}/refresh_access_token",
-            data={
+            params={
                 "grant_type": "ig_refresh_token",
                 "access_token": refresh_token,
             },
