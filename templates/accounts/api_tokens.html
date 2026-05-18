@@ -1,0 +1,103 @@
+{% extends "layouts/settings.html" %}
+{% block title %}API Tokens - Settings - Brightbean{% endblock %}
+{% block content %}
+<div class="max-w-3xl">
+    <h2 class="text-xl font-semibold mb-2" style="color: var(--text-primary);">API tokens</h2>
+    <p class="text-sm mb-8" style="color: var(--text-secondary);">
+        API tokens authenticate AI tools (Claude Desktop, Cursor, Claude Code) and other clients connecting to Brightbean via MCP.
+        Treat them like passwords — anyone with a token can act as you in the workspaces you select.
+    </p>
+
+    {% if just_created %}
+    <div class="mb-8 p-4 rounded-lg" style="background: var(--surface-1, #F0FDF4); border: 1px solid var(--success-500, #16A34A);">
+        <p class="text-sm font-semibold mb-2" style="color: var(--text-primary);">Token created — copy it now.</p>
+        <p class="text-xs mb-3" style="color: var(--text-secondary);">This is the only time the full token will be shown. Once you leave this page, only its prefix remains visible.</p>
+        <div class="flex items-center gap-2">
+            <code class="flex-1 px-3 py-2 text-xs font-mono rounded select-all" style="background: var(--surface-0); border: 1px solid var(--border); color: var(--text-primary); word-break: break-all;">{{ just_created }}</code>
+            <button type="button"
+                    onclick="navigator.clipboard.writeText('{{ just_created }}'); this.textContent = 'Copied';"
+                    class="btn-neutral px-3 py-2 text-xs font-medium rounded cursor-pointer"
+                    style="background: var(--neutral-100); color: var(--text-primary);">
+                Copy
+            </button>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Create form -->
+    <form method="POST" class="mb-10 p-4 rounded-lg" style="border: 1px solid var(--border);">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create">
+        <p class="text-sm font-semibold mb-4" style="color: var(--text-primary);">Create a new token</p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+                <label for="name" class="block text-xs font-medium mb-1" style="color: var(--text-secondary);">Label</label>
+                <input type="text" id="name" name="name" required maxlength="100"
+                       placeholder="e.g. Claude Desktop on laptop"
+                       class="input-focus w-full px-3 py-2 text-sm rounded-lg outline-none"
+                       style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
+            </div>
+            <div>
+                <label for="scoped_workspace" class="block text-xs font-medium mb-1" style="color: var(--text-secondary);">Workspace scope (optional)</label>
+                <select id="scoped_workspace" name="scoped_workspace"
+                        class="input-focus w-full px-3 py-2 text-sm rounded-lg outline-none"
+                        style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
+                    <option value="">All workspaces I have access to</option>
+                    {% for ws in workspaces %}
+                    <option value="{{ ws.id }}">{{ ws.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <button type="submit"
+                class="btn-neutral px-5 py-2 text-sm font-medium rounded-full cursor-pointer"
+                style="background: var(--neutral-100); color: var(--text-primary);">
+            Create token
+        </button>
+    </form>
+
+    <!-- Existing tokens -->
+    <p class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Your tokens</p>
+    {% if tokens %}
+    <div class="rounded-lg" style="border: 1px solid var(--border);">
+        {% for token in tokens %}
+        <div class="flex items-center justify-between px-4 py-3 {% if not forloop.last %}border-b{% endif %}" style="border-color: var(--border);">
+            <div class="min-w-0">
+                <p class="text-sm font-medium" style="color: var(--text-primary);">
+                    {{ token.name }}
+                    {% if token.revoked_at %}
+                    <span class="ml-2 text-xs px-2 py-0.5 rounded-full" style="background: var(--neutral-100); color: var(--text-tertiary);">Revoked</span>
+                    {% elif not token.is_active %}
+                    <span class="ml-2 text-xs px-2 py-0.5 rounded-full" style="background: var(--neutral-100); color: var(--text-tertiary);">Expired</span>
+                    {% endif %}
+                </p>
+                <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">
+                    <code class="font-mono">{{ token.token_prefix }}…</code>
+                    · created {{ token.created_at|date:"M j, Y" }}
+                    {% if token.scoped_workspace %} · scoped to {{ token.scoped_workspace.name }}{% endif %}
+                    {% if token.last_used_at %} · last used {{ token.last_used_at|date:"M j, Y H:i" }}{% else %} · never used{% endif %}
+                </p>
+            </div>
+            {% if not token.revoked_at %}
+            <form method="POST" class="shrink-0">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="revoke">
+                <input type="hidden" name="token_id" value="{{ token.id }}">
+                <button type="submit"
+                        onclick="return confirm('Revoke this token? Any client using it will stop working immediately.')"
+                        class="btn-danger-soft px-3 py-1.5 text-xs font-medium rounded-full cursor-pointer"
+                        style="background: var(--error-soft, #FEE2E2); color: var(--error-500, #EF4444);">
+                    Revoke
+                </button>
+            </form>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-sm" style="color: var(--text-tertiary);">No tokens yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

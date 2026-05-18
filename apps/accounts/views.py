@@ -233,3 +233,71 @@ def accept_terms(request):
 def logout_view(request):
     logout(request)
     return redirect("account_login")
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def api_tokens(request):
+    from apps.members.models import WorkspaceMembership
+
+    from .api_auth import create_token
+    from .models import ApiToken
+
+    user = request.user
+
+    if request.method == "POST":
+        action = request.POST.get("action", "")
+        if action == "create":
+            name = request.POST.get("name", "").strip()
+            if not name:
+                messages.error(request, "Name is required.")
+                return redirect("accounts:api_tokens")
+
+            scoped_workspace = None
+            workspace_id = request.POST.get("scoped_workspace") or ""
+            if workspace_id:
+                membership = (
+                    WorkspaceMembership.objects.filter(
+                        user=user, workspace_id=workspace_id, workspace__is_archived=False
+                    )
+                    .select_related("workspace")
+                    .first()
+                )
+                if membership is None:
+                    messages.error(request, "Selected workspace is not available.")
+                    return redirect("accounts:api_tokens")
+                scoped_workspace = membership.workspace
+
+            _, raw = create_token(user=user, name=name, scoped_workspace=scoped_workspace)
+            request.session["api_token_just_created"] = raw
+            messages.success(request, "Token created. Copy it now — it will not be shown again.")
+            return redirect("accounts:api_tokens")
+
+        if action == "revoke":
+            token_id = request.POST.get("token_id", "")
+            updated = ApiToken.objects.filter(id=token_id, user=user, revoked_at__isnull=True).update(
+                revoked_at=timezone.now()
+            )
+            if updated:
+                messages.success(request, "Token revoked.")
+            else:
+                messages.error(request, "Token not found.")
+            return redirect("accounts:api_tokens")
+
+    tokens = ApiToken.objects.filter(user=user).select_related("scoped_workspace")
+    workspaces = [
+        m.workspace
+        for m in WorkspaceMembership.objects.filter(user=user, workspace__is_archived=False).select_related("workspace")
+    ]
+    just_created = request.session.pop("api_token_just_created", None)
+
+    return render(
+        request,
+        "accounts/api_tokens.html",
+        {
+            "settings_active": "api_tokens",
+            "tokens": tokens,
+            "workspaces": workspaces,
+            "just_created": just_created,
+        },
+    )

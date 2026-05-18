@@ -100,3 +100,37 @@ class Session(models.Model):
 
     def __str__(self):
         return f"Session for {self.user.email}"
+
+
+class ApiToken(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="api_tokens")
+    name = models.CharField(max_length=100)
+    token_prefix = models.CharField(max_length=12, db_index=True)
+    token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    scoped_workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="api_tokens",
+    )
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "accounts_api_token"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.name} ({self.token_prefix}…) for {self.user.email}"
+
+    @property
+    def is_active(self):
+        from django.utils import timezone
+
+        if self.revoked_at is not None:
+            return False
+        return not (self.expires_at is not None and self.expires_at < timezone.now())

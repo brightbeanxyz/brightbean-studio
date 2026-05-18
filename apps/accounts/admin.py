@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import OAuthConnection, Session, User
+from .models import ApiToken, OAuthConnection, Session, User
 
 
 @admin.register(User)
@@ -29,3 +29,16 @@ class OAuthConnectionAdmin(admin.ModelAdmin):
 class SessionAdmin(admin.ModelAdmin):
     list_display = ("user", "device_info", "ip_address", "last_active_at", "expires_at")
     list_filter = ("created_at",)
+
+
+@admin.register(ApiToken)
+class ApiTokenAdmin(admin.ModelAdmin):
+    list_display = ("user", "name", "token_prefix", "scoped_workspace", "last_used_at", "created_at", "revoked_at")
+    list_filter = ("created_at", "revoked_at")
+    search_fields = ("user__email", "name", "token_prefix")
+    readonly_fields = ("id", "token_prefix", "token_hash", "last_used_at", "created_at")
+    fieldsets = (
+        (None, {"fields": ("user", "name", "scoped_workspace")}),
+        ("Token", {"fields": ("token_prefix", "token_hash")}),
+        ("Lifecycle", {"fields": ("expires_at", "revoked_at", "last_used_at", "created_at")}),
+    )
