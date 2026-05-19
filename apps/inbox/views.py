@@ -1,7 +1,5 @@
 """Views for the Unified Social Inbox (F-3.1)."""
 
-import logging
-
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
@@ -11,12 +9,10 @@ from django.views.decorators.http import require_POST
 
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
-from apps.notifications.engine import notify
-from apps.notifications.models import EventType
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
-from providers import get_provider
 
+from . import services
 from .forms import (
     AssignForm,
     BulkActionForm,
@@ -29,13 +25,9 @@ from .forms import (
 )
 from .models import (
     InboxMessage,
-    InboxReply,
     InboxSLAConfig,
-    InternalNote,
     SavedReply,
 )
-
-logger = logging.getLogger(__name__)
 
 MESSAGES_PER_PAGE = 50
 
@@ -220,41 +212,7 @@ def send_reply(request, workspace_id, message_id):
         return HttpResponse("Invalid reply.", status=400)
 
     body = form.cleaned_data["body"]
-    account = message.social_account
-    platform_reply_id = ""
-
-    # Attempt to post reply via provider
-    try:
-        provider = get_provider(account.platform)
-        result = provider.reply_to_message(
-            access_token=account.oauth_access_token,
-            message_id=message.platform_message_id,
-            text=body,
-            extra=message.extra,
-        )
-        platform_reply_id = result.platform_message_id
-    except NotImplementedError:
-        logger.info("Provider %s does not support reply_to_message.", account.platform)
-    except (ConnectionError, TimeoutError, OSError) as exc:
-        logger.exception("Network error sending reply for message %s: %s", message.id, exc)
-    except Exception:
-        logger.exception("Failed to send reply for message %s", message.id)
-
-    reply = InboxReply.objects.create(
-        inbox_message=message,
-        author=request.user,
-        body=body,
-        platform_reply_id=platform_reply_id,
-    )
-
-    # Auto-resolve on reply if configured
-    sla_config = InboxSLAConfig.objects.filter(workspace=workspace, is_active=True).first()
-    if sla_config and sla_config.auto_resolve_on_reply:
-        message.status = InboxMessage.Status.RESOLVED
-        message.save(update_fields=["status"])
-    elif message.status == InboxMessage.Status.UNREAD:
-        message.status = InboxMessage.Status.OPEN
-        message.save(update_fields=["status"])
+    reply = services.send_reply(message=message, body=body, author=request.user)
 
     context = {"reply": reply, "workspace": workspace, "message": message}
     return render(request, "inbox/partials/_reply_item.html", context)
@@ -275,11 +233,7 @@ def add_note(request, workspace_id, message_id):
     if not form.is_valid():
         return HttpResponse("Invalid note.", status=400)
 
-    note = InternalNote.objects.create(
-        inbox_message=message,
-        author=request.user,
-        body=form.cleaned_data["body"],
-    )
+    note = services.add_internal_note(message=message, body=form.cleaned_data["body"], author=request.user)
 
     context = {"note": note, "workspace": workspace, "message": message}
     return render(request, "inbox/partials/_note_item.html", context)
@@ -301,8 +255,8 @@ def assign_message(request, workspace_id, message_id):
         return HttpResponse("Invalid assignment.", status=400)
 
     assigned_to_id = form.cleaned_data.get("assigned_to")
+    assignee = None
     if assigned_to_id:
-        # Verify the user is a workspace member
         membership = (
             WorkspaceMembership.objects.filter(workspace=workspace, user_id=assigned_to_id)
             .select_related("user")
@@ -310,24 +264,9 @@ def assign_message(request, workspace_id, message_id):
         )
         if not membership:
             return HttpResponse("User is not a workspace member.", status=400)
-        message.assigned_to = membership.user
-    else:
-        message.assigned_to = None
+        assignee = membership.user
 
-    message.save(update_fields=["assigned_to"])
-
-    # Notify the assignee
-    if message.assigned_to and message.assigned_to != request.user:
-        notify(
-            user=message.assigned_to,
-            event_type=EventType.NEW_INBOX_MESSAGE,
-            title=f"You were assigned a {message.get_message_type_display()}",
-            body=f"From {message.sender_name}: {message.body[:100]}",
-            data={
-                "message_id": str(message.id),
-                "workspace_id": str(workspace.id),
-            },
-        )
+    services.assign_message(message=message, assignee=assignee, actor=request.user)
 
     context = _detail_context(workspace, message)
     return render(request, "inbox/partials/_message_panel.html", context)
@@ -348,8 +287,7 @@ def change_status(request, workspace_id, message_id):
     if not form.is_valid():
         return HttpResponse("Invalid status.", status=400)
 
-    message.status = form.cleaned_data["status"]
-    message.save(update_fields=["status"])
+    services.change_status(message=message, status=form.cleaned_data["status"])
 
     context = _detail_context(workspace, message)
     return render(request, "inbox/partials/_message_panel.html", context)

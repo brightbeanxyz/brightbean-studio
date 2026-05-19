@@ -101,4 +101,13 @@ def build_server(ctx: AuthContext):
     # exceptions into structured tool errors visible to the AI client.
     _ = (MCPAuthError, MCPWorkspaceError)  # keep imported for downstream tool modules
 
+    from .tools import approvals, composer, inbox, media, publishing, social_accounts
+
+    social_accounts.register(mcp, ctx)
+    media.register(mcp, ctx)
+    composer.register(mcp, ctx)
+    publishing.register(mcp, ctx)
+    inbox.register(mcp, ctx)
+    approvals.register(mcp, ctx)
+
     return mcp
