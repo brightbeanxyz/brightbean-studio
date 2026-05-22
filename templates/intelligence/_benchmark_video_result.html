@@ -1,5 +1,5 @@
 <div id="benchmark-video-result" class="mt-3 p-3 rounded border border-stone-200 bg-stone-50">
-  {% with video=result.payload.video niche=result.payload.niche %}
+  {% with video=result.video niche=result.niche %}
     <div class="text-sm font-semibold text-stone-900">{{ video.title }}</div>
     <div class="text-xs text-stone-500 mt-1">
       {{ video.channel_title }} · {{ video.view_count }} views
