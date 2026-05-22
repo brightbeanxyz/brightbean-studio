@@ -913,17 +913,107 @@ def _credits_for(endpoint_path: str) -> int:
     }.get(endpoint_path, 0)
 
 
+SCORE_PACKAGING_MAX_THUMBNAIL_BYTES = 5 * 1024 * 1024  # 5 MiB
+SCORE_PACKAGING_ALLOWED_THUMBNAIL_TYPES = frozenset({
+    "image/jpeg", "image/png", "image/webp",
+})
+# Pillow returns these for the same MIME types; both axes (browser-reported
+# content_type AND Pillow-detected format) must match the allow-list before
+# we forward bytes to Intelligence.
+SCORE_PACKAGING_ALLOWED_PIL_FORMATS = frozenset({"JPEG", "PNG", "WEBP"})
+
+
+def _validate_thumbnail_upload(uploaded):
+    """Reject any uploaded file that isn't a real, small image.
+
+    Returns (base64_string, None) on success; (None, error_message) on
+    rejection. Defends against:
+
+    - Oversized payloads (size cap before Pillow even touches the file).
+    - MIME spoofing (browser ``content_type`` is user-controlled; we
+      cross-check against Pillow's magic-byte format detection).
+    - Polyglot files / HTML-as-image / corrupted images (Pillow
+      ``verify()`` rejects anything it can't parse as a real image).
+    - Extension-only forgery (we don't trust the filename at all).
+    """
+    import base64
+    import io
+
+    from PIL import Image, UnidentifiedImageError
+
+    if uploaded.size > SCORE_PACKAGING_MAX_THUMBNAIL_BYTES:
+        return None, "Thumbnail must be 5 MB or smaller."
+
+    # Browser-reported content-type is the first cheap filter. It's
+    # NOT trusted on its own — a malicious client can send any string —
+    # but it filters out the obvious noise before we spend Pillow cycles.
+    content_type = (uploaded.content_type or "").lower()
+    if content_type not in SCORE_PACKAGING_ALLOWED_THUMBNAIL_TYPES:
+        return None, "Thumbnail must be a JPEG, PNG, or WebP image."
+
+    # Read once into memory. Capped to 5 MB above, so memory is bounded.
+    raw = uploaded.read()
+    if len(raw) > SCORE_PACKAGING_MAX_THUMBNAIL_BYTES:
+        # Defensive: ``uploaded.size`` is the multipart parser's view;
+        # actual read length can differ in pathological cases.
+        return None, "Thumbnail must be 5 MB or smaller."
+
+    # Pillow magic-byte check. ``verify()`` parses the header + does a
+    # cheap structural sanity pass without decoding the full image, then
+    # we use ``Image.open`` a second time to read ``format`` (the first
+    # Image is unusable after verify() per Pillow docs).
+    try:
+        Image.open(io.BytesIO(raw)).verify()
+        pil_format = Image.open(io.BytesIO(raw)).format
+    except (UnidentifiedImageError, OSError, ValueError):
+        return None, "Thumbnail is not a recognized image file."
+
+    if pil_format not in SCORE_PACKAGING_ALLOWED_PIL_FORMATS:
+        return None, "Thumbnail must be a JPEG, PNG, or WebP image."
+
+    return base64.b64encode(raw).decode("ascii"), None
+
+
 @require_POST
 @require_org_permission("use_intelligence")
 @intelligence_subscription_required
 def score_packaging(request, org_id):
-    body = {
-        "title": (request.POST.get("title") or "").strip() or None,
-        "thumbnail_url": (request.POST.get("thumbnail_url") or "").strip() or None,
-        "thumbnail_base64": (request.POST.get("thumbnail_base64") or "").strip() or None,
-        "channel_url": (request.POST.get("channel_url") or "").strip() or None,
-    }
-    body = {k: v for k, v in body.items() if v is not None}
+    title = (request.POST.get("title") or "").strip() or None
+
+    # Thumbnail: accept ONLY a multipart file upload — we deliberately
+    # do NOT accept ``thumbnail_url`` or a client-supplied
+    # ``thumbnail_base64`` POST field. Removing URL support eliminates
+    # an SSRF surface (server-side URL fetches against attacker-chosen
+    # hosts), and refusing client-base64 forces the file through the
+    # validation pipeline above so a malicious client can't smuggle
+    # non-image bytes by setting a fake data-URL prefix.
+    thumbnail_base64 = None
+    uploaded = request.FILES.get("thumbnail")
+    if uploaded is not None:
+        thumbnail_base64, err = _validate_thumbnail_upload(uploaded)
+        if err is not None:
+            return render(
+                request, "intelligence/_tool_error.html",
+                {"code": "invalid_thumbnail", "message": err,
+                 "organization": request.org},
+                status=400,
+            )
+
+    if not title and not thumbnail_base64:
+        return render(
+            request, "intelligence/_tool_error.html",
+            {"code": "missing_input",
+             "message": "Provide a title, a thumbnail, or both.",
+             "organization": request.org},
+            status=400,
+        )
+
+    body: dict = {}
+    if title is not None:
+        body["title"] = title
+    if thumbnail_base64 is not None:
+        body["thumbnail_base64"] = thumbnail_base64
+
     return _call_tool(
         request, "score_packaging", body=body,
         template="intelligence/_score_packaging_result.html",
