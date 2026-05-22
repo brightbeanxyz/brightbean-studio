@@ -39,12 +39,15 @@
         <div>
             <div class="text-xs font-semibold uppercase tracking-wide mb-1.5" style="color: var(--text-tertiary);">Status</div>
             <div class="flex items-center gap-2 flex-wrap">
+                {% comment %}
+                  Stripe keeps status='active' until the period actually
+                  ends. When ``cancel_at`` is set, the user has clicked
+                  "Cancel" in the portal and is in the grace period —
+                  show an amber pill so it's visually distinct from a
+                  healthy "Active". (Must use {% comment %} not {# #}
+                  because the latter is single-line in Django.)
+                {% endcomment %}
                 {% if cancel_at and subscription.status == 'active' %}
-                {# Stripe keeps status='active' until the period actually
-                   ends. When ``cancel_at`` is set, the user has clicked
-                   "Cancel" in the portal and is in the grace period —
-                   show an amber pill so it's visually distinct from a
-                   healthy "Active". #}
                 <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-full bg-amber-50 text-amber-700">
                     <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
                     Active · canceling
