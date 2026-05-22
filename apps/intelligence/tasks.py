@@ -131,6 +131,28 @@ def provision_intelligence_account_via_session(pending_id):
     pending.resolved_organization_id = resolved_org_id
     pending.save(update_fields=["resolved_organization", "updated_at"])
 
+    # ---- Belt-and-braces: refuse if Intelligence's resolved org id
+    # disagrees with the local StudioCheckoutAttempt's organization.
+    # The sync activate view does this explicitly at views.py:463-468;
+    # without parity here, a buggy / compromised Intelligence service
+    # could return a mismatched resolved_external_org_id and the worker
+    # would proceed to commit into the wrong org. Intelligence's own
+    # /activate-preflight is supposed to enforce this equality
+    # server-side, but trust-but-verify is cheap.
+    if str(resolved_org_id) != str(attempt.organization_id):
+        pending.status = PendingActivation.Status.PROVISIONING_FAILED
+        pending.last_error = (
+            f"resolved_org_mismatch: intel returned {resolved_org_id!r} "
+            f"but local attempt is for {attempt.organization_id!r}"
+        )
+        pending.save(update_fields=["status", "last_error", "updated_at"])
+        logger.warning(
+            "Worker resolved_org_mismatch for pending %s "
+            "(attempt_org=%s resolved_org=%s)",
+            pending.id, attempt.organization_id, resolved_org_id,
+        )
+        return
+
     # ---- CRITICAL: re-check current OrgMembership of pending.user ------
     # The activate view did this for the sync path; the worker MUST do
     # it too. Without this check, a captured/guessed session id forced
