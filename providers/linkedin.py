@@ -185,7 +185,7 @@ class LinkedInProvider(SocialProvider):
     def get_profile(self, access_token: str) -> AccountProfile:
         resp = self._request(
             "GET",
-            f"{API_BASE}/v2/me",
+            f"{API_BASE}/v2/me?projection=(id,localizedFirstName,localizedLastName,vanityName,profilePicture(displayImage~:playableStreams))",
             access_token=access_token,
             headers=LINKEDIN_HEADERS,
         )
@@ -193,12 +193,27 @@ class LinkedInProvider(SocialProvider):
         first = data.get("localizedFirstName", "")
         last = data.get("localizedLastName", "")
         name = f"{first} {last}".strip() or data.get("vanityName", "")
+        avatar_url = self._resolve_profile_picture(data)
         return AccountProfile(
             platform_id=data.get("id", ""),
             name=name,
-            avatar_url=data.get("profilePicture", {}).get("displayImage"),
+            avatar_url=avatar_url,
             extra=data,
         )
+
+    @staticmethod
+    def _resolve_profile_picture(data: dict) -> str | None:
+        pic = data.get("profilePicture", {})
+        elements = pic.get("displayImage~", {}).get("elements", [])
+        if elements:
+            largest = max(elements, key=lambda e: e.get("data", {}).get("com.linkedin.digitalmedia.mediaartifact.StillImage", {}).get("storageSize", {}).get("width", 0))
+            for identifier in largest.get("identifiers", []):
+                if identifier.get("identifierType") == "EXTERNAL_URL":
+                    return identifier["identifier"]
+        display_image = pic.get("displayImage")
+        if display_image and not display_image.startswith("urn:"):
+            return display_image
+        return None
 
     # ------------------------------------------------------------------
     # Publishing
