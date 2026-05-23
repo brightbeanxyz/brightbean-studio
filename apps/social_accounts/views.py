@@ -328,10 +328,11 @@ def oauth_callback(request, platform):
         tokens = provider.exchange_code(code, redirect_uri)
         profile = provider.get_profile(tokens.access_token)
 
-        # Facebook/Instagram: only connect Pages, not personal profiles
+        # Facebook/Instagram/LinkedIn Company: connect Pages, not personal profiles
         if platform in (
             PlatformCredential.Platform.FACEBOOK,
             PlatformCredential.Platform.INSTAGRAM,
+            PlatformCredential.Platform.LINKEDIN_COMPANY,
         ) and hasattr(provider, "get_user_pages"):
             pages = provider.get_user_pages(tokens.access_token)
             if pages:

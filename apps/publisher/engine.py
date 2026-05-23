@@ -354,6 +354,10 @@ class PublishEngine:
             if platform == "facebook" and "page_id" not in extra:
                 extra["page_id"] = account.account_platform_id
 
+            # Inject org author URN for LinkedIn Company Page.
+            if platform == "linkedin_company" and "author" not in extra:
+                extra["author"] = f"urn:li:organization:{account.account_platform_id}"
+
             # Pop link_url from extra and set on PublishContent directly
             link_url = extra.pop("link_url", None)
 
