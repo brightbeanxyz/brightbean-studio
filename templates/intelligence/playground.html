@@ -39,15 +39,33 @@
 {% block content %}
 {% comment %}
   Single Intelligence UI surface. The playground layout below is ALWAYS
-  rendered; overlay states cover it visually when the org isn't on an
-  active subscription. Forms inside ``.intel-tools`` are visually
-  disabled (pointer-events:none + opacity-40) when ``subscription`` is
-  not status='active', so they only become interactive once the
-  overlay lifts.
+  rendered, fully interactive. When the org isn't yet subscribed we
+  show an inline preview banner above the tabs (no opacity dim, no
+  blocking overlay) — users can switch tabs, browse the inputs, see
+  the empty-state result panels, and only meet the paywall when they
+  actually click a tool's submit button (the server returns the
+  ``_subscribe_required.html`` fragment from
+  ``@intelligence_subscription_required``).
+
+  Transient/error states (finalizing, past_due, canceled,
+  provisioning_failed) still use overlays because the user paid and
+  needs to know something is wrong with the active sub.
 {% endcomment %}
 
 <div class="relative">
-    <div class="intel-tools {% if not subscription or subscription.status != 'active' %}pointer-events-none opacity-40{% endif %}">
+
+    {% comment %} Inline preview banner for the not-subscribed cases {% endcomment %}
+    {% if not subscription %}
+        {% if pending_activation and can_manage_billing %}
+            {% include "intelligence/_overlay_pending_activation.html" with pending=pending_activation %}
+        {% elif can_manage_billing %}
+            {% include "intelligence/_overlay_not_subscribed_admin.html" %}
+        {% else %}
+            {% include "intelligence/_overlay_not_subscribed_member.html" %}
+        {% endif %}
+    {% endif %}
+
+    <div class="intel-tools">
 
         {# Tab bar #}
         <div class="overflow-x-auto border-b border-stone-200">
@@ -95,23 +113,23 @@
 
     </div>
 
-    {# Overlay variants. Only one shows at a time. #}
-    {% if not subscription %}
-        {% if pending_activation and can_manage_billing %}
-            {% include "intelligence/_overlay_pending_activation.html" with pending=pending_activation %}
-        {% elif can_manage_billing %}
-            {% include "intelligence/_overlay_not_subscribed_admin.html" %}
-        {% else %}
-            {% include "intelligence/_overlay_not_subscribed_member.html" %}
+    {% comment %}
+      Transient / error overlays — these still dim the playground
+      because the user paid and there's a real issue to address
+      (finalizing wait, past-due payment, canceled sub, etc).
+      The "not subscribed" cases moved above the tabs as an inline
+      banner so users can explore freely.
+    {% endcomment %}
+    {% if subscription %}
+        {% if subscription.status == "finalizing" %}
+            {% include "intelligence/_overlay_finalizing.html" %}
+        {% elif subscription.status == "past_due" %}
+            {% include "intelligence/_overlay_past_due.html" with can_manage_billing=can_manage_billing %}
+        {% elif subscription.status == "canceled" %}
+            {% include "intelligence/_overlay_canceled.html" with can_manage_billing=can_manage_billing %}
+        {% elif subscription.status == "provisioning_failed" %}
+            {% include "intelligence/_overlay_provisioning_failed.html" with can_manage_billing=can_manage_billing %}
         {% endif %}
-    {% elif subscription.status == "finalizing" %}
-        {% include "intelligence/_overlay_finalizing.html" %}
-    {% elif subscription.status == "past_due" %}
-        {% include "intelligence/_overlay_past_due.html" with can_manage_billing=can_manage_billing %}
-    {% elif subscription.status == "canceled" %}
-        {% include "intelligence/_overlay_canceled.html" with can_manage_billing=can_manage_billing %}
-    {% elif subscription.status == "provisioning_failed" %}
-        {% include "intelligence/_overlay_provisioning_failed.html" with can_manage_billing=can_manage_billing %}
     {% endif %}
 </div>
 {% endblock %}

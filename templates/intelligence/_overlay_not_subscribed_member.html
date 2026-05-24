@@ -1,21 +1,22 @@
 {% comment %}
-  Non-admin overlay — same dimmed-playground background as the admin
-  variant, but no Activate CTA (they can't buy on the org's behalf).
+  Inline preview banner for non-admin org members. Same layout as the
+  admin variant but no Activate CTA — they can't buy on the org's
+  behalf. The playground below stays fully interactive so they can
+  explore what's available.
 {% endcomment %}
-<div class="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-white/95 to-white/85 backdrop-blur-[2px] rounded-xl p-6">
-    <div class="max-w-md w-full text-center">
-        <div class="rounded-2xl border border-stone-200 bg-white shadow-lg p-8">
-            <div class="inline-flex items-center justify-center w-12 h-12 rounded-full mb-4"
-                 style="background: var(--primary-soft, #fff7ed); color: var(--primary);">
-                <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+<div class="mb-6 rounded-2xl border border-stone-200 bg-stone-50">
+    <div class="p-5 sm:p-6">
+        <div class="flex items-start gap-4">
+            <div class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center"
+                 style="background: white; color: var(--primary); border: 1px solid var(--primary-muted, #fed7aa);">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
             </div>
-            <h2 class="text-lg font-semibold text-stone-900 mb-2">Intelligence isn't activated yet</h2>
-            <p class="text-sm text-stone-600 leading-relaxed">
-                Ask an owner or admin of <strong>{{ organization.name }}</strong> to activate Intelligence for the org.
-            </p>
-            <p class="mt-3 text-xs text-stone-400 leading-relaxed">
-                You're seeing a preview of what becomes available once it's activated.
-            </p>
+            <div class="min-w-0">
+                <h2 class="text-base font-semibold text-stone-900">You're previewing Intelligence</h2>
+                <p class="mt-1 text-sm text-stone-600 leading-relaxed">
+                    Switch tabs and explore. To actually score packaging, analyse hooks, or pull content gaps for <strong>{{ organization.name }}</strong>, ask an owner or admin of the org to activate Intelligence.
+                </p>
+            </div>
         </div>
     </div>
 </div>
