@@ -454,12 +454,12 @@ class IntelligenceAPIClient:
             body["thumbnail_base64"] = thumbnail_base64
         if channel_url is not None:
             body["channel_url"] = channel_url
-        return self._request("POST", "/score/packaging", body=body)
+        return self._request("POST", "/score/packaging/", body=body)
 
     def score_video_hook(self, *, youtube_url: str) -> dict:
         return self._request(
             "POST",
-            "/score/video-hook",
+            "/score/video-hook/",
             body={"youtube_url": youtube_url},
         )
 
@@ -469,16 +469,16 @@ class IntelligenceAPIClient:
         params = {"niche": niche, "limit": limit, "min_score": min_score}
         if gap_type:
             params["gap_type"] = ",".join(gap_type)
-        return self._request("GET", "/research/content-gaps", query=params)
+        return self._request("GET", "/research/content-gaps/", query=params)
 
     def list_niches(self) -> dict:
-        return self._request("GET", "/research/niches")
+        return self._request("GET", "/research/niches/")
 
     def benchmark_channel(self, *, url: str) -> dict:
-        return self._request("POST", "/benchmark/channel", body={"url": url})
+        return self._request("POST", "/benchmark/channel/", body={"url": url})
 
     def benchmark_video(self, *, url: str) -> dict:
-        return self._request("POST", "/benchmark/video", body={"url": url})
+        return self._request("POST", "/benchmark/video/", body={"url": url})
 
     # ---- Internals ------------------------------------------------------
 
