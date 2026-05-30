@@ -257,10 +257,15 @@ def create(request, payload: CreatePostRequest):
             body=body.model_dump(mode="json"),
         )
     except ValueError as exc:
-        release_idempotent_claim(api_key=request.api_key, idempotency_key=payload.idempotency_key)
+        # Use the *effective* idempotency key (header fallback applied)
+        # so a header-only client's claim is released too — Codex PR #53
+        # round-3 flagged that the previous ``payload.idempotency_key``
+        # was None on header-only requests and left the claim wedged in
+        # PENDING until the 24h sweep.
+        release_idempotent_claim(api_key=request.api_key, idempotency_key=idempotency_key)
         raise HttpError(422, str(exc)) from exc
     except Exception:
-        release_idempotent_claim(api_key=request.api_key, idempotency_key=payload.idempotency_key)
+        release_idempotent_claim(api_key=request.api_key, idempotency_key=idempotency_key)
         raise
     return status_code, body
 

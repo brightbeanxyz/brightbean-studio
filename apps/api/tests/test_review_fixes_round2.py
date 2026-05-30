@@ -598,3 +598,107 @@ def second_account(db, workspace):
         account_name="Second LinkedIn R2",
         connection_status=SocialAccount.ConnectionStatus.CONNECTED,
     )
+
+
+# ===========================================================================
+# Codex PR #53 round-3 — Header idempotency keys are released on errors
+# ===========================================================================
+
+
+@pytest.mark.django_db
+class TestHeaderIdempotencyKeyReleasedOnError:
+    """If the create path fails AFTER claiming an idempotency slot, the
+    release call must use the *effective* key (header fallback applied),
+    not ``payload.idempotency_key``. Otherwise a header-only client's
+    claim leaks as PENDING and every retry 409s until the 24h sweep
+    deletes the row. Codex PR #53 round-3 caught this regression in the
+    fix to honour the header.
+    """
+
+    def test_failed_create_with_header_key_releases_claim(self, owner_client, owner_key):
+        """Trigger a 422 by sending action='schedule' without scheduled_at;
+        the route claims the slot, fails, and must release.
+        """
+        from apps.api.middleware import PENDING_STATUS_SENTINEL
+        from apps.api.models import IdempotencyRecord
+        from apps.social_accounts.models import SocialAccount
+
+        # Force a post-claim failure path: an account that's disconnected
+        # makes create_post raise ValueError, which fires the error
+        # release branch (not the pre-claim 422 path).
+        sa = SocialAccount.objects.filter(workspace=owner_key.api_key.workspace).first()
+        assert sa is not None
+        sa.connection_status = SocialAccount.ConnectionStatus.DISCONNECTED
+        sa.save()
+
+        body = {
+            "social_account_id": str(sa.id),
+            "caption": "should fail post-claim",
+            "action": "draft",
+            # NO body field — relying on header.
+        }
+        r = owner_client.post(
+            "/api/v1/posts/",
+            data=json.dumps(body),
+            content_type="application/json",
+            HTTP_IDEMPOTENCY_KEY="header-release-test",
+        )
+        assert r.status_code == 422
+        # No phantom PENDING row should linger — the release branch ran.
+        assert not IdempotencyRecord.objects.filter(
+            api_key=owner_key.api_key,
+            key="header-release-test",
+            response_status=PENDING_STATUS_SENTINEL,
+        ).exists(), "PENDING placeholder leaked; the release path didn't see the header key"
+
+
+# ===========================================================================
+# Codex PR #53 round-3 — Reverse M2M signal handler covers remove + clear
+# ===========================================================================
+
+
+@pytest.mark.django_db
+class TestReverseM2mInvalidation:
+    """Codex flagged that the previous signal handler ran a fresh
+    ``ApiKey.objects.filter(social_accounts=instance)`` after the M2M
+    mutation had already committed — so reverse-direction ``remove``
+    and ``clear`` missed the keys that just lost the relation. The
+    handler now reads ``pk_set`` for remove and snapshots via
+    ``pre_clear`` for clear.
+    """
+
+    def test_reverse_remove_invalidates_cache(self, owner_key, social_account):
+        from django.core.cache import cache
+
+        from apps.api_keys.services import _active_cache_key, verify_token
+
+        # Prime the cache.
+        assert verify_token(owner_key.plaintext_token) is not None
+        cache_key = _active_cache_key(owner_key.api_key.lookup_prefix)
+        assert cache.get(cache_key) is not None
+
+        # Reverse-direction remove — ``SocialAccount.api_keys.remove(key)``.
+        social_account.api_keys.remove(owner_key.api_key)
+
+        # Cache must be busted immediately, not REVOCATION_CACHE_TTL later.
+        assert cache.get(cache_key) is None, (
+            "reverse SocialAccount.api_keys.remove() didn't bust the row "
+            "cache; pk_set wasn't used in the post_remove handler"
+        )
+
+    def test_reverse_clear_invalidates_cache(self, owner_key, social_account):
+        from django.core.cache import cache
+
+        from apps.api_keys.services import _active_cache_key, verify_token
+
+        assert verify_token(owner_key.plaintext_token) is not None
+        cache_key = _active_cache_key(owner_key.api_key.lookup_prefix)
+        assert cache.get(cache_key) is not None
+
+        # Reverse-direction clear — strips every ApiKey relation on the
+        # account in one shot.
+        social_account.api_keys.clear()
+
+        assert cache.get(cache_key) is None, (
+            "reverse SocialAccount.api_keys.clear() didn't bust the row cache; pre_clear snapshot wasn't used"
+        )
