@@ -281,6 +281,7 @@ BUILTIN_ROLE_PERMISSIONS = {
 ORG_PERMISSION_KEYS = (
     ("manage_intelligence_billing", "Manage Intelligence subscription + billing"),
     ("use_intelligence", "Use Intelligence tools"),
+    ("manage_api_keys", "Issue and revoke Agent API keys for any workspace in the org"),
 )
 
 
@@ -288,10 +289,12 @@ BUILTIN_ORG_PERMISSIONS = {
     OrgMembership.OrgRole.OWNER: {
         "manage_intelligence_billing",
         "use_intelligence",
+        "manage_api_keys",
     },
     OrgMembership.OrgRole.ADMIN: {
         "manage_intelligence_billing",
         "use_intelligence",
+        "manage_api_keys",
     },
     OrgMembership.OrgRole.MEMBER: {
         "use_intelligence",

@@ -55,6 +55,12 @@ class SocialAccount(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Per-account override of the Agent-API platform daily-post quota
+    # (see apps/api/limits.py::PLATFORM_DAILY_POST_LIMIT). Null = use the
+    # platform default. Useful when one specific integration is on a higher
+    # upstream tier (e.g. an X account on Pro vs the default Basic cap).
+    daily_post_limit_override = models.PositiveIntegerField(blank=True, null=True)
+
     objects = WorkspaceScopedManager()
 
     class Meta:

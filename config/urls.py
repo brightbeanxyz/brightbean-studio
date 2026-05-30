@@ -4,6 +4,7 @@ from django.contrib import admin
 from django.urls import include, path
 
 from apps.accounts.views import health_check
+from apps.api.api import api as agent_api
 from apps.approvals.views import org_approval_queue
 
 urlpatterns = [
@@ -12,6 +13,10 @@ urlpatterns = [
     path("accounts/", include("apps.accounts.urls")),
     path("accounts/", include("allauth.urls")),
     path("organizations/", include("apps.organizations.urls")),
+    # Org-level Agent API key management (Phase 4 UI). Mounted at
+    # /organizations/api-keys/ so the page sits alongside General,
+    # Workspaces, Team Members in the settings sidebar.
+    path("organizations/api-keys/", include("apps.api_keys.urls")),
     path("workspaces/", include("apps.workspaces.urls")),
     path("members/", include("apps.members.urls")),
     path("settings/", include("apps.settings_manager.urls")),
@@ -22,6 +27,12 @@ urlpatterns = [
     path("workspace/<uuid:workspace_id>/calendar/", include("apps.calendar.urls")),
     path("workspace/<uuid:workspace_id>/inbox/", include("apps.inbox.urls")),
     path("webhooks/", include("apps.inbox.webhook_urls")),
+    # Agent API (Phase 2) — programmatic access for external AI agents.
+    # Authenticated via scoped bearer tokens issued from the Organization
+    # → API Keys page. OpenAPI docs at /api/v1/docs. ``agent_api.urls``
+    # is Ninja's (patterns, app_namespace, instance_namespace) tuple,
+    # which Django's path() handles natively.
+    path("api/v1/", agent_api.urls),
     # Approval Workflow (Stream F)
     path("workspace/<uuid:workspace_id>/", include("apps.approvals.urls")),
     # Client Portal Admin (workspace settings)

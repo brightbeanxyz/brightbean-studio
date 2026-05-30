@@ -69,6 +69,9 @@ LOCAL_APPS = [
     # so self-hosters who don't set the Intelligence env vars get no
     # Stripe / billing surface at all.
     "apps.intelligence",
+    "apps.api_keys",
+    "apps.api",
+    "apps.mcp",
     "theme",
 ]
 
@@ -138,6 +141,19 @@ DATABASES = {
 
 # Custom user model
 AUTH_USER_MODEL = "accounts.User"
+
+# Agent API trusted-proxy list — IPs whose ``X-Forwarded-For`` header we
+# will honour for client-IP derivation in the rate-limit throttle and
+# audit log. Empty by default so the API uses ``REMOTE_ADDR`` directly,
+# which is the only safe choice when the app is reached without a
+# trusted proxy in front. Set ``BB_TRUSTED_PROXIES`` in the environment
+# (comma-separated) when you run the app behind Cloudflare, an ALB,
+# nginx, etc.
+BB_TRUSTED_PROXIES = tuple(
+    p.strip()
+    for p in env.list("BB_TRUSTED_PROXIES", default=[])
+    if p.strip()
+)
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
