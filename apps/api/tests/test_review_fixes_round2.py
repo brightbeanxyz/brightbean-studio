@@ -446,3 +446,155 @@ class TestMalformedUuidHandling:
         # Redirects to list with an error message — not a 500.
         assert r.status_code == 200
         assert b"not in this organisation" in r.content
+
+
+# ===========================================================================
+# Codex PR #53 round-2 — Idempotency-Key HTTP header is honoured
+# ===========================================================================
+
+
+@pytest.mark.django_db
+class TestIdempotencyKeyHeader:
+    """Stripe-style ``Idempotency-Key`` request headers must be honoured
+    by the create route, not just the body field. Codex review (PR #53)
+    found that a client using only the header would have its idempotency
+    silently dropped — every retry-after-timeout created a new post.
+    """
+
+    def test_same_header_same_body_replays(self, owner_client, social_account):
+        body = {
+            "social_account_id": str(social_account.id),
+            "caption": "header-keyed write",
+            "action": "draft",
+        }
+        r1 = owner_client.post(
+            "/api/v1/posts/",
+            data=json.dumps(body),
+            content_type="application/json",
+            HTTP_IDEMPOTENCY_KEY="header-abc",
+        )
+        assert r1.status_code == 201
+        r2 = owner_client.post(
+            "/api/v1/posts/",
+            data=json.dumps(body),
+            content_type="application/json",
+            HTTP_IDEMPOTENCY_KEY="header-abc",
+        )
+        # Same response replayed — only ONE Post created.
+        assert r2.status_code == 201
+        assert r1.json()["id"] == r2.json()["id"]
+        assert Post.objects.count() == 1
+
+    def test_body_field_takes_precedence_when_both_present(self, owner_client, social_account):
+        """If a caller sends both, the body field wins. Documents the
+        deliberate choice in the route comment.
+        """
+        body_a = {
+            "social_account_id": str(social_account.id),
+            "caption": "from body key A",
+            "action": "draft",
+            "idempotency_key": "body-A",
+        }
+        r1 = owner_client.post(
+            "/api/v1/posts/",
+            data=json.dumps(body_a),
+            content_type="application/json",
+            HTTP_IDEMPOTENCY_KEY="header-DIFFERENT",
+        )
+        assert r1.status_code == 201
+        post_a_id = r1.json()["id"]
+
+        # Replay using body key A but a different header — still replays
+        # because the body field wins.
+        r2 = owner_client.post(
+            "/api/v1/posts/",
+            data=json.dumps(body_a),
+            content_type="application/json",
+            HTTP_IDEMPOTENCY_KEY="header-ALSO-DIFFERENT",
+        )
+        assert r2.status_code == 201
+        assert r2.json()["id"] == post_a_id
+
+
+# ===========================================================================
+# Codex PR #53 round-2 — MCP cancel_post is atomic across multi-child posts
+# ===========================================================================
+
+
+@pytest.mark.django_db
+class TestMcpCancelAtomic:
+    """MCP ``cancel_post`` used to iterate ``transition_platform_post``
+    over scheduled children without an outer ``transaction.atomic``, so a
+    mid-loop failure left an earlier child in ``draft`` while later
+    children stayed ``scheduled``. The REST route already wraps the same
+    loop atomically — this test locks in parity for MCP.
+    """
+
+    def test_partial_failure_rolls_back(
+        self, owner_client, owner_key, workspace, social_account, second_account, user, monkeypatch
+    ):
+        # Multi-account post: both children scheduled, the SECOND
+        # transition raises mid-loop.
+        owner_key.api_key.social_accounts.add(second_account)
+        post = Post.objects.create(workspace=workspace, author=user, caption="multi")
+        PlatformPost.objects.create(
+            post=post,
+            social_account=social_account,
+            status="scheduled",
+            scheduled_at=timezone.now() + timedelta(hours=1),
+        )
+        PlatformPost.objects.create(
+            post=post,
+            social_account=second_account,
+            status="scheduled",
+            scheduled_at=timezone.now() + timedelta(hours=1),
+        )
+
+        from apps.composer import services as composer_services
+
+        call_count = {"n": 0}
+        original = composer_services.transition_platform_post
+
+        def flaky(pp, target_status, **kw):
+            call_count["n"] += 1
+            if call_count["n"] >= 2:
+                raise ValueError("simulated second-child failure")
+            return original(pp, target_status, **kw)
+
+        monkeypatch.setattr("apps.mcp.handlers.transition_platform_post", flaky)
+
+        r = owner_client.post(
+            "/api/v1/mcp/",
+            data=json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "cancel_post",
+                        "arguments": {"post_id": str(post.id)},
+                    },
+                }
+            ),
+            content_type="application/json",
+        )
+        # JSON-RPC error envelope, but the key claim is the DB state.
+        assert "error" in r.json()
+        statuses = list(post.platform_posts.values_list("status", flat=True))
+        assert all(s == "scheduled" for s in statuses), f"expected all scheduled after rollback, got {statuses}"
+
+
+@pytest.fixture
+def second_account(db, workspace):
+    """Second SocialAccount in the same workspace — used to build a
+    multi-child post for the MCP cancel atomic test.
+    """
+    from apps.social_accounts.models import SocialAccount
+
+    return SocialAccount.objects.create(
+        workspace=workspace,
+        platform="linkedin_personal",
+        account_platform_id="li-r2-second",
+        account_name="Second LinkedIn R2",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )

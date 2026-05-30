@@ -180,10 +180,18 @@ def create(request, payload: CreatePostRequest):
     #   passthrough/claimed — caller proceeds; only the "claimed" path
     #                         must finalize or release before returning.
     fingerprint = fingerprint_request(request.method or "POST", request.path, payload.dict(by_alias=True))
+    # Accept the canonical ``Idempotency-Key`` HTTP header (Stripe-style)
+    # in addition to the body field. The header is the industry
+    # convention — clients that retry on network timeout typically reuse
+    # the header but can't easily re-send the same JSON body — so
+    # ignoring it would silently break the "retry-safe" contract Codex
+    # review (PR #53) flagged. The body field still wins when both are
+    # present, so a deliberate caller can override.
+    idempotency_key = payload.idempotency_key or request.headers.get("Idempotency-Key") or None
     try:
         disposition, replay_status, replay_body = claim_idempotency_slot(
             api_key=request.api_key,
-            idempotency_key=payload.idempotency_key,
+            idempotency_key=idempotency_key,
             fingerprint=fingerprint,
         )
     except ValueError as exc:
@@ -205,7 +213,7 @@ def create(request, payload: CreatePostRequest):
         try:
             check_platform_quota(social_account)
         except HttpError:
-            release_idempotent_claim(api_key=request.api_key, idempotency_key=payload.idempotency_key)
+            release_idempotent_claim(api_key=request.api_key, idempotency_key=idempotency_key)
             raise
 
     # Single try/except covers every step from create_post through
@@ -244,7 +252,7 @@ def create(request, payload: CreatePostRequest):
         # JSONField round-trips cleanly through psycopg's jsonb adapter.
         finalize_idempotent_response(
             api_key=request.api_key,
-            idempotency_key=payload.idempotency_key,
+            idempotency_key=idempotency_key,
             status_code=status_code,
             body=body.model_dump(mode="json"),
         )

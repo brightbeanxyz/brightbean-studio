@@ -348,6 +348,8 @@ register_tool(
 
 
 def _cancel_post(args: dict, context: dict[str, Any]) -> dict:
+    from django.db import transaction
+
     _require_perm(context, "create_posts")
     if "post_id" not in args:
         raise JsonRpcError(INVALID_PARAMS, "post_id is required")
@@ -356,11 +358,19 @@ def _cancel_post(args: dict, context: dict[str, Any]) -> dict:
     scheduled = [pp for pp in post.platform_posts.all() if pp.status == "scheduled"]
     if not scheduled:
         raise JsonRpcError(INVALID_PARAMS, "No scheduled platform posts to cancel")
-    for pp in scheduled:
-        try:
-            transition_platform_post(pp, "draft")
-        except ValueError as exc:
-            raise JsonRpcError(INVALID_PARAMS, str(exc)) from exc
+    # Wrap the per-child loop in a single outer atomic so a mid-loop
+    # ValueError (concurrent admin transition, state-machine rejection
+    # on a later child) rolls back any earlier ``draft`` commits.
+    # Mirrors the REST ``/cancel`` route's atomic block — without this,
+    # a multi-account post could end up in a mixed draft/scheduled state
+    # that neither the publisher nor the agent expects. Codex PR #53
+    # flagged this asymmetry between REST and MCP.
+    with transaction.atomic():
+        for pp in scheduled:
+            try:
+                transition_platform_post(pp, "draft")
+            except ValueError as exc:
+                raise JsonRpcError(INVALID_PARAMS, str(exc)) from exc
     post.refresh_from_db()
     return _wrap_text(_serialize_post(post))
 
