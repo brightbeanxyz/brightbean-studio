@@ -117,25 +117,8 @@ def create_post(
             f"{social_account.connection_status!r}; reconnect it before scheduling."
         )
 
-    # Approval workflow gate — if the workspace requires approval, posts
-    # may not be created directly as "scheduled" via the service layer.
-    # The composer's HTMX path routes that through a separate
-    # ``submit_for_approval`` action; the Agent API surface is the same
-    # path, so we mirror the constraint here. Drafts are always allowed
-    # (they're explicit save-for-later); scheduling implies "ready to
-    # publish," which is exactly what approval workflow gates.
-    _approval_modes_blocking_direct_schedule = {
-        "required_internal",
-        "required_internal_and_client",
-    }
-    if (
-        status == "scheduled"
-        and getattr(workspace, "approval_workflow_mode", "none") in _approval_modes_blocking_direct_schedule
-    ):
-        raise ValueError(
-            "Workspace requires approval before scheduling; create the post as a "
-            "draft and route it through the approval workflow."
-        )
+    if status == "scheduled":
+        _require_approval_gate_passes(workspace)
 
     media_ids = list(media_asset_ids or [])
     # Pull and validate all referenced assets in a single query — fail
@@ -199,6 +182,16 @@ def transition_platform_post(
     """
     from django.db import transaction
 
+    # Approval workflow gate — Codex review (PR #53) flagged that the
+    # ``POST /posts/{id}/schedule`` route reached this function with
+    # ``target_status="scheduled"`` and bypassed the approval check
+    # ``create_post`` enforces. The gate belongs here so EVERY path that
+    # promotes a draft to scheduled (REST `/schedule` route, any future
+    # MCP transition tool, the composer's HTMX `transition_platform_post`
+    # view) is covered.
+    if target_status == "scheduled":
+        _require_approval_gate_passes(platform_post.post.workspace)
+
     with transaction.atomic():
         platform_post.transition_to(target_status)
         # Always include ``updated_at`` — Django docs: when ``update_fields``
@@ -221,3 +214,29 @@ def transition_platform_post(
 
     sync_post_scheduled_at(platform_post.post)
     return platform_post
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+#: Workspace approval modes that BLOCK a direct draft → scheduled
+#: transition. The composer's HTMX path routes around this via a
+#: separate ``submit_for_approval`` action; the Agent API surface uses
+#: the same service layer so the constraint lives here once.
+_APPROVAL_MODES_BLOCKING_DIRECT_SCHEDULE = frozenset({"required_internal", "required_internal_and_client"})
+
+
+def _require_approval_gate_passes(workspace) -> None:
+    """Raise ``ValueError`` if the workspace forbids direct scheduling.
+
+    Drafts are always allowed (they're explicit save-for-later);
+    scheduling implies "ready to publish," which is exactly what the
+    approval workflow gates.
+    """
+    if getattr(workspace, "approval_workflow_mode", "none") in _APPROVAL_MODES_BLOCKING_DIRECT_SCHEDULE:
+        raise ValueError(
+            "Workspace requires approval before scheduling; create the post as a "
+            "draft and route it through the approval workflow."
+        )

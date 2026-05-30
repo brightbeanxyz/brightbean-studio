@@ -188,6 +188,60 @@ class TestScheduleRequiresPublishDirectly:
 
 
 # ===========================================================================
+# Codex PR #53 follow-up — POST /posts/{id}/schedule honours approval workflow
+# ===========================================================================
+
+
+@pytest.mark.django_db
+class TestScheduleRouteHonoursApprovalWorkflow:
+    """Regression test for the Codex PR #53 P1: ``create_post(status=
+    "scheduled")`` rejects direct scheduling when the workspace requires
+    approval, but the standalone ``POST /posts/{id}/schedule`` route
+    used to bypass that check — so an agent could create a draft and
+    then promote it via that route without routing through the
+    approval workflow. The gate now lives in ``transition_platform_post``
+    so every draft → scheduled path is covered.
+    """
+
+    def test_schedule_route_blocked_when_workspace_requires_approval(
+        self, user, workspace_owner, workspace, social_account
+    ):
+        from apps.api_keys import services
+
+        workspace.approval_workflow_mode = "required_internal"
+        workspace.save(update_fields=["approval_workflow_mode"])
+
+        # Issue a key with both create_posts AND publish_directly so the
+        # route-level permission gates pass — the approval-mode check is
+        # the only thing that should reject.
+        key = services.issue_api_key(
+            workspace=workspace,
+            social_accounts=[social_account],
+            issued_by=user,
+            name="approval-gate",
+            permissions=["create_posts", "publish_directly"],
+        )
+        c = _SecureClient(HTTP_AUTHORIZATION=f"Bearer {key.plaintext_token}")
+
+        # Pre-create a draft directly (bypassing create_post so we can
+        # isolate the schedule route).
+        post = Post.objects.create(workspace=workspace, caption="needs approval")
+        PlatformPost.objects.create(post=post, social_account=social_account, status="draft")
+
+        when = (timezone.now() + timedelta(hours=1)).isoformat()
+        r = c.post(
+            f"/api/v1/posts/{post.id}/schedule",
+            data=json.dumps({"scheduled_at": when}),
+            content_type="application/json",
+        )
+        assert r.status_code == 422
+        assert "approval" in r.json()["detail"].lower()
+        # And the draft is unchanged.
+        pp = PlatformPost.objects.get(post=post)
+        assert pp.status == "draft"
+
+
+# ===========================================================================
 # P2 — Cancelling the last scheduled child clears Post.scheduled_at
 # ===========================================================================
 
