@@ -90,16 +90,26 @@ def list_keys(request):
     consistently.
     """
     org = request.org
-    keys = (
+    show_all = request.GET.get("show") == "all"
+    qs = (
         ApiKey.objects.filter(workspace__organization=org)
         .select_related("workspace", "issued_by")
         .prefetch_related("social_accounts")
         .order_by("-created_at")
     )
-    rows = [_row_context(k) for k in keys]
+    if not show_all:
+        qs = qs.filter(revoked_at__isnull=True)
+    rows = [_row_context(k) for k in qs]
+    # Surface a "Show N revoked" toggle only when there's actually something
+    # behind it — avoids a noisy control on an org that's never revoked a key.
+    revoked_count = ApiKey.objects.filter(
+        workspace__organization=org, revoked_at__isnull=False
+    ).count()
     context = {
         "settings_active": "api_keys",
         "rows": rows,
+        "show_all": show_all,
+        "revoked_count": revoked_count,
         # Empty issuance form context — the modal renders inside the
         # same page so we don't need a separate route.
         "issuance": _initial_issuance_context(org, request.user),

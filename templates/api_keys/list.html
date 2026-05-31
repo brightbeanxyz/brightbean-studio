@@ -32,6 +32,16 @@
     </div>
     {% endif %}
 
+    {% if revoked_count %}
+    <div class="flex justify-end mb-3 text-xs">
+        {% if show_all %}
+        <a href="{% url 'api_keys:list' %}" style="color: var(--text-tertiary);">Hide revoked keys</a>
+        {% else %}
+        <a href="?show=all" style="color: var(--text-tertiary);">Show {{ revoked_count }} revoked</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
     {% if rows %}
     <div style="background: var(--surface-0); border: 1px solid var(--border); border-radius: var(--radius-xl);">
         {% for row in rows %}
@@ -42,10 +52,18 @@
     </div>
     {% else %}
     <div class="px-6 py-12 text-center rounded-xl" style="background: var(--surface-0); border: 1px solid var(--border);">
+        {% if revoked_count and not show_all %}
+        <p class="text-sm" style="color: var(--text-tertiary);">No active API keys.</p>
+        <p class="text-xs mt-2" style="color: var(--text-tertiary);">
+            <a href="?show=all" style="color: var(--text-secondary); text-decoration: underline;">Show {{ revoked_count }} revoked</a>
+            or click <strong>Issue new key</strong> to mint a new one.
+        </p>
+        {% else %}
         <p class="text-sm" style="color: var(--text-tertiary);">No API keys issued yet.</p>
         <p class="text-xs mt-2" style="color: var(--text-tertiary);">
             Click <strong>Issue new key</strong> to mint one for an agent.
         </p>
+        {% endif %}
     </div>
     {% endif %}
 

@@ -1,9 +1,11 @@
-{# One-time plaintext-token reveal modal.
+{% comment %}
+One-time plaintext-token reveal modal.
 
-   Rendered server-side immediately after issue. Initialised with
-   ``showRevealModal = true`` in the outer Alpine scope (see ``list.html``).
-   Closing the modal — or even reloading the page — will lose the token
-   forever; we explicitly do NOT persist plaintext anywhere. #}
+Rendered server-side immediately after issue. Initialised with
+``showRevealModal = true`` in the outer Alpine scope (see ``list.html``).
+Closing the modal — or even reloading the page — will lose the token
+forever; we explicitly do NOT persist plaintext anywhere.
+{% endcomment %}
 <template x-teleport="body">
     <div x-show="showRevealModal" x-transition.opacity
          class="fixed inset-0 z-50 flex items-center justify-center"
@@ -36,7 +38,9 @@
                 <code id="reveal-token" class="text-xs break-all flex-1 font-mono"
                       style="color: var(--text-primary);">{{ token }}</code>
                 <button type="button"
-                        onclick="navigator.clipboard.writeText(document.getElementById('reveal-token').innerText); this.textContent = 'Copied'; setTimeout(()=>{this.textContent='Copy'}, 1500);"
+                        x-data="{ label: 'Copy' }"
+                        @click="navigator.clipboard.writeText(document.getElementById('reveal-token').innerText); label = 'Copied'; setTimeout(() => label = 'Copy', 1500)"
+                        x-text="label"
                         class="px-2.5 py-1 text-xs font-medium rounded cursor-pointer whitespace-nowrap"
                         style="background: var(--neutral-900, #111827); color: white;">
                     Copy
