@@ -212,15 +212,21 @@ class TestWorkspaceOptionsPartial:
         assert r.content == b""
 
     def test_permissions_intersected_with_issuer(self, admin_client, workspace, social_account):
-        """An owner sees every permission; a non-owner doesn't."""
+        """An owner sees every grantable permission; a non-owner doesn't."""
+        from apps.api_keys.views import _HIDDEN_FROM_ISSUANCE
+
         r = admin_client.get(
             reverse("api_keys:workspace_options"),
             {"workspace_id": str(workspace.id)},
         )
         body = r.content.decode()
-        # All workspace permission keys should be present for an OWNER.
+        # An owner holds every key in PERMISSION_KEYS, but the issuance picker
+        # hides keys whose feature hasn't shipped yet (e.g. view_analytics).
         for k in PERMISSION_KEYS:
-            assert k in body, f"missing permission {k}"
+            if k in _HIDDEN_FROM_ISSUANCE:
+                assert k not in body, f"hidden permission {k} should not appear"
+            else:
+                assert k in body, f"missing permission {k}"
 
 
 # ---------------------------------------------------------------------------

@@ -166,7 +166,6 @@ class Invitation(models.Model):
 # Built-in workspace role permission mappings
 PERMISSION_KEYS = [
     "create_posts",
-    "edit_own_posts",
     "edit_others_posts",
     "approve_posts",
     "publish_directly",
@@ -185,7 +184,6 @@ BUILTIN_ROLE_PERMISSIONS = {
     "owner": {k: True for k in PERMISSION_KEYS},
     "manager": {
         "create_posts": True,
-        "edit_own_posts": True,
         "edit_others_posts": True,
         "approve_posts": True,
         "publish_directly": True,
@@ -201,7 +199,6 @@ BUILTIN_ROLE_PERMISSIONS = {
     },
     "editor": {
         "create_posts": True,
-        "edit_own_posts": True,
         "edit_others_posts": True,
         "approve_posts": False,
         "publish_directly": False,
@@ -217,7 +214,6 @@ BUILTIN_ROLE_PERMISSIONS = {
     },
     "contributor": {
         "create_posts": True,
-        "edit_own_posts": True,
         "edit_others_posts": False,
         "approve_posts": False,
         "publish_directly": False,
@@ -233,7 +229,6 @@ BUILTIN_ROLE_PERMISSIONS = {
     },
     "client": {
         "create_posts": False,
-        "edit_own_posts": False,
         "edit_others_posts": False,
         "approve_posts": True,
         "publish_directly": False,
@@ -249,7 +244,6 @@ BUILTIN_ROLE_PERMISSIONS = {
     },
     "viewer": {
         "create_posts": False,
-        "edit_own_posts": False,
         "edit_others_posts": False,
         "approve_posts": False,
         "publish_directly": False,

@@ -43,6 +43,11 @@ from apps.members.models import (
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
+# Permission keys defined in the registry but intentionally hidden from
+# API-key issuance until the feature they gate ships. Stored API keys may
+# still carry these strings; they just don't appear in the picker.
+_HIDDEN_FROM_ISSUANCE = {"view_analytics"}
+
 # ---------------------------------------------------------------------------
 # Authorization decorator
 # ---------------------------------------------------------------------------
@@ -206,7 +211,11 @@ def _grantable_permissions(user, workspace) -> list[tuple[str, str]]:
     except WorkspaceMembership.DoesNotExist:
         return []
     held = {k for k, v in membership.effective_permissions.items() if v}
-    return [(k, k.replace("_", " ").capitalize()) for k in PERMISSION_KEYS if k in held]
+    return [
+        (k, k.replace("_", " ").capitalize())
+        for k in PERMISSION_KEYS
+        if k in held and k not in _HIDDEN_FROM_ISSUANCE
+    ]
 
 
 # ---------------------------------------------------------------------------

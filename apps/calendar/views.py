@@ -786,7 +786,7 @@ def reschedule_post(request, workspace_id):
     membership = request.workspace_membership
     perms = membership.effective_permissions if membership else {}
     is_own_post = post.author_id == request.user.id
-    can_edit = (is_own_post and perms.get("edit_own_posts")) or perms.get("edit_others_posts")
+    can_edit = is_own_post or perms.get("edit_others_posts")
     if not can_edit:
         return JsonResponse({"error": "Permission denied."}, status=403)
 
