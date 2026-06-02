@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import MastodonAppRegistration, PlatformVisibility, SocialAccount
+from .models import AnalyticsPlatformConfig, MastodonAppRegistration, PlatformVisibility, SocialAccount
 
 
 @admin.register(SocialAccount)
@@ -29,6 +29,20 @@ class MastodonAppRegistrationAdmin(admin.ModelAdmin):
 class PlatformVisibilityAdmin(admin.ModelAdmin):
     list_display = ("platform", "is_visible", "updated_at")
     list_editable = ("is_visible",)
+    list_display_links = ("platform",)
+    ordering = ("platform",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(AnalyticsPlatformConfig)
+class AnalyticsPlatformConfigAdmin(admin.ModelAdmin):
+    list_display = ("platform", "is_enabled", "updated_at")
+    list_editable = ("is_enabled",)
     list_display_links = ("platform",)
     ordering = ("platform",)
 

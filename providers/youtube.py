@@ -61,11 +61,21 @@ class YouTubeProvider(SocialProvider):
 
     @property
     def required_scopes(self) -> list[str]:
-        return [
+        scopes = [
             "https://www.googleapis.com/auth/youtube.upload",
             "https://www.googleapis.com/auth/youtube.readonly",
             "https://www.googleapis.com/auth/youtube.force-ssl",
         ]
+        if self.include_analytics_scopes:
+            scopes.extend(self.analytics_only_scopes)
+        return scopes
+
+    @property
+    def analytics_only_scopes(self) -> list[str]:
+        # Required for the YouTube Analytics API (watch time, retention,
+        # demographics). Only requested when analytics is enabled so the
+        # Google OAuth consent screen doesn't list it when not needed.
+        return ["https://www.googleapis.com/auth/yt-analytics.readonly"]
 
     @property
     def rate_limits(self) -> RateLimitConfig:

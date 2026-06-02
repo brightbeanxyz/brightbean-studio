@@ -1,0 +1,80 @@
+{% load analytics_extras %}
+<div id="analytics-hero-chart">
+    <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 14px;">
+        <div style="flex-shrink: 0;">
+            <div style="display: flex; align-items: center; gap: 8px; color: var(--text-secondary); margin-bottom: 6px; white-space: nowrap;">
+                <span style="font-size: 0.8125rem; font-weight: 600;">{{ chart.label }} · last {{ days }} days</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <span style="font-size: 2.25rem; font-weight: 700; letter-spacing: -0.02em; color: var(--text-primary); line-height: 1;">{{ chart.derived.value|fmt_metric:chart.derived.kind }}</span>
+                <span class="a-delta {{ chart.derived.delta|delta_color }}" style="font-size: 12.5px; padding: 3px 9px;">{{ chart.derived.delta|fmt_signed }}</span>
+            </div>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            {% for chip in chart.chips %}
+                <a href="?range={{ days }}&chart_metric={{ chip.key }}"
+                   hx-get="?range={{ days }}&chart_metric={{ chip.key }}&partial=chart"
+                   hx-target="#analytics-hero-chart"
+                   hx-swap="outerHTML"
+                   style="padding: 6px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); border: 1px solid; text-decoration: none; cursor: pointer; border-color: {% if chip.key == chart.metric %}transparent{% else %}var(--border){% endif %}; background: {% if chip.key == chart.metric %}{{ primary_color }}{% else %}#fff{% endif %}; color: {% if chip.key == chart.metric %}#fff{% else %}var(--text-secondary){% endif %};">{{ chip.label }}</a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div style="position: relative; width: 100%; height: 260px; overflow: hidden;">
+        <canvas id="analytics-area-chart" style="position: absolute; inset: 0;"></canvas>
+    </div>
+
+    <script nonce="{{ request.csp_nonce }}">
+    (function () {
+        const data = {{ chart_series_json|safe }};
+        const labels = {{ chart_labels_json|safe }};
+        const color = '#F97316';  /* var(--primary), locked to brand orange */
+        function init() {
+            if (typeof Chart === 'undefined') { setTimeout(init, 30); return; }
+            const canvas = document.getElementById('analytics-area-chart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (window._bbHeroChart) { window._bbHeroChart.destroy(); }
+            const gradient = ctx.createLinearGradient(0, 0, 0, 260);
+            gradient.addColorStop(0, hexToRgba(color, 0.28));
+            gradient.addColorStop(1, hexToRgba(color, 0.0));
+            window._bbHeroChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    borderColor: color,
+                    backgroundColor: gradient,
+                    fill: true,
+                    tension: 0.32,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    pointHoverBackgroundColor: color,
+                    borderWidth: 2,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { mode: 'index', intersect: false },
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { maxTicksLimit: 6, color: '#78716C' } },
+                    y: { beginAtZero: true, grid: { color: '#F5F5F4' }, ticks: { color: '#78716C' } },
+                },
+            },
+        });
+        }
+        function hexToRgba(c, a) {
+            const v = c.replace('#', '');
+            const r = parseInt(v.slice(0, 2), 16), g = parseInt(v.slice(2, 4), 16), b = parseInt(v.slice(4, 6), 16);
+            return `rgba(${r},${g},${b},${a})`;
+        }
+        init();
+    })();
+    </script>
+</div>

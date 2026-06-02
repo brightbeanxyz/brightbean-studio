@@ -90,12 +90,21 @@ class InstagramLoginProvider(SocialProvider):
 
     @property
     def required_scopes(self) -> list[str]:
-        return [
+        scopes = [
             "instagram_business_basic",
             "instagram_business_content_publish",
             "instagram_business_manage_comments",
             "instagram_business_manage_messages",
         ]
+        if self.include_analytics_scopes:
+            scopes.extend(self.analytics_only_scopes)
+        return scopes
+
+    @property
+    def analytics_only_scopes(self) -> list[str]:
+        # Required for `/insights` endpoints on the IG-Login OAuth path.
+        # Only requested when analytics is enabled in AnalyticsPlatformConfig.
+        return ["instagram_business_manage_insights"]
 
     @property
     def rate_limits(self) -> RateLimitConfig:

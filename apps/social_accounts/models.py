@@ -61,6 +61,11 @@ class SocialAccount(models.Model):
     # upstream tier (e.g. an X account on Pro vs the default Basic cap).
     daily_post_limit_override = models.PositiveIntegerField(blank=True, null=True)
 
+    # Set by the analytics sync layer when the platform rejects an analytics
+    # call as insufficient-scope. Surfaces a "Reconnect for analytics" CTA in
+    # place of the metric region. Cleared on successful reconnect.
+    analytics_needs_reconnect = models.BooleanField(default=False)
+
     objects = WorkspaceScopedManager()
 
     class Meta:
@@ -226,3 +231,46 @@ class PlatformVisibility(models.Model):
 
     def __str__(self):
         return f"{self.get_platform_display()} ({'visible' if self.is_visible else 'hidden'})"
+
+
+class AnalyticsPlatformConfig(models.Model):
+    """Site-wide toggle controlling which platforms are enabled for the
+    Analytics feature.
+
+    App-review timelines for the new analytics scopes (Meta, TikTok) are
+    unpredictable, so admins flip platforms on as their approvals land. If
+    no rows have ``is_enabled=True`` the Analytics sidebar item is hidden
+    entirely (see ``apps.common.context_processors.sidebar_context``).
+    """
+
+    platform = models.CharField(
+        max_length=30,
+        choices=PlatformCredential.Platform.choices,
+        unique=True,
+    )
+    is_enabled = models.BooleanField(
+        default=True,
+        help_text="If unchecked, this platform is excluded from the Analytics feature.",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "social_accounts_analytics_platform_config"
+        verbose_name = "Analytics platform"
+        verbose_name_plural = "Analytics platforms"
+        ordering = ["platform"]
+
+    def __str__(self):
+        return f"{self.get_platform_display()} ({'enabled' if self.is_enabled else 'disabled'})"
+
+    @classmethod
+    def enabled_platforms(cls) -> list[str]:
+        """Return the list of platform slugs with analytics enabled.
+
+        Falls back to "all platforms" if no rows exist yet (fresh DB before
+        the seed migration has run). Otherwise honors only ``is_enabled=True``.
+        """
+        rows = list(cls.objects.values_list("platform", "is_enabled"))
+        if not rows:
+            return [value for value, _label in PlatformCredential.Platform.choices]
+        return [platform for platform, enabled in rows if enabled]

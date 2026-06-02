@@ -58,6 +58,22 @@ def _get_visible_platform_choices():
     return [(value, label) for value, label in PlatformCredential.Platform.choices if value not in hidden]
 
 
+def _apply_analytics_scope_flag(provider, platform):
+    """Set ``provider.include_analytics_scopes`` based on AnalyticsPlatformConfig.
+
+    Providers add their analytics-only scopes (e.g. ``read_insights``,
+    ``yt-analytics.readonly``) to the OAuth scope list only when this flag is
+    True. If the platform is disabled in ``AnalyticsPlatformConfig`` (analytics
+    not yet rolled out for it), we omit those scopes so a self-hoster whose
+    Meta / TikTok / Google app hasn't been approved for them can still connect
+    accounts for publishing.
+    """
+    from apps.social_accounts.models import AnalyticsPlatformConfig
+
+    enabled = AnalyticsPlatformConfig.enabled_platforms()
+    provider.include_analytics_scopes = platform in enabled
+
+
 def _get_configured_platforms(org_id):
     """Return set of platform names that have credentials configured."""
     from providers import PROVIDER_REGISTRY
@@ -241,6 +257,7 @@ def connect_platform(request, workspace_id):
 
     # Standard OAuth flow
     provider = _get_provider_for_platform(platform, request.org.id)
+    _apply_analytics_scope_flag(provider, platform)
     nonce = secrets.token_urlsafe(32)
     state = _sign_state(workspace_id, platform, request.user.id, nonce)
 
@@ -646,6 +663,7 @@ def reconnect(request, workspace_id, account_id):
 
     # Standard OAuth reconnect
     provider = _get_provider_for_platform(platform, request.org.id)
+    _apply_analytics_scope_flag(provider, platform)
     nonce = secrets.token_urlsafe(32)
     state = _sign_state(workspace_id, platform, request.user.id, nonce)
 
@@ -746,6 +764,8 @@ def _create_or_update_account(
             "instance_url": instance_url,
             "connection_status": SocialAccount.ConnectionStatus.CONNECTED,
             "last_error": "",
+            # Fresh OAuth grant invalidates any prior analytics-scope failure.
+            "analytics_needs_reconnect": False,
         },
     )
 

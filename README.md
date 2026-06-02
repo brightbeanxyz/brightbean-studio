@@ -365,7 +365,7 @@ Facebook, Instagram, and Threads all use the same Meta app credentials.
 
    **Use case: "Manage everything on your Page"** (Facebook)
    - This use case auto-includes `business_management`, `pages_show_list`, and `public_profile`
-   - Add these optional permissions: `pages_manage_posts`, `pages_read_engagement`, `pages_read_user_content`, `pages_manage_metadata`
+   - Add these optional permissions: `pages_manage_posts`, `pages_read_engagement`, `pages_read_user_content`, `pages_manage_metadata`, `read_insights`
 
    **Use case: "Messenger from Meta"** (Facebook Messaging)
    - Required to enable the `pages_messaging` permission, which is not available under the "Manage Pages" use case
@@ -399,7 +399,7 @@ The Instagram (Direct) connector uses the **Instagram API with Instagram Login**
 1. In the same Meta app, go to **Use cases** and add the **"Instagram API"** use case
 2. Under **API setup with Instagram Login**, note your **Instagram App ID** and **Instagram App Secret** (these are different from your Facebook App ID/Secret)
 3. Go to **Permissions and features** and add the required permissions:
-   - `instagram_business_basic`, `instagram_business_content_publish`, `instagram_business_manage_comments`, `instagram_business_manage_messages`
+   - `instagram_business_basic`, `instagram_business_content_publish`, `instagram_business_manage_comments`, `instagram_business_manage_messages`, `instagram_business_manage_insights`
 4. Under **API setup with Instagram Login → Step 4: Set up Instagram business login**, click **Set up** and add the redirect URI (must match exactly, including the trailing slash):
    ```
    {APP_URL}/social-accounts/callback/instagram_login/
@@ -471,7 +471,7 @@ If you set only the Path B (Company) credentials, Brightbean Studio automaticall
    ```
    {APP_URL}/social-accounts/callback/tiktok/
    ```
-4. Required scopes: `user.info.basic`, `video.publish`, `video.upload`
+4. Required scopes: `user.info.basic`, `user.info.profile`, `user.info.stats`, `video.publish`, `video.upload`, `video.list`
 5. Note: TikTok uses **Client Key** (not Client ID). Copy the **Client Key** and **Client Secret** from your app dashboard
 6. Set the environment variables:
    ```
@@ -495,7 +495,7 @@ YouTube and Google Business Profile share the same Google Cloud credentials.
    ```
 5. Copy the **Client ID** and **Client Secret**
 6. Required scopes:
-   - **YouTube:** `https://www.googleapis.com/auth/youtube.upload`, `https://www.googleapis.com/auth/youtube.readonly`, `https://www.googleapis.com/auth/youtube.force-ssl`
+   - **YouTube:** `https://www.googleapis.com/auth/youtube.upload`, `https://www.googleapis.com/auth/youtube.readonly`, `https://www.googleapis.com/auth/youtube.force-ssl`, `https://www.googleapis.com/auth/yt-analytics.readonly`
    - **Google Business Profile:** `https://www.googleapis.com/auth/business.manage`
 7. Set the environment variables:
    ```
@@ -511,7 +511,7 @@ YouTube and Google Business Profile share the same Google Cloud credentials.
    {APP_URL}/social-accounts/callback/pinterest/
    ```
 3. Copy the **App ID** and **App Secret**
-4. Required scopes: `boards:read`, `pins:read`, `pins:write`
+4. Required scopes: `user_accounts:read`, `boards:read`, `pins:read`, `pins:write`
 5. Set the environment variables:
    ```
    PLATFORM_PINTEREST_APP_ID=your-app-id

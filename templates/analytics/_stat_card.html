@@ -1,0 +1,11 @@
+{% load analytics_extras %}
+<div class="a-card a-card-hover" style="padding: 16px; display: flex; flex-direction: column; gap: 8px; height: 100%; justify-content: space-between;">
+    <div style="display: flex; flex-direction: column; gap: 10px;">
+        <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">{{ label }}</div>
+        <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 8px;">
+            <span style="font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; color: var(--text-primary); line-height: 1;">{{ derived.value|fmt_metric:derived.kind }}</span>
+            <span class="a-delta {{ derived.delta|delta_color }}">{{ derived.delta|fmt_signed }}</span>
+        </div>
+    </div>
+    <div style="margin-top: 2px;">{% sparkline derived.series primary_color 150 32 %}</div>
+</div>

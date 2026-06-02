@@ -64,7 +64,23 @@ class TikTokProvider(SocialProvider):
 
     @property
     def required_scopes(self) -> list[str]:
-        return ["user.info.basic", "video.publish", "video.upload"]
+        scopes = [
+            "user.info.basic",
+            "video.publish",
+            "video.upload",
+        ]
+        if self.include_analytics_scopes:
+            scopes.extend(self.analytics_only_scopes)
+        return scopes
+
+    @property
+    def analytics_only_scopes(self) -> list[str]:
+        # ``video.list`` lets us read per-video stats; ``user.info.profile`` +
+        # ``user.info.stats`` enable account-level totals via /v2/user/info/.
+        # All three are gated behind the analytics platform toggle so a
+        # publish-only TikTok app (whose review hasn't approved them yet)
+        # can still connect accounts.
+        return ["user.info.profile", "user.info.stats", "video.list"]
 
     @property
     def rate_limits(self) -> RateLimitConfig:
