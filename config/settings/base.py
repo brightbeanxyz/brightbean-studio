@@ -286,6 +286,14 @@ CSP_FORM_ACTION = (
     "https://accounts.google.com",
     "https://checkout.stripe.com",
     "https://billing.stripe.com",
+    "https://www.facebook.com",
+    "https://api.instagram.com",
+    "https://www.instagram.com",
+    "https://www.threads.com",
+    "https://threads.net",
+    "https://www.linkedin.com",
+    "https://www.pinterest.com",
+    "https://www.tiktok.com",
 )
 CSP_INCLUDE_NONCE_IN = ["script-src"]
 
