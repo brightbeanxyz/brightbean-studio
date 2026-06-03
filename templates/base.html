@@ -972,7 +972,11 @@
                 },
             });
         }
-        document.addEventListener('DOMContentLoaded', bbInitHeroChart);
+        // Wrap in a no-arg callback so the DOMContentLoaded event object
+        // doesn't get passed as ``retries`` — that would make
+        // ``(retries || 0) + 1`` string-concatenate the event each tick and
+        // the ``> 30`` cap below would never trip when Chart.js is offline.
+        document.addEventListener('DOMContentLoaded', function () { bbInitHeroChart(); });
         document.body.addEventListener('htmx:afterSwap', function(evt) {
             var target = evt.detail && evt.detail.target;
             if (target && target.id === 'analytics-hero-chart') {
