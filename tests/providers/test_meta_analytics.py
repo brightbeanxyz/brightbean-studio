@@ -1,5 +1,6 @@
 """Tests for Meta analytics metric compatibility handling."""
 
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from providers.exceptions import APIError
@@ -87,6 +88,25 @@ class TestInstagramAnalyticsMetrics:
         assert "impressions" not in requested
         assert "views" in requested
 
+    @patch.object(InstagramProvider, "_request")
+    def test_account_views_use_total_value_metric_type(self, mock_request):
+        mock_request.side_effect = [
+            _response({"data": [{"name": "views", "values": [{"value": 50}]}]}),
+            _response({"data": [{"name": "reach", "values": [{"value": 40}]}]}),
+            _response({"data": [{"name": "profile_views", "values": [{"value": 6}]}]}),
+            _response({"data": [{"name": "follows", "values": [{"value": 2}]}]}),
+        ]
+
+        metrics = InstagramProvider({"ig_user_id": "ig-user"}).get_account_metrics(
+            "token",
+            (datetime(2026, 6, 7, tzinfo=timezone.utc), datetime(2026, 6, 8, tzinfo=timezone.utc)),
+        )
+
+        assert metrics.impressions == 50
+        first_params = mock_request.call_args_list[0].kwargs["params"]
+        assert first_params["metric"] == "views"
+        assert first_params["metric_type"] == "total_value"
+
 
 class TestInstagramDirectAnalyticsMetrics:
     @patch.object(InstagramLoginProvider, "_request")
@@ -116,3 +136,23 @@ class TestInstagramDirectAnalyticsMetrics:
         assert "engagement" not in requested
         assert "impressions" not in requested
         assert "views" in requested
+
+    @patch.object(InstagramLoginProvider, "_request")
+    def test_account_views_use_total_value_metric_type(self, mock_request):
+        mock_request.side_effect = [
+            _response({"data": [{"name": "views", "values": [{"value": 50}]}]}),
+            _response({"data": [{"name": "reach", "values": [{"value": 40}]}]}),
+            _response({"data": [{"name": "profile_views", "values": [{"value": 6}]}]}),
+            _response({"data": [{"name": "follows", "values": [{"value": 2}]}]}),
+            _response({"data": [{"name": "follower_count", "values": [{"value": 200}]}]}),
+        ]
+
+        metrics = InstagramLoginProvider().get_account_metrics(
+            "token",
+            (datetime(2026, 6, 7, tzinfo=timezone.utc), datetime(2026, 6, 8, tzinfo=timezone.utc)),
+        )
+
+        assert metrics.impressions == 50
+        first_params = mock_request.call_args_list[0].kwargs["params"]
+        assert first_params["metric"] == "views"
+        assert first_params["metric_type"] == "total_value"

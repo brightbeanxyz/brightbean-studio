@@ -430,6 +430,7 @@ class InstagramLoginProvider(SocialProvider):
                 "since": int(date_range[0].timestamp()),
                 "until": int(date_range[1].timestamp()),
             },
+            metric_params={"views": {"metric_type": "total_value"}},
         )
 
         return AccountMetrics(
@@ -447,11 +448,13 @@ class InstagramLoginProvider(SocialProvider):
         access_token: str,
         metrics: list[str],
         params: dict | None = None,
+        metric_params: dict[str, dict] | None = None,
     ) -> dict:
         """Fetch insight metrics one by one so unavailable names don't poison the batch."""
         values: dict = {}
         for metric in metrics:
             request_params = dict(params or {})
+            request_params.update((metric_params or {}).get(metric, {}))
             request_params["metric"] = metric
             try:
                 resp = self._request("GET", url, access_token=access_token, params=request_params)

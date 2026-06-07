@@ -322,6 +322,72 @@ def _is_insufficient_scope(exc: Exception) -> bool:
     )
 
 
+def _is_invalid_auth(exc: Exception) -> bool:
+    """True when a provider rejected the access token itself."""
+    if getattr(exc, "status_code", None) in (401, 403):
+        msg = str(exc).lower()
+        return any(
+            marker in msg
+            for marker in (
+                "invalid credentials",
+                "invalid authentication credentials",
+                "invalid access token",
+                "access token expired",
+                "expired token",
+            )
+        )
+    return False
+
+
+def _refresh_analytics_token(account, provider) -> str:
+    """Refresh and persist an OAuth access token for analytics sync."""
+    from providers.types import AuthType
+
+    if provider.auth_type != AuthType.OAUTH2 or not account.oauth_refresh_token:
+        return account.oauth_access_token
+
+    new_tokens = provider.refresh_token(account.oauth_refresh_token)
+    account.oauth_access_token = new_tokens.access_token
+    if new_tokens.refresh_token:
+        account.oauth_refresh_token = new_tokens.refresh_token
+    if new_tokens.expires_in:
+        account.token_expires_at = timezone.now() + timedelta(seconds=new_tokens.expires_in)
+    account.connection_status = account.ConnectionStatus.CONNECTED
+    account.save(
+        update_fields=[
+            "oauth_access_token",
+            "oauth_refresh_token",
+            "token_expires_at",
+            "connection_status",
+            "updated_at",
+        ]
+    )
+    logger.info("Analytics sync refreshed token for %s", account)
+    return new_tokens.access_token
+
+
+def _analytics_access_token(account, provider) -> str:
+    """Return a fresh-enough access token for analytics calls."""
+    if account.token_expires_at and account.is_token_expiring_soon:
+        try:
+            return _refresh_analytics_token(account, provider)
+        except Exception as exc:
+            logger.warning("Analytics token refresh failed for %s: %s", account, exc)
+    return account.oauth_access_token
+
+
+def _call_with_analytics_token(account, provider, fn):
+    """Call ``fn(access_token)``, refreshing once if the token is rejected."""
+    access_token = _analytics_access_token(account, provider)
+    try:
+        return fn(access_token)
+    except Exception as exc:
+        if not _is_invalid_auth(exc):
+            raise
+        refreshed_token = _refresh_analytics_token(account, provider)
+        return fn(refreshed_token)
+
+
 def _write_account_snapshot(account, metric_values: dict[str, float], on_date: dt_date) -> int:
     from .models import AccountInsightsSnapshot
 
@@ -418,7 +484,11 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
         start = datetime.combine(target, time.min, tzinfo=tz)
         end = datetime.combine(target, time.max, tzinfo=tz)
         try:
-            metrics = provider.get_account_metrics(account.oauth_access_token, (start, end))
+            metrics = _call_with_analytics_token(
+                account,
+                provider,
+                lambda access_token: provider.get_account_metrics(access_token, (start, end)),
+            )
         except NotImplementedError:
             return
         except Exception as exc:
@@ -469,7 +539,11 @@ def _sync_youtube_post_analytics(account, provider, on_date: dt_date) -> None:
     end = datetime.combine(on_date, time.max, tzinfo=tz)
 
     try:
-        per_video = provider.get_post_analytics(account.oauth_access_token, post_ids, (start, end))
+        per_video = _call_with_analytics_token(
+            account,
+            provider,
+            lambda access_token: provider.get_post_analytics(access_token, post_ids, (start, end)),
+        )
     except NotImplementedError:
         return
     except Exception as exc:
@@ -497,7 +571,11 @@ def _sync_post_metrics(post, on_date: dt_date) -> None:
     account = post.social_account
     provider = _resolve_provider(account)
     try:
-        metrics = provider.get_post_metrics(account.oauth_access_token, post.platform_post_id)
+        metrics = _call_with_analytics_token(
+            account,
+            provider,
+            lambda access_token: provider.get_post_metrics(access_token, post.platform_post_id),
+        )
     except NotImplementedError:
         return
     except Exception as exc:
