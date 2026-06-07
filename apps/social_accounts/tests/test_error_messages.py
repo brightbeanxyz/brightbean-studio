@@ -46,6 +46,21 @@ def test_bluesky_expired_token_in_raw_response_maps_to_reconnect():
     assert friendly_health_check_error(exc) == RECONNECT_MESSAGE
 
 
+def test_meta_error_dict_in_raw_response_maps_to_generic_message():
+    exc = APIError(
+        "Instagram API error 400: ...",
+        status_code=400,
+        raw_response={
+            "error": {
+                "message": "(#100) Tried accessing nonexisting field (accounts)",
+                "type": "OAuthException",
+                "code": 100,
+            }
+        },
+    )
+    assert friendly_health_check_error(exc) == GENERIC_MESSAGE
+
+
 def test_api_error_5xx_maps_to_platform_unavailable():
     exc = APIError("boom", status_code=503)
     assert friendly_health_check_error(exc) == PLATFORM_UNAVAILABLE_MESSAGE

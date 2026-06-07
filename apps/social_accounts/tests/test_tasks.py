@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.utils import timezone
 
+from apps.credentials.models import PlatformCredential
 from apps.social_accounts.models import SocialAccount
 from apps.social_accounts.tasks import check_social_account_health
 from providers.types import AccountProfile, OAuthTokens
@@ -211,3 +212,38 @@ class TestCheckSocialAccountHealth:
         assert account.oauth_refresh_token == "fresh_refresh"
         assert account.token_expires_at is not None
         assert account.connection_status == SocialAccount.ConnectionStatus.CONNECTED
+
+    @patch("providers.get_provider")
+    def test_instagram_health_check_passes_stored_ig_user_id(
+        self,
+        mock_get_provider,
+        db,
+        workspace,
+        organization,
+    ):
+        PlatformCredential.objects.create(
+            organization=organization,
+            platform=PlatformCredential.Platform.INSTAGRAM,
+            credentials={"client_id": "client", "client_secret": "secret"},
+            is_configured=True,
+        )
+        account = SocialAccount.objects.create(
+            workspace=workspace,
+            platform=PlatformCredential.Platform.INSTAGRAM,
+            account_platform_id="17841400000000000",
+            account_name="Test IG",
+            oauth_access_token="page_token",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.get_profile.return_value = _profile(follower_count=25)
+        mock_get_provider.return_value = mock_provider
+
+        check_social_account_health.now(str(account.id))
+
+        mock_get_provider.assert_called_once()
+        platform, credentials = mock_get_provider.call_args.args
+        assert platform == PlatformCredential.Platform.INSTAGRAM
+        assert credentials["ig_user_id"] == "17841400000000000"
+        mock_provider.get_profile.assert_called_once_with("page_token")

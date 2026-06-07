@@ -31,7 +31,11 @@ def friendly_health_check_error(exc: Exception) -> str:
     if isinstance(exc, APIError):
         if exc.status_code in (401, 403):
             return RECONNECT_MESSAGE
-        error_code = (exc.raw_response or {}).get("error")
+        raw_error = (exc.raw_response or {}).get("error")
+        if isinstance(raw_error, dict):
+            error_code = raw_error.get("code") or raw_error.get("error_subcode") or raw_error.get("type")
+        else:
+            error_code = raw_error
         if error_code in _EXPIRED_TOKEN_ERRORS:
             return RECONNECT_MESSAGE
         if exc.status_code is not None and exc.status_code >= 500:

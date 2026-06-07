@@ -55,6 +55,11 @@ def check_social_account_health(account_id: str):
             }
         except MastodonAppRegistration.DoesNotExist:
             pass
+    elif account.platform == PlatformCredential.Platform.INSTAGRAM:
+        # Instagram Graph accounts store the IG user ID on the SocialAccount.
+        # Health checks use the selected Page token, where /me/accounts is not
+        # available; passing the ID avoids a failing account-discovery call.
+        credentials = {**credentials, "ig_user_id": account.account_platform_id}
 
     try:
         provider = get_provider(account.platform, credentials)
