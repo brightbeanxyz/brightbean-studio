@@ -92,6 +92,14 @@ DEFAULT_BACKFILL_DAYS = 90
 # native fields into different ``PostMetrics`` slots — these overrides realign
 # them with the keys the UI queries from ``PLATFORM_METRICS``.
 _POST_FIELD_OVERRIDES: dict[str, dict[str, str]] = {
+    "instagram": {
+        # providers/instagram.py maps IG's current ``views`` insight into the
+        # dataclass's impressions slot for backwards-compatible transport.
+        "impressions": "views",
+    },
+    "instagram_login": {
+        "impressions": "views",
+    },
     "threads": {
         # providers/threads.py:419-423 stuffs views/replies/reposts into the
         # impressions/comments/shares dataclass fields.

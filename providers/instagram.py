@@ -35,6 +35,14 @@ BASE_URL = "https://graph.facebook.com/v21.0"
 OAUTH_URL = "https://www.facebook.com/v21.0/dialog/oauth"
 TOKEN_URL = f"{BASE_URL}/oauth/access_token"
 
+
+def _is_invalid_insights_metric_error(exc: APIError) -> bool:
+    error = (exc.raw_response or {}).get("error", {})
+    message = str(error.get("message", "")).lower()
+    return error.get("code") == 100 and (
+        "valid insights metric" in message or "must be one of the following values" in message
+    )
+
 # Polling settings for container status checks
 CONTAINER_POLL_INTERVAL = 2  # seconds
 CONTAINER_POLL_MAX_ATTEMPTS = 60
@@ -334,56 +342,65 @@ class InstagramProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
-        metrics = ["impressions", "reach", "engagement", "saved"]
-        resp = self._request(
-            "GET",
-            f"{BASE_URL}/{post_id}/insights",
-            access_token=access_token,
-            params={"metric": ",".join(metrics)},
-        )
-        data = resp.json()
-        values: dict = {}
-        for entry in data.get("data", []):
-            name = entry.get("name", "")
-            val = entry.get("values", [{}])[0].get("value", 0)
-            values[name] = val
+        metrics = ["views", "reach", "saved", "likes", "comments", "shares", "total_interactions"]
+        values = self._get_insight_values(f"{BASE_URL}/{post_id}/insights", access_token, metrics)
 
         return PostMetrics(
-            impressions=values.get("impressions", 0),
+            impressions=values.get("views", 0),
             reach=values.get("reach", 0),
-            engagements=values.get("engagement", 0),
+            likes=values.get("likes", 0),
+            comments=values.get("comments", 0),
+            shares=values.get("shares", 0),
             saves=values.get("saved", 0),
-            extra={"raw_insights": values},
+            extra={"raw_insights": values, "total_interactions": values.get("total_interactions", 0)},
         )
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         ig_user_id = self.credentials.get("ig_user_id", "me")
-        metrics = ["impressions", "reach", "follower_count", "profile_views"]
-        resp = self._request(
-            "GET",
+        metrics = ["views", "reach", "profile_views", "follows"]
+        values = self._get_insight_values(
             f"{BASE_URL}/{ig_user_id}/insights",
-            access_token=access_token,
+            access_token,
+            metrics,
             params={
-                "metric": ",".join(metrics),
                 "period": "day",
                 "since": int(date_range[0].timestamp()),
                 "until": int(date_range[1].timestamp()),
             },
         )
-        data = resp.json()
-        values: dict = {}
-        for entry in data.get("data", []):
-            name = entry.get("name", "")
-            val = entry.get("values", [{}])[0].get("value", 0)
-            values[name] = val
 
         return AccountMetrics(
-            impressions=values.get("impressions", 0),
+            impressions=values.get("views", 0),
             reach=values.get("reach", 0),
-            followers=values.get("follower_count", 0),
+            followers_gained=values.get("follows", 0),
             profile_views=values.get("profile_views", 0),
             extra={"raw_insights": values},
         )
+
+    def _get_insight_values(
+        self,
+        url: str,
+        access_token: str,
+        metrics: list[str],
+        params: dict | None = None,
+    ) -> dict:
+        """Fetch insight metrics one by one so deprecated metrics don't poison the batch."""
+        values: dict = {}
+        for metric in metrics:
+            request_params = dict(params or {})
+            request_params["metric"] = metric
+            try:
+                resp = self._request("GET", url, access_token=access_token, params=request_params)
+            except APIError as exc:
+                if _is_invalid_insights_metric_error(exc):
+                    logger.info("Skipping deprecated/invalid Instagram insights metric %s", metric)
+                    continue
+                raise
+            for entry in resp.json().get("data", []):
+                name = entry.get("name", "")
+                val = entry.get("values", [{}])[0].get("value", 0)
+                values[name] = val
+        return values
 
     # ------------------------------------------------------------------
     # Inbox
