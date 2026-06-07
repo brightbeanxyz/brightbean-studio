@@ -342,7 +342,7 @@ class InstagramProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
-        metrics = ["views", "reach", "saved", "likes", "comments", "shares", "total_interactions"]
+        metrics = ["views", "reach", "saved", "likes", "comments", "shares", "profile_visits", "total_interactions"]
         values = self._get_insight_values(f"{BASE_URL}/{post_id}/insights", access_token, metrics)
 
         return PostMetrics(
@@ -352,7 +352,11 @@ class InstagramProvider(SocialProvider):
             comments=values.get("comments", 0),
             shares=values.get("shares", 0),
             saves=values.get("saved", 0),
-            extra={"raw_insights": values, "total_interactions": values.get("total_interactions", 0)},
+            extra={
+                "raw_insights": values,
+                "profile_visits": values.get("profile_visits", 0),
+                "total_interactions": values.get("total_interactions", 0),
+            },
         )
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:

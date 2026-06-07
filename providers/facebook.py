@@ -334,16 +334,19 @@ class FacebookProvider(SocialProvider):
             "post_reactions_by_type_total",
         ]
         values = self._get_insight_values(f"{BASE_URL}/{post_id}/insights", access_token, metrics)
+        summary = self._get_post_summary_counts(access_token, post_id)
 
         reactions = values.get("post_reactions_by_type_total", {})
-        total_likes = reactions.get("like", 0) + reactions.get("love", 0) if isinstance(reactions, dict) else 0
+        total_reactions = sum(v for v in reactions.values() if isinstance(v, int | float)) if isinstance(reactions, dict) else 0
 
         return PostMetrics(
             impressions=values.get("post_impressions", 0),
             reach=values.get("post_impressions_unique", 0),
             engagements=values.get("post_engaged_users", 0),
             clicks=values.get("post_clicks", 0),
-            likes=total_likes,
+            likes=total_reactions,
+            comments=summary.get("comments", 0),
+            shares=summary.get("shares", 0),
             extra={"raw_insights": values},
         )
 
@@ -373,6 +376,25 @@ class FacebookProvider(SocialProvider):
             followers_gained=values.get("page_daily_follows", 0),
             extra={"raw_insights": values},
         )
+
+    def _get_post_summary_counts(self, access_token: str, post_id: str) -> dict[str, int]:
+        """Fetch post comment/share totals that are exposed as Graph fields."""
+        try:
+            resp = self._request(
+                "GET",
+                f"{BASE_URL}/{post_id}",
+                access_token=access_token,
+                params={"fields": "comments.limit(0).summary(true),shares"},
+            )
+        except APIError as exc:
+            logger.info("Skipping Facebook post summary counts for %s: %s", post_id, exc)
+            return {}
+
+        data = resp.json()
+        comments = data.get("comments", {}).get("summary", {}).get("total_count", 0)
+        shares_obj = data.get("shares", {})
+        shares = shares_obj.get("count", shares_obj.get("share_count", 0)) if isinstance(shares_obj, dict) else 0
+        return {"comments": int(comments or 0), "shares": int(shares or 0)}
 
     def _get_insight_values(
         self,

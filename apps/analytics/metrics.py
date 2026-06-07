@@ -41,8 +41,29 @@ ACCOUNT_ONLY: set[str] = {"follows", "followers", "subscribers"}
 PLATFORM_METRICS: dict[str, list[str]] = {
     # IG media insights: reach, views (replaced impressions Apr-2025), likes,
     # comments, saved, shares, total_interactions; follower growth at account level.
-    "instagram": ["reach", "views", "likes", "comments", "saves", "shares", "follows", "engagement"],
-    "instagram_login": ["reach", "views", "likes", "comments", "saves", "shares", "follows", "engagement"],
+    "instagram": [
+        "reach",
+        "views",
+        "profile_visits",
+        "likes",
+        "comments",
+        "saves",
+        "shares",
+        "follows",
+        "engagement",
+    ],
+    "instagram_login": [
+        "reach",
+        "views",
+        "profile_visits",
+        "likes",
+        "comments",
+        "saves",
+        "shares",
+        "follows",
+        "followers",
+        "engagement",
+    ],
     # FB post insights: impressions, reach (unique), reactions, comments, shares, clicks.
     "facebook": ["impressions", "reach", "reactions", "comments", "shares", "clicks", "follows", "engagement"],
     # LinkedIn share statistics: impressions, reactions, comments, reposts, clicks, engagement.

@@ -92,6 +92,12 @@ DEFAULT_BACKFILL_DAYS = 90
 # native fields into different ``PostMetrics`` slots — these overrides realign
 # them with the keys the UI queries from ``PLATFORM_METRICS``.
 _POST_FIELD_OVERRIDES: dict[str, dict[str, str]] = {
+    "facebook": {
+        # providers/facebook.py transports Meta's post_reactions_by_type_total
+        # through the generic likes slot; the Facebook catalog displays that
+        # number as reactions.
+        "likes": "reactions",
+    },
     "instagram": {
         # providers/instagram.py maps IG's current ``views`` insight into the
         # dataclass's impressions slot for backwards-compatible transport.
@@ -143,9 +149,23 @@ _GENERIC_POST_EXTRA_KEYS = (
     "replies",
     "reposts",
     "outbound",
+    "profile_visits",
     "watch_time",
     "avg_view_pct",
 )
+
+# Per-platform overrides for ``AccountMetrics`` field → catalog metric_key.
+_ACCOUNT_FIELD_OVERRIDES: dict[str, dict[str, str]] = {
+    "instagram": {
+        # Instagram's current account insight is ``views``. The provider uses
+        # the generic impressions slot for transport, so persist it under the
+        # catalog key the page renders.
+        "impressions": "views",
+    },
+    "instagram_login": {
+        "impressions": "views",
+    },
+}
 
 
 def _post_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
@@ -205,6 +225,7 @@ def _account_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
     from .metrics import PLATFORM_METRICS
 
     out: dict[str, float] = {}
+    field_overrides = _ACCOUNT_FIELD_OVERRIDES.get(platform, {})
     for src, key in (
         ("impressions", "impressions"),
         ("reach", "reach"),
@@ -212,7 +233,7 @@ def _account_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
     ):
         v = getattr(metrics, src, 0) or 0
         if v:
-            out[key] = float(v)
+            out[field_overrides.get(src, key)] = float(v)
     # followers_gained = daily new follows; catalog calls it ``follows`` for
     # most platforms (and ``subscribers`` for YouTube — promoted from extra).
     gained = getattr(metrics, "followers_gained", 0) or 0
@@ -268,6 +289,16 @@ def _resolve_provider(account):
             }
         except MastodonAppRegistration.DoesNotExist:
             pass
+    elif account.platform == "instagram":
+        # Instagram Graph analytics needs the IG user ID; connected accounts
+        # store it on account_platform_id. Without this, account metrics use
+        # ``me`` and profile/post helper paths can make the wrong discovery
+        # call with a selected Page token.
+        credentials = {**credentials, "ig_user_id": account.account_platform_id}
+    elif account.platform == "facebook":
+        # Page metrics should be requested for the connected Page, not the
+        # token owner represented by ``me``.
+        credentials = {**credentials, "page_id": account.account_platform_id}
     return get_provider(account.platform, credentials)
 
 

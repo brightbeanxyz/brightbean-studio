@@ -38,6 +38,33 @@ from .models import AccountInsightsSnapshot, PostInsightsSnapshot
 # source; without it the metric stays empty rather than misleadingly inflated.
 _POST_FALLBACK_DENYLIST: frozenset[str] = frozenset({"reach"})
 
+_LEGACY_SNAPSHOT_ALIASES: dict[str, dict[str, str]] = {
+    "facebook": {
+        # Older syncs wrote Facebook reactions through PostMetrics.likes.
+        "likes": "reactions",
+    },
+    "instagram": {
+        # Older account syncs wrote IG's current views metric as impressions.
+        "impressions": "views",
+    },
+    "instagram_login": {
+        "impressions": "views",
+    },
+}
+
+
+def _metric_query_keys(platform: str, metrics: Iterable[str]) -> list[str]:
+    keys = set(metrics)
+    aliases = _LEGACY_SNAPSHOT_ALIASES.get(platform, {})
+    for old_key, new_key in aliases.items():
+        if new_key in keys:
+            keys.add(old_key)
+    return list(keys)
+
+
+def _canonical_metric_key(platform: str, metric_key: str) -> str:
+    return _LEGACY_SNAPSHOT_ALIASES.get(platform, {}).get(metric_key, metric_key)
+
 
 def unavailable_reason(platform: str, enabled_platforms: list[str] | None = None) -> str | None:
     """Why ``platform`` has no live analytics, or ``None`` if it does.
@@ -87,11 +114,14 @@ def _series_for(
     start = end - timedelta(days=2 * days - 1)
     rows = AccountInsightsSnapshot.objects.filter(
         social_account=account,
-        metric_key=metric_key,
+        metric_key__in=_metric_query_keys(account.platform, [metric_key]),
         date__gte=start,
         date__lte=end,
     ).order_by("date")
-    by_day: dict[dt_date, float] = {r.date: r.value for r in rows}
+    by_day: dict[dt_date, float] = {}
+    for r in rows:
+        if _canonical_metric_key(account.platform, r.metric_key) == metric_key:
+            by_day[r.date] = r.value
     if not by_day and _supports_post_fallback(metric_key):
         fallback, _ = _post_summed_series_for_metric(account, metric_key, start, end)
         by_day.update(fallback)
@@ -257,7 +287,7 @@ def account_analytics_bundle(account: SocialAccount, days: int) -> dict[str, Any
     rows = list(
         AccountInsightsSnapshot.objects.filter(
             social_account=account,
-            metric_key__in=platform_metrics,
+            metric_key__in=_metric_query_keys(account.platform, platform_metrics),
             date__gte=start,
             date__lte=end,
         )
@@ -266,8 +296,11 @@ def account_analytics_bundle(account: SocialAccount, days: int) -> dict[str, Any
     max_captured: Any = None
     metrics_with_account_data: set[str] = set()
     for r in rows:
-        by_metric[r.metric_key][r.date] = r.value
-        metrics_with_account_data.add(r.metric_key)
+        metric_key = _canonical_metric_key(account.platform, r.metric_key)
+        if metric_key not in platform_metrics:
+            continue
+        by_metric[metric_key][r.date] = r.value
+        metrics_with_account_data.add(metric_key)
         if max_captured is None or r.captured_at > max_captured:
             max_captured = r.captured_at
 
@@ -576,17 +609,22 @@ def _latest_post_stats(posts: Iterable[PlatformPost], metrics: list[str]) -> dic
     post_ids = [p.id for p in posts]
     if not post_ids:
         return {}
-    rows = PostInsightsSnapshot.objects.filter(platform_post_id__in=post_ids, metric_key__in=metrics).order_by(
-        "platform_post_id", "metric_key", "-date"
-    )
+    platform = posts[0].social_account.platform if isinstance(posts, list) else ""
+    rows = PostInsightsSnapshot.objects.filter(
+        platform_post_id__in=post_ids,
+        metric_key__in=_metric_query_keys(platform, metrics),
+    ).order_by("platform_post_id", "metric_key", "-date")
     out: dict[Any, dict[str, float]] = defaultdict(dict)
     seen: set[tuple[Any, str]] = set()
     for r in rows:
-        key = (r.platform_post_id, r.metric_key)
+        metric_key = _canonical_metric_key(platform, r.metric_key)
+        if metric_key not in metrics:
+            continue
+        key = (r.platform_post_id, metric_key)
         if key in seen:
             continue
         seen.add(key)
-        out[r.platform_post_id][r.metric_key] = r.value
+        out[r.platform_post_id][metric_key] = r.value
     return out
 
 
@@ -602,13 +640,17 @@ def _post_sparklines_with_freshness(post: PlatformPost, metrics: list[str]) -> t
     (:func:`apps.analytics.freshness.post_freshness`) doesn't need its own
     ``Max("captured_at")`` aggregate against the same rows.
     """
-    rows = PostInsightsSnapshot.objects.filter(platform_post=post, metric_key__in=metrics).order_by(
-        "metric_key", "date"
-    )
+    rows = PostInsightsSnapshot.objects.filter(
+        platform_post=post,
+        metric_key__in=_metric_query_keys(post.social_account.platform, metrics),
+    ).order_by("metric_key", "date")
     out: dict[str, list[float]] = defaultdict(list)
     max_captured: Any = None
     for r in rows:
-        out[r.metric_key].append(r.value)
+        metric_key = _canonical_metric_key(post.social_account.platform, r.metric_key)
+        if metric_key not in metrics:
+            continue
+        out[metric_key].append(r.value)
         if max_captured is None or r.captured_at > max_captured:
             max_captured = r.captured_at
     return dict(out), max_captured
