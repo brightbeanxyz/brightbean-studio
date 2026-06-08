@@ -1,11 +1,11 @@
 package com.brightbean.studio.infrastructure.db
 
-import org.jdbi.v3.sqlobject.config.RegisterBeanMapper
+import org.jdbi.v3.sqlobject.kotlin.RegisterKotlinMapper
 import org.jdbi.v3.sqlobject.statement.SqlQuery
 import org.jdbi.v3.sqlobject.statement.SqlUpdate
 import java.util.UUID
 
-@RegisterBeanMapper(MemberDto::class)
+@RegisterKotlinMapper(MemberDto::class)
 interface MemberDao {
     @SqlQuery("SELECT * FROM member WHERE id = :id")
     fun findById(id: UUID): MemberDto?

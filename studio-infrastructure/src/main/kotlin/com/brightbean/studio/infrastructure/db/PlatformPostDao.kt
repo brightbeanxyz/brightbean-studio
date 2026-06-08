@@ -1,12 +1,12 @@
 package com.brightbean.studio.infrastructure.db
 
-import org.jdbi.v3.sqlobject.config.RegisterBeanMapper
+import org.jdbi.v3.sqlobject.kotlin.RegisterKotlinMapper
 import org.jdbi.v3.sqlobject.statement.SqlQuery
 import org.jdbi.v3.sqlobject.statement.SqlUpdate
 import java.time.Instant
 import java.util.UUID
 
-@RegisterBeanMapper(PlatformPostDto::class)
+@RegisterKotlinMapper(PlatformPostDto::class)
 interface PlatformPostDao {
     @SqlQuery("SELECT * FROM platform_post WHERE id = :id")
     fun findById(id: UUID): PlatformPostDto?
