@@ -32,14 +32,19 @@ class JDBIWorkspaceRepository(jdbi: Jdbi) : WorkspaceRepository {
         return dto.toDomain()
     }
 
+    override fun findByOrganizationId(organizationId: UUID): List<Workspace> =
+        workspaceDao.findByOrganizationId(organizationId).map { it.toDomain() }
+
     override fun save(workspace: Workspace): Workspace {
         val settingsJson = objectMapper.writeValueAsString(workspace.settings)
         val dto = WorkspaceDto(
             id = workspace.id,
+            organizationId = workspace.organizationId,
             name = workspace.name,
             slug = workspace.slug,
             ownerId = workspace.ownerId,
             settings = settingsJson,
+            isArchived = workspace.isArchived,
             createdAt = workspace.createdAt,
             updatedAt = workspace.updatedAt,
         )
@@ -55,10 +60,12 @@ class JDBIWorkspaceRepository(jdbi: Jdbi) : WorkspaceRepository {
         val settings = objectMapper.readValue(settings, WorkspaceSettings::class.java)
         return Workspace(
             id = id,
+            organizationId = organizationId,
             name = name,
             slug = slug,
             ownerId = ownerId,
             settings = settings,
+            isArchived = isArchived,
             createdAt = createdAt,
             updatedAt = updatedAt,
         )
