@@ -77,12 +77,12 @@
             </dependency>
             <dependency>
                 <groupId>io.insert-koin</groupId>
-                <artifactId>koin-core</artifactId>
+                <artifactId>koin-core-jvm</artifactId>
                 <version>${koin.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.insert-koin</groupId>
-                <artifactId>koin-test</artifactId>
+                <artifactId>koin-test-jvm</artifactId>
                 <version>${koin.version}</version>
             </dependency>
             <dependency>

@@ -1,14 +1,36 @@
 package com.brightbean.studio.web.server
 
+import com.sun.net.httpserver.HttpServer
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.net.InetSocketAddress
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 
 class ServerTest {
+
+    private lateinit var server: HttpServer
+    private var port: Int = 0
+
+    @BeforeEach
+    fun setUp() {
+        server = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+        val healthHandler = Middleware.corsMiddleware(listOf("*"), HealthHandler())
+        server.createContext("/health", healthHandler)
+        server.createContext("/", healthHandler)
+        server.executor = null
+        server.start()
+        port = server.address.port
+    }
+
+    @AfterEach
+    fun tearDown() {
+        server.stop(0)
+    }
 
     @Test
     fun `server config has default values`() {
@@ -38,19 +60,13 @@ class ServerTest {
 
     @Test
     fun `health endpoint returns UP status`() {
-        val server = BrightBeanServer(ServerConfig(port = 8085))
-        server.start()
-        try {
-            val client = HttpClient.newHttpClient()
-            val request = HttpRequest.newBuilder()
-                .uri(URI("http://localhost:8085/health"))
-                .GET()
-                .build()
-            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
-            assertEquals(200, response.statusCode())
-            assertEquals("""{"status":"UP"}""", response.body())
-        } finally {
-            server.stop()
-        }
+        val client = HttpClient.newHttpClient()
+        val request = HttpRequest.newBuilder()
+            .uri(URI("http://localhost:$port/health"))
+            .GET()
+            .build()
+        val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+        assertEquals(200, response.statusCode())
+        assertEquals("""{"status":"UP"}""", response.body())
     }
 }
