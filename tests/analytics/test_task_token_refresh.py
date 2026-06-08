@@ -1,7 +1,10 @@
 """Tests for analytics sync OAuth token handling."""
 
 from types import SimpleNamespace
+from datetime import timedelta
 from unittest.mock import MagicMock
+
+from django.utils import timezone
 
 from apps.analytics.tasks import _call_with_analytics_token
 from providers.exceptions import APIError
@@ -48,3 +51,21 @@ def test_analytics_call_refreshes_and_retries_on_invalid_credentials():
     account.save.assert_called_once()
     assert call.call_args_list[0].args == ("stale-access",)
     assert call.call_args_list[1].args == ("fresh-access",)
+
+
+def test_analytics_call_does_not_refresh_hour_long_token():
+    account = SimpleNamespace(
+        oauth_access_token="still-valid-access",
+        oauth_refresh_token="refresh-token",
+        token_expires_at=timezone.now() + timedelta(hours=1),
+        connection_status="connected",
+        ConnectionStatus=_ConnectionStatus,
+        save=MagicMock(),
+    )
+    provider = MagicMock()
+    provider.auth_type = AuthType.OAUTH2
+    call = MagicMock(return_value="ok")
+
+    assert _call_with_analytics_token(account, provider, call) == "ok"
+    provider.refresh_token.assert_not_called()
+    call.assert_called_once_with("still-valid-access")

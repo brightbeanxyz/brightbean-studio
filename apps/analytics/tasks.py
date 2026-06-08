@@ -368,7 +368,8 @@ def _refresh_analytics_token(account, provider) -> str:
 
 def _analytics_access_token(account, provider) -> str:
     """Return a fresh-enough access token for analytics calls."""
-    if account.token_expires_at and account.is_token_expiring_soon:
+    refresh_at = timezone.now() + timedelta(minutes=5)
+    if account.token_expires_at and account.token_expires_at <= refresh_at:
         try:
             return _refresh_analytics_token(account, provider)
         except Exception as exc:
