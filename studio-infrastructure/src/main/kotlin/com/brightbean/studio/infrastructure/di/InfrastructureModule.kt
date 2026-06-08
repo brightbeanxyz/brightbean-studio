@@ -2,28 +2,38 @@ package com.brightbean.studio.infrastructure.di
 
 import com.brightbean.studio.domain.repository.ApprovalRequestRepository
 import com.brightbean.studio.domain.repository.CredentialRepository
+import com.brightbean.studio.domain.repository.CustomRoleRepository
 import com.brightbean.studio.domain.repository.InboxRepository
+import com.brightbean.studio.domain.repository.InvitationRepository
 import com.brightbean.studio.domain.repository.MemberRepository
 import com.brightbean.studio.domain.repository.OAuthConnectionRepository
+import com.brightbean.studio.domain.repository.OrgMembershipRepository
+import com.brightbean.studio.domain.repository.OrganizationRepository
 import com.brightbean.studio.domain.repository.PlatformPostRepository
 import com.brightbean.studio.domain.repository.PostRepository
 import com.brightbean.studio.domain.repository.PublishingQueueRepository
 import com.brightbean.studio.domain.repository.SessionRepository
 import com.brightbean.studio.domain.repository.SocialAccountRepository
 import com.brightbean.studio.domain.repository.UserRepository
+import com.brightbean.studio.domain.repository.WorkspaceMembershipRepository
 import com.brightbean.studio.domain.repository.WorkspaceRepository
 import com.brightbean.studio.infrastructure.config.StudioConfig
 import com.brightbean.studio.infrastructure.db.JDBIApprovalRequestRepository
 import com.brightbean.studio.infrastructure.db.JDBICredentialRepository
+import com.brightbean.studio.infrastructure.db.JDBICustomRoleRepository
 import com.brightbean.studio.infrastructure.db.JDBIInboxRepository
+import com.brightbean.studio.infrastructure.db.JDBIInvitationRepository
 import com.brightbean.studio.infrastructure.db.JDBIMemberRepository
 import com.brightbean.studio.infrastructure.db.JDBIOAuthConnectionRepository
+import com.brightbean.studio.infrastructure.db.JDBIOrgMembershipRepository
+import com.brightbean.studio.infrastructure.db.JDBIOrganizationRepository
 import com.brightbean.studio.infrastructure.db.JDBIPlatformPostRepository
 import com.brightbean.studio.infrastructure.db.JDBIPostRepository
 import com.brightbean.studio.infrastructure.db.JDBIPublishingQueueRepository
 import com.brightbean.studio.infrastructure.db.JDBISessionRepository
 import com.brightbean.studio.infrastructure.db.JDBISocialAccountRepository
 import com.brightbean.studio.infrastructure.db.JDBIUserRepository
+import com.brightbean.studio.infrastructure.db.JDBIWorkspaceMembershipRepository
 import com.brightbean.studio.infrastructure.db.JDBIWorkspaceRepository
 import com.brightbean.studio.infrastructure.provider.ProviderRegistry
 import com.brightbean.studio.infrastructure.security.EncryptionService
@@ -48,6 +58,11 @@ val infrastructureModule = module {
     single<PlatformPostRepository> { JDBIPlatformPostRepository(get()) }
     single<InboxRepository> { JDBIInboxRepository(get()) }
     single<ApprovalRequestRepository> { JDBIApprovalRequestRepository(get()) }
+    single<OrganizationRepository> { JDBIOrganizationRepository(get()) }
+    single<OrgMembershipRepository> { JDBIOrgMembershipRepository(get()) }
+    single<WorkspaceMembershipRepository> { JDBIWorkspaceMembershipRepository(get()) }
+    single<CustomRoleRepository> { JDBICustomRoleRepository(get()) }
+    single<InvitationRepository> { JDBIInvitationRepository(get()) }
     single { ProviderRegistry.from(emptyList()) }
 }
 

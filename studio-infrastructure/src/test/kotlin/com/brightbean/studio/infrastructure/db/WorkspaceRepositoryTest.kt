@@ -26,10 +26,12 @@ class WorkspaceRepositoryTest {
             handle.createUpdate("""
                 CREATE TABLE workspace (
                     id UUID PRIMARY KEY,
+                    organization_id UUID NOT NULL,
                     name VARCHAR NOT NULL,
                     slug VARCHAR NOT NULL UNIQUE,
                     owner_id UUID NOT NULL,
                     settings TEXT NOT NULL,
+                    is_archived BOOLEAN NOT NULL DEFAULT FALSE,
                     created_at TIMESTAMP NOT NULL,
                     updated_at TIMESTAMP NOT NULL
                 )
@@ -101,6 +103,7 @@ class WorkspaceRepositoryTest {
     private fun createTestWorkspace(): Workspace {
         return Workspace(
             id = UUID.randomUUID(),
+            organizationId = UUID.randomUUID(),
             name = "Test Workspace",
             slug = "test-workspace-${UUID.randomUUID()}",
             ownerId = UUID.randomUUID(),

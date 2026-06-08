@@ -13,10 +13,11 @@ class CreateWorkspaceUseCase(
     private val workspaceRepository: WorkspaceRepository,
     private val memberRepository: MemberRepository,
 ) {
-    fun execute(name: String, slug: String, ownerId: UUID): Workspace {
+    fun execute(name: String, slug: String, ownerId: UUID, organizationId: UUID): Workspace {
         val now = Instant.now()
         val workspace = Workspace(
             id = UUID.randomUUID(),
+            organizationId = organizationId,
             name = name,
             slug = slug,
             ownerId = ownerId,

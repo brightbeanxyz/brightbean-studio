@@ -21,6 +21,11 @@ class RepositoryIntegrationTest {
     private lateinit var platformPostRepo: JDBIPlatformPostRepository
     private lateinit var inboxRepo: JDBIInboxRepository
     private lateinit var approvalRequestRepo: JDBIApprovalRequestRepository
+    private lateinit var organizationRepo: JDBIOrganizationRepository
+    private lateinit var orgMembershipRepo: JDBIOrgMembershipRepository
+    private lateinit var workspaceMembershipRepo: JDBIWorkspaceMembershipRepository
+    private lateinit var customRoleRepo: JDBICustomRoleRepository
+    private lateinit var invitationRepo: JDBIInvitationRepository
 
     @BeforeEach
     fun setUp() {
@@ -149,6 +154,67 @@ class RepositoryIntegrationTest {
                     comment VARCHAR
                 )
             """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE organization (
+                    id UUID PRIMARY KEY,
+                    name VARCHAR NOT NULL,
+                    logo_url VARCHAR,
+                    default_timezone VARCHAR NOT NULL DEFAULT 'UTC',
+                    billing_email VARCHAR NOT NULL DEFAULT '',
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE org_membership (
+                    id UUID PRIMARY KEY,
+                    user_id UUID NOT NULL,
+                    organization_id UUID NOT NULL,
+                    org_role VARCHAR NOT NULL DEFAULT 'MEMBER',
+                    invited_at TIMESTAMP NOT NULL,
+                    accepted_at TIMESTAMP
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE workspace_membership (
+                    id UUID PRIMARY KEY,
+                    user_id UUID NOT NULL,
+                    workspace_id UUID NOT NULL,
+                    workspace_role VARCHAR NOT NULL DEFAULT 'VIEWER',
+                    custom_role_id UUID,
+                    added_at TIMESTAMP NOT NULL
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE custom_role (
+                    id UUID PRIMARY KEY,
+                    organization_id UUID NOT NULL,
+                    name VARCHAR NOT NULL,
+                    permissions TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE invitation (
+                    id UUID PRIMARY KEY,
+                    organization_id UUID NOT NULL,
+                    email VARCHAR NOT NULL,
+                    org_role VARCHAR NOT NULL DEFAULT 'MEMBER',
+                    workspace_assignments TEXT NOT NULL,
+                    invited_by UUID,
+                    token VARCHAR NOT NULL UNIQUE,
+                    expires_at TIMESTAMP NOT NULL,
+                    accepted_at TIMESTAMP,
+                    status VARCHAR NOT NULL DEFAULT 'PENDING',
+                    created_at TIMESTAMP NOT NULL
+                )
+            """).execute()
         }
 
         memberRepo = JDBIMemberRepository(jdbi)
@@ -159,6 +225,11 @@ class RepositoryIntegrationTest {
         platformPostRepo = JDBIPlatformPostRepository(jdbi)
         inboxRepo = JDBIInboxRepository(jdbi)
         approvalRequestRepo = JDBIApprovalRequestRepository(jdbi)
+        organizationRepo = JDBIOrganizationRepository(jdbi)
+        orgMembershipRepo = JDBIOrgMembershipRepository(jdbi)
+        workspaceMembershipRepo = JDBIWorkspaceMembershipRepository(jdbi)
+        customRoleRepo = JDBICustomRoleRepository(jdbi)
+        invitationRepo = JDBIInvitationRepository(jdbi)
     }
 
     @Test
@@ -571,5 +642,188 @@ class RepositoryIntegrationTest {
         reviewedBy = null,
         reviewedAt = null,
         comment = null,
+    )
+
+    @Test
+    fun `organization save and findById`() {
+        val org = createTestOrganization()
+        organizationRepo.save(org)
+
+        val found = organizationRepo.findById(org.id)
+
+        assertNotNull(found)
+        assertEquals(org.id, found!!.id)
+        assertEquals("Test Org", found.name)
+        assertEquals("UTC", found.defaultTimezone)
+    }
+
+    @Test
+    fun `organization delete removes organization`() {
+        val org = createTestOrganization()
+        organizationRepo.save(org)
+
+        organizationRepo.delete(org.id)
+
+        assertNull(organizationRepo.findById(org.id))
+    }
+
+    @Test
+    fun `orgMembership save and findById`() {
+        val membership = createTestOrgMembership()
+        orgMembershipRepo.save(membership)
+
+        val found = orgMembershipRepo.findById(membership.id)
+
+        assertNotNull(found)
+        assertEquals(membership.id, found!!.id)
+        assertEquals(OrgRole.MEMBER, found.orgRole)
+    }
+
+    @Test
+    fun `orgMembership findByOrganizationId returns memberships`() {
+        val orgId = UUID.randomUUID()
+        val m1 = createTestOrgMembership(organizationId = orgId)
+        val m2 = createTestOrgMembership(organizationId = orgId)
+        orgMembershipRepo.save(m1)
+        orgMembershipRepo.save(m2)
+
+        val results = orgMembershipRepo.findByOrganizationId(orgId)
+
+        assertEquals(2, results.size)
+    }
+
+    @Test
+    fun `workspaceMembership save and findById`() {
+        val membership = createTestWorkspaceMembership()
+        workspaceMembershipRepo.save(membership)
+
+        val found = workspaceMembershipRepo.findById(membership.id)
+
+        assertNotNull(found)
+        assertEquals(membership.id, found!!.id)
+        assertEquals(WorkspaceRole.EDITOR, found.workspaceRole)
+    }
+
+    @Test
+    fun `workspaceMembership findByWorkspaceId returns memberships`() {
+        val wsId = UUID.randomUUID()
+        val m1 = createTestWorkspaceMembership(workspaceId = wsId)
+        val m2 = createTestWorkspaceMembership(workspaceId = wsId)
+        workspaceMembershipRepo.save(m1)
+        workspaceMembershipRepo.save(m2)
+
+        val results = workspaceMembershipRepo.findByWorkspaceId(wsId)
+
+        assertEquals(2, results.size)
+    }
+
+    @Test
+    fun `customRole save and findById`() {
+        val role = createTestCustomRole()
+        customRoleRepo.save(role)
+
+        val found = customRoleRepo.findById(role.id)
+
+        assertNotNull(found)
+        assertEquals(role.id, found!!.id)
+        assertEquals("Editor", found.name)
+        assertEquals(mapOf("can_edit" to true, "can_delete" to false), found.permissions)
+    }
+
+    @Test
+    fun `customRole findByOrganizationId returns roles`() {
+        val orgId = UUID.randomUUID()
+        val r1 = createTestCustomRole(organizationId = orgId)
+        val r2 = createTestCustomRole(organizationId = orgId)
+        customRoleRepo.save(r1)
+        customRoleRepo.save(r2)
+
+        val results = customRoleRepo.findByOrganizationId(orgId)
+
+        assertEquals(2, results.size)
+    }
+
+    @Test
+    fun `invitation save and findById`() {
+        val invitation = createTestInvitation()
+        invitationRepo.save(invitation)
+
+        val found = invitationRepo.findById(invitation.id)
+
+        assertNotNull(found)
+        assertEquals(invitation.id, found!!.id)
+        assertEquals("test@example.com", found.email)
+        assertEquals(OrgRole.MEMBER, found.orgRole)
+        assertEquals(InvitationStatus.PENDING, found.status)
+    }
+
+    @Test
+    fun `invitation findByToken returns invitation`() {
+        val invitation = createTestInvitation(token = "unique-token-123")
+        invitationRepo.save(invitation)
+
+        val found = invitationRepo.findByToken("unique-token-123")
+
+        assertNotNull(found)
+        assertEquals(invitation.id, found!!.id)
+    }
+
+    private fun createTestOrganization() = Organization(
+        id = UUID.randomUUID(),
+        name = "Test Org",
+        logoUrl = null,
+        defaultTimezone = "UTC",
+        billingEmail = "billing@test.com",
+        createdAt = Instant.now(),
+        updatedAt = Instant.now(),
+    )
+
+    private fun createTestOrgMembership(
+        organizationId: UUID = UUID.randomUUID(),
+    ) = OrgMembership(
+        id = UUID.randomUUID(),
+        userId = UUID.randomUUID(),
+        organizationId = organizationId,
+        orgRole = OrgRole.MEMBER,
+        invitedAt = Instant.now(),
+        acceptedAt = null,
+    )
+
+    private fun createTestWorkspaceMembership(
+        workspaceId: UUID = UUID.randomUUID(),
+    ) = WorkspaceMembership(
+        id = UUID.randomUUID(),
+        userId = UUID.randomUUID(),
+        workspaceId = workspaceId,
+        workspaceRole = WorkspaceRole.EDITOR,
+        customRoleId = null,
+        addedAt = Instant.now(),
+    )
+
+    private fun createTestCustomRole(
+        organizationId: UUID = UUID.randomUUID(),
+    ) = CustomRole(
+        id = UUID.randomUUID(),
+        organizationId = organizationId,
+        name = "Editor",
+        permissions = mapOf("can_edit" to true, "can_delete" to false),
+        createdAt = Instant.now(),
+        updatedAt = Instant.now(),
+    )
+
+    private fun createTestInvitation(
+        token: String = "token-${UUID.randomUUID()}",
+    ) = Invitation(
+        id = UUID.randomUUID(),
+        organizationId = UUID.randomUUID(),
+        email = "test@example.com",
+        orgRole = OrgRole.MEMBER,
+        workspaceAssignments = "[]",
+        invitedBy = UUID.randomUUID(),
+        token = token,
+        expiresAt = Instant.now().plusSeconds(86400),
+        acceptedAt = null,
+        status = InvitationStatus.PENDING,
+        createdAt = Instant.now(),
     )
 }

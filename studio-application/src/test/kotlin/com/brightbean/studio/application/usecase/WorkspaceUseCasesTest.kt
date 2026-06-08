@@ -29,8 +29,9 @@ class WorkspaceUseCasesTest {
         val name = "Test Workspace"
         val slug = "test-workspace"
         val ownerId = UUID.randomUUID()
+        val organizationId = UUID.randomUUID()
 
-        val workspace = createWorkspaceUseCase.execute(name, slug, ownerId)
+        val workspace = createWorkspaceUseCase.execute(name, slug, ownerId, organizationId)
 
         assertEquals(name, workspace.name)
         assertEquals(slug, workspace.slug)
@@ -48,7 +49,8 @@ class WorkspaceUseCasesTest {
     @Test
     fun `create workspace should persist workspace and member`() {
         val ownerId = UUID.randomUUID()
-        val workspace = createWorkspaceUseCase.execute("My Workspace", "my-workspace", ownerId)
+        val organizationId = UUID.randomUUID()
+        val workspace = createWorkspaceUseCase.execute("My Workspace", "my-workspace", ownerId, organizationId)
 
         val found = workspaceRepository.findById(workspace.id)
         assertEquals(workspace.id, found?.id)
@@ -64,6 +66,7 @@ class InMemoryWorkspaceRepository : WorkspaceRepository {
 
     override fun findById(id: UUID): Workspace? = workspaces[id]
     override fun findBySlug(slug: String): Workspace? = workspaces.values.find { it.slug == slug }
+    override fun findByOrganizationId(organizationId: UUID): List<Workspace> = workspaces.values.filter { it.organizationId == organizationId }
     override fun save(workspace: Workspace): Workspace {
         workspaces[workspace.id] = workspace
         return workspace
