@@ -25,6 +25,7 @@ import com.brightbean.studio.infrastructure.db.JDBISessionRepository
 import com.brightbean.studio.infrastructure.db.JDBISocialAccountRepository
 import com.brightbean.studio.infrastructure.db.JDBIUserRepository
 import com.brightbean.studio.infrastructure.db.JDBIWorkspaceRepository
+import com.brightbean.studio.infrastructure.provider.ProviderRegistry
 import com.brightbean.studio.infrastructure.security.EncryptionService
 import org.jdbi.v3.core.Jdbi
 import org.jdbi.v3.core.kotlin.KotlinPlugin
@@ -47,6 +48,7 @@ val infrastructureModule = module {
     single<PlatformPostRepository> { JDBIPlatformPostRepository(get()) }
     single<InboxRepository> { JDBIInboxRepository(get()) }
     single<ApprovalRequestRepository> { JDBIApprovalRequestRepository(get()) }
+    single { ProviderRegistry.from(emptyList()) }
 }
 
 private fun createJdbi(config: StudioConfig): Jdbi {
