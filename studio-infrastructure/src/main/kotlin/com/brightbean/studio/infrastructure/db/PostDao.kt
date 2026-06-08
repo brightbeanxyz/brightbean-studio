@@ -16,6 +16,9 @@ interface PostDao {
     @SqlQuery("SELECT * FROM post WHERE workspace_id = :workspaceId AND status = :status")
     fun findByStatus(workspaceId: UUID, status: String): List<PostDto>
 
+    @SqlQuery("SELECT * FROM post WHERE author_id = :authorId")
+    fun findByAuthorId(authorId: UUID): List<PostDto>
+
     @SqlUpdate("""
         INSERT INTO post (id, workspace_id, author_id, content, platforms, category_id, tags, status, scheduled_at, published_at, media_ids, created_at, updated_at)
         VALUES (:dto.id, :dto.workspaceId, :dto.authorId, :dto.content, :dto.platforms, :dto.categoryId, :dto.tags, :dto.status, :dto.scheduledAt, :dto.publishedAt, :dto.mediaIds, :dto.createdAt, :dto.updatedAt)

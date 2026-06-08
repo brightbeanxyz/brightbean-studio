@@ -16,6 +16,9 @@ interface SocialAccountDao {
     @SqlQuery("SELECT * FROM social_account WHERE workspace_id = :workspaceId AND platform_type = :platformType")
     fun findByPlatform(workspaceId: UUID, platformType: String): List<SocialAccountDto>
 
+    @SqlQuery("SELECT * FROM social_account WHERE workspace_id = :workspaceId AND is_active = true")
+    fun findActiveByWorkspace(workspaceId: UUID): List<SocialAccountDto>
+
     @SqlUpdate("""
         INSERT INTO social_account (id, workspace_id, credential_id, platform_type, platform_user_id, platform_username, platform_display_name, platform_avatar_url, profile_url, is_active, metadata, connected_at, last_sync_at)
         VALUES (:dto.id, :dto.workspaceId, :dto.credentialId, :dto.platformType, :dto.platformUserId, :dto.platformUsername, :dto.platformDisplayName, :dto.platformAvatarUrl, :dto.profileUrl, :dto.isActive, :dto.metadata, :dto.connectedAt, :dto.lastSyncAt)

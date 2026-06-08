@@ -13,6 +13,9 @@ interface CredentialDao {
     @SqlQuery("SELECT * FROM credential WHERE workspace_id = :workspaceId AND platform_type = :platformType")
     fun findByWorkspaceAndPlatform(workspaceId: UUID, platformType: String): CredentialDto?
 
+    @SqlQuery("SELECT * FROM credential WHERE workspace_id = :workspaceId")
+    fun findByWorkspaceId(workspaceId: UUID): List<CredentialDto>
+
     @SqlUpdate("""
         INSERT INTO credential (id, workspace_id, platform_type, encrypted_access_token, encrypted_refresh_token, token_expires_at, metadata, created_at, updated_at)
         VALUES (:dto.id, :dto.workspaceId, :dto.platformType, :dto.encryptedAccessToken, :dto.encryptedRefreshToken, :dto.tokenExpiresAt, :dto.metadata, :dto.createdAt, :dto.updatedAt)
