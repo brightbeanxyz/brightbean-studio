@@ -23,6 +23,9 @@
         <konsist.version>0.17.3</konsist.version>
         <jackson.version>2.17.0</jackson.version>
         <sonar-maven-plugin.version>5.5.0.6356</sonar-maven-plugin.version>
+        <koin.version>3.5.6</koin.version>
+        <flyway.version>10.13.0</flyway.version>
+        <bcrypt.version>0.10.2</bcrypt.version>
     </properties>
 
     <dependencyManagement>
@@ -71,6 +74,36 @@
                 <groupId>org.junit.jupiter</groupId>
                 <artifactId>junit-jupiter-engine</artifactId>
                 <version>5.10.2</version>
+            </dependency>
+            <dependency>
+                <groupId>io.insert-koin</groupId>
+                <artifactId>koin-core</artifactId>
+                <version>${koin.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.insert-koin</groupId>
+                <artifactId>koin-test</artifactId>
+                <version>${koin.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.insert-koin</groupId>
+                <artifactId>koin-test-junit5</artifactId>
+                <version>${koin.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-core</artifactId>
+                <version>${flyway.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-database-postgresql</artifactId>
+                <version>${flyway.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>at.favre.lib</groupId>
+                <artifactId>bcrypt</artifactId>
+                <version>${bcrypt.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

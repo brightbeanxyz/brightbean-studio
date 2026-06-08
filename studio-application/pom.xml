@@ -50,6 +50,10 @@
             <artifactId>junit-jupiter-engine</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>io.insert-koin</groupId>
+            <artifactId>koin-core</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

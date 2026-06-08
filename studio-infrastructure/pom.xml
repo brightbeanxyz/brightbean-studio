@@ -85,6 +85,23 @@
             <version>2.2.224</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>io.insert-koin</groupId>
+            <artifactId>koin-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>at.favre.lib</groupId>
+            <artifactId>bcrypt</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
