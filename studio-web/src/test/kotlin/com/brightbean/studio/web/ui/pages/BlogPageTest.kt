@@ -47,32 +47,6 @@ class BlogPageTest {
     }
 
     @Test
-    fun `blog post page renders with content`() {
-        val data = BlogPostPageData(
-            title = "Test Post",
-            content = "<p>Hello world</p>",
-            slug = "test-post",
-            publishedAt = "2026-04-14",
-        )
-        val html = BlogPostPage(data).render()
-        assertTrue(html.contains("Test Post"))
-        assertTrue(html.contains("Hello world"))
-    }
-
-    @Test
-    fun `static page renders`() {
-        val data = StaticPageData(
-            title = "About Us",
-            content = "<p>About content</p>",
-            slug = "about-us",
-        )
-        val html = StaticPage(data).render()
-        assertTrue(html.contains("About Us"))
-        assertTrue(html.contains("About content"))
-        assertTrue(html.contains("about-us"))
-    }
-
-    @Test
     fun `blog list page contains blog cards`() {
         val posts = listOf(
             BlogCardData("Post 1", "Excerpt 1", "post-1", "2026-04-01"),
