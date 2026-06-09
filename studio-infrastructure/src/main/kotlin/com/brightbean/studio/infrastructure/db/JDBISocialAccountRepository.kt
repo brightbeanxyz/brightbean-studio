@@ -1,5 +1,6 @@
 package com.brightbean.studio.infrastructure.db
 
+import com.brightbean.studio.domain.model.ConnectionStatus
 import com.brightbean.studio.domain.model.PlatformType
 import com.brightbean.studio.domain.model.SocialAccount
 import com.brightbean.studio.domain.repository.SocialAccountRepository
@@ -57,6 +58,13 @@ class JDBISocialAccountRepository(jdbi: Jdbi) : SocialAccountRepository {
         platformAvatarUrl = platformAvatarUrl,
         profileUrl = profileUrl,
         isActive = isActive,
+        connectionStatus = connectionStatus.name,
+        lastHealthCheckAt = lastHealthCheckAt,
+        lastError = lastError,
+        followerCount = followerCount,
+        instanceUrl = instanceUrl,
+        dailyPostLimitOverride = dailyPostLimitOverride,
+        analyticsNeedsReconnect = analyticsNeedsReconnect,
         metadata = objectMapper.writeValueAsString(metadata),
         connectedAt = connectedAt,
         lastSyncAt = lastSyncAt,
@@ -79,6 +87,13 @@ class JDBISocialAccountRepository(jdbi: Jdbi) : SocialAccountRepository {
             platformAvatarUrl = platformAvatarUrl,
             profileUrl = profileUrl,
             isActive = isActive,
+            connectionStatus = ConnectionStatus.valueOf(connectionStatus),
+            lastHealthCheckAt = lastHealthCheckAt,
+            lastError = lastError,
+            followerCount = followerCount,
+            instanceUrl = instanceUrl,
+            dailyPostLimitOverride = dailyPostLimitOverride,
+            analyticsNeedsReconnect = analyticsNeedsReconnect,
             metadata = meta,
             connectedAt = connectedAt,
             lastSyncAt = lastSyncAt,
