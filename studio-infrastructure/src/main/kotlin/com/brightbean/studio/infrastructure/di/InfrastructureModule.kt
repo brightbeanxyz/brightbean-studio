@@ -9,7 +9,10 @@ import com.brightbean.studio.domain.repository.MemberRepository
 import com.brightbean.studio.domain.repository.OAuthConnectionRepository
 import com.brightbean.studio.domain.repository.OrgMembershipRepository
 import com.brightbean.studio.domain.repository.OrganizationRepository
+import com.brightbean.studio.domain.repository.AnalyticsPlatformConfigRepository
+import com.brightbean.studio.domain.repository.PlatformCredentialRepository
 import com.brightbean.studio.domain.repository.PlatformPostRepository
+import com.brightbean.studio.domain.repository.PlatformVisibilityRepository
 import com.brightbean.studio.domain.repository.PostRepository
 import com.brightbean.studio.domain.repository.PublishingQueueRepository
 import com.brightbean.studio.domain.repository.SessionRepository
@@ -27,7 +30,10 @@ import com.brightbean.studio.infrastructure.db.JDBIMemberRepository
 import com.brightbean.studio.infrastructure.db.JDBIOAuthConnectionRepository
 import com.brightbean.studio.infrastructure.db.JDBIOrgMembershipRepository
 import com.brightbean.studio.infrastructure.db.JDBIOrganizationRepository
+import com.brightbean.studio.infrastructure.db.JDBIAnalyticsPlatformConfigRepository
+import com.brightbean.studio.infrastructure.db.JDBIPlatformCredentialRepository
 import com.brightbean.studio.infrastructure.db.JDBIPlatformPostRepository
+import com.brightbean.studio.infrastructure.db.JDBIPlatformVisibilityRepository
 import com.brightbean.studio.infrastructure.db.JDBIPostRepository
 import com.brightbean.studio.infrastructure.db.JDBIPublishingQueueRepository
 import com.brightbean.studio.infrastructure.db.JDBISessionRepository
@@ -63,6 +69,9 @@ val infrastructureModule = module {
     single<WorkspaceMembershipRepository> { JDBIWorkspaceMembershipRepository(get()) }
     single<CustomRoleRepository> { JDBICustomRoleRepository(get()) }
     single<InvitationRepository> { JDBIInvitationRepository(get()) }
+    single<PlatformCredentialRepository> { JDBIPlatformCredentialRepository(get()) }
+    single<PlatformVisibilityRepository> { JDBIPlatformVisibilityRepository(get()) }
+    single<AnalyticsPlatformConfigRepository> { JDBIAnalyticsPlatformConfigRepository(get()) }
     single { ProviderRegistry.from(emptyList()) }
 }
 
