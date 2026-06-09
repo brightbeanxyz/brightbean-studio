@@ -402,6 +402,12 @@ Facebook, Instagram, and Threads all use the same Meta app credentials.
    PLATFORM_FACEBOOK_APP_ID=your-app-id
    PLATFORM_FACEBOOK_APP_SECRET=your-app-secret
    ```
+6. **Threads App ID (if different):** Meta assigns a separate App ID for the "Access the Threads API" use case. You can find it under **Use cases → Access the Threads API → Settings** in your app dashboard. If it differs from your main App ID, set:
+   ```
+   PLATFORM_THREADS_APP_ID=your-threads-app-id
+   PLATFORM_THREADS_APP_SECRET=your-threads-app-secret
+   ```
+   If not set, these fall back to `PLATFORM_FACEBOOK_APP_ID` / `PLATFORM_FACEBOOK_APP_SECRET`.
 
 ### Instagram (Direct, via Instagram Login)
 
