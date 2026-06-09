@@ -1,0 +1,219 @@
+<!--
+  Unsplash Search Modal — Alpine.js component
+  Included on pages that need Unsplash integration.
+
+  Usage: Include this partial in your template and initialize the Alpine component
+  with workspaceId and apiToken parameters.
+
+  x-data="unsplashModal({ workspaceId: '{{ workspace.id }}', apiToken: 'YOUR_TOKEN' })"
+
+  API Base: /api/v1/
+  Endpoints:
+    GET  /api/v1/media/unsplash/search/?q=...&page=...&per_page=20&orientation=...&color=...
+    POST /api/v1/media/unsplash/import/
+-->
+<div x-data="unsplashModal()" x-show="show" x-cloak x-init="_setupClickDelegation($el)"
+     @open-unsplash-modal.window="open($event.detail)"
+     class="fixed inset-0 z-[70] flex items-center justify-center"
+     x-transition:enter="transition ease-out duration-200"
+     x-transition:enter-start="opacity-0"
+     x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150"
+     x-transition:leave-start="opacity-100"
+     x-transition:leave-end="opacity-0"
+     @keydown.escape.window="close()">
+
+  <!-- Backdrop -->
+  <div class="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" @click="close()"></div>
+
+  <!-- Modal -->
+  <div class="relative bg-white rounded-2xl shadow-xl border border-stone-200 w-[calc(100vw-1rem)] sm:w-[800px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden"
+       x-transition:enter="transition ease-out duration-200"
+       x-transition:enter-start="opacity-0 scale-95"
+       x-transition:enter-end="opacity-100 scale-100"
+       @click.stop>
+
+    <!-- Header -->
+    <div class="px-4 sm:px-6 py-4 border-b border-stone-100 flex items-center justify-between flex-shrink-0">
+      <h2 class="text-base font-semibold text-stone-900">Search Unsplash</h2>
+      <button @click="close()"
+              class="w-8 h-8 rounded-lg border border-stone-200 text-stone-400 hover:text-stone-600 hover:border-stone-300 flex items-center justify-center transition-all duration-150 cursor-pointer">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <!-- Search + Filters -->
+    <div class="px-4 sm:px-6 py-3 border-b border-stone-100 flex-shrink-0 space-y-2">
+      <!-- Search row -->
+      <div class="flex gap-2">
+        <div class="relative flex-1">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <input type="text"
+                 x-model="searchQuery"
+                 @keydown.enter="search()"
+                 placeholder="Search for photos..."
+                 class="w-full pl-9 pr-4 py-2 text-sm border rounded-lg outline-none transition-all duration-150 focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+                 style="border-color: var(--border, #E7E5E4);">
+        </div>
+        <button @click="search()"
+                class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white rounded-lg transition-colors cursor-pointer"
+                style="background: var(--primary, #F97316);"
+                :disabled="loading"
+                :class="loading && 'opacity-50 cursor-not-allowed'">
+          <svg x-show="!loading" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <svg x-show="loading" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+          <span x-text="loading ? 'Searching...' : 'Search'"></span>
+        </button>
+      </div>
+
+      <!-- Filter row -->
+      <div class="flex flex-wrap items-center gap-3">
+        <!-- Orientation -->
+        <div class="flex items-center gap-1.5">
+          <label class="text-xs font-medium text-stone-500">Orientation:</label>
+          <select x-model="orientation" @change="search()"
+                  class="text-xs border rounded-lg pl-2.5 pr-6 py-1.5 outline-none cursor-pointer appearance-none"
+                  style="border-color: var(--border, #E7E5E4); color: var(--text-secondary, #57534E); background-image: url(&quot;data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2378716C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E&quot;); background-repeat: no-repeat; background-position: right 6px center;">
+            <option value="">Any</option>
+            <option value="landscape">Landscape</option>
+            <option value="portrait">Portrait</option>
+            <option value="squarish">Squarish</option>
+          </select>
+        </div>
+
+        <!-- Color -->
+        <div class="flex items-center gap-1.5">
+          <label class="text-xs font-medium text-stone-500">Color:</label>
+          <select x-model="color" @change="search()"
+                  class="text-xs border rounded-lg pl-2.5 pr-6 py-1.5 outline-none cursor-pointer appearance-none"
+                  style="border-color: var(--border, #E7E5E4); color: var(--text-secondary, #57534E); background-image: url(&quot;data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2378716C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E&quot;); background-repeat: no-repeat; background-position: right 6px center;">
+            <option value="">Any</option>
+            <option value="black">Black</option>
+            <option value="white">White</option>
+            <option value="yellow">Yellow</option>
+            <option value="orange">Orange</option>
+            <option value="red">Red</option>
+            <option value="green">Green</option>
+            <option value="blue">Blue</option>
+            <option value="purple">Purple</option>
+            <option value="magenta">Magenta</option>
+            <option value="teal">Teal</option>
+            <option value="gray">Gray</option>
+            <option value="brown">Brown</option>
+          </select>
+        </div>
+
+        <!-- Results info -->
+        <span x-show="totalResults !== null" class="text-xs text-stone-400 ml-auto">
+          <span x-text="totalResults"></span> results
+        </span>
+      </div>
+    </div>
+
+    <!-- Results Grid -->
+    <div class="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
+      <!-- Loading state (initial) -->
+      <div x-show="!hasResults && loading" class="flex items-center justify-center py-16">
+        <svg class="w-6 h-6 text-stone-300 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+      </div>
+
+      <!-- Empty state -->
+      <div x-show="!hasResults && !loading && searched" class="text-center py-16">
+        <div class="w-14 h-14 mx-auto rounded-2xl bg-stone-100 flex items-center justify-center mb-3">
+          <svg class="w-6 h-6 text-stone-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        </div>
+        <p class="text-sm font-medium text-stone-500 mb-1">No photos found</p>
+        <p class="text-xs text-stone-400">Try a different search term or adjust your filters</p>
+      </div>
+
+      <!-- Initial prompt -->
+      <div x-show="!searched" class="text-center py-16">
+        <div class="w-14 h-14 mx-auto rounded-2xl bg-stone-100 flex items-center justify-center mb-3">
+          <svg class="w-6 h-6 text-stone-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        </div>
+        <p class="text-sm font-medium text-stone-500 mb-1">Search Unsplash</p>
+        <p class="text-xs text-stone-400">Find high-quality free photos to use in your content</p>
+      </div>
+
+      <!-- Results: 6-column thumbnail grid -->
+      <div x-show="hasResults" class="grid gap-2" style="grid-template-columns: repeat(6, 1fr);">
+        <template x-for="photo in results" :key="photo.id">
+          <div class="group relative rounded-lg overflow-hidden border border-stone-200 aspect-square hover:border-orange-400 hover:shadow-md transition-all duration-150">
+            <img :src="photo.urls.thumb"
+                 :alt="photo.description || 'Unsplash photo'"
+                 class="w-full h-full object-cover"
+                 loading="lazy"
+                 @mouseenter="$el.src = photo.urls.regular"
+                 @mouseleave="$el.src = photo.urls.thumb">
+
+            <!-- Import button: always visible at bottom -->
+            <button :data-import-photo="photo.id"
+                    class="absolute bottom-0 left-0 right-0 py-1 text-[10px] font-bold text-white cursor-pointer import-btn z-10"
+                    style="background: var(--primary, #F97316);"
+                    x-text="photo._imported ? 'Imported' : (photo._importing ? 'Importing...' : 'Import')"
+                    :class="(photo._importing || photo._imported) && 'opacity-50 cursor-not-allowed'"></button>
+
+            <!-- Hover overlay: photographer credit only -->
+            <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 flex flex-col justify-end p-2 pb-6">
+              <p class="text-[10px] text-white font-medium truncate leading-tight"
+                 x-text="'Photo by ' + photo.photographer"></p>
+            </div>
+
+            <!-- Attribution badge (visible on hover) -->
+            <div class="absolute top-1.5 left-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+              <span class="px-1 py-0.5 rounded text-[8px] font-semibold bg-black/60 text-white backdrop-blur-sm">Unsplash</span>
+            </div>
+
+            <!-- Toast for import success -->
+            <div x-show="photo._imported" x-cloak
+                 x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 scale-90"
+                 class="absolute inset-0 bg-emerald-500/90 flex items-center justify-center">
+              <div class="text-center text-white">
+                <svg class="w-6 h-6 mx-auto mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                <p class="text-[10px] font-bold">Imported!</p>
+              </div>
+            </div>
+
+            <!-- 409 dedup toast -->
+            <div x-show="photo._duplicate" x-cloak
+                 x-transition:enter="transition ease-out duration-200"
+                 class="absolute inset-0 bg-amber-500/90 flex items-center justify-center">
+              <div class="text-center text-white p-1.5">
+                <svg class="w-5 h-5 mx-auto mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <p class="text-[9px] font-bold leading-tight">Already imported</p>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Error state -->
+      <div x-show="error" class="text-center py-8">
+        <div class="w-12 h-12 mx-auto rounded-full bg-red-50 flex items-center justify-center mb-3">
+          <svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+        </div>
+        <p class="text-sm font-medium text-red-600 mb-1">Error</p>
+        <p class="text-xs text-stone-500" x-text="error"></p>
+        <button @click="error = ''" class="mt-2 text-xs text-orange-500 font-semibold hover:underline cursor-pointer">Dismiss</button>
+      </div>
+    </div>
+
+    <!-- Footer: Load More + Attribution -->
+    <div x-show="hasResults" class="px-4 sm:px-6 py-3 border-t border-stone-100 flex-shrink-0 flex items-center justify-between">
+      <div>
+        <button x-show="page < totalPages" @click="loadMore()"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-stone-600 rounded-lg border border-stone-200 hover:bg-stone-50 transition-colors cursor-pointer"
+                :disabled="loadingMore"
+                :class="loadingMore && 'opacity-50 cursor-not-allowed'">
+          <svg x-show="!loadingMore" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13l-7 7-7-7m14-8l-7-7-7 7"/></svg>
+          <svg x-show="loadingMore" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+          <span x-text="loadingMore ? 'Loading...' : 'Load More'"></span>
+        </button>
+        <span x-show="page >= totalPages" class="text-xs text-stone-400">All results shown</span>
+      </div>
+      <p class="text-[10px] text-stone-400">Photos provided by <a href="https://unsplash.com" target="_blank" rel="noopener" class="underline hover:text-stone-500">Unsplash</a></p>
+    </div>
+  </div>
+</div>
+<!-- JS is loaded from static/js/unsplash-modal.js -->

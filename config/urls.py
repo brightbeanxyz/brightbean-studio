@@ -33,6 +33,8 @@ urlpatterns = [
     # is Ninja's (patterns, app_namespace, instance_namespace) tuple,
     # which Django's path() handles natively.
     path("api/v1/", agent_api.urls),
+    # Unsplash plugin — media search/import/folders under /api/v1/
+    path("api/v1/", include("apps.unsplash.urls")),
     # Approval Workflow (Stream F)
     path("workspace/<uuid:workspace_id>/", include("apps.approvals.urls")),
     # Client Portal Admin (workspace settings)

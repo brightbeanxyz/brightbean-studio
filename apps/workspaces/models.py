@@ -25,6 +25,7 @@ class Workspace(models.Model):
     timezone = models.CharField(max_length=63, blank=True, default="")
     primary_color = models.CharField(max_length=7, blank=True, default="", validators=[validate_hex_color])
     secondary_color = models.CharField(max_length=7, blank=True, default="", validators=[validate_hex_color])
+    integration_settings = models.JSONField(default=dict, blank=True)
     default_hashtags = models.JSONField(default=list, blank=True)
     default_first_comment = models.TextField(blank=True, default="")
     approval_workflow_mode = models.CharField(

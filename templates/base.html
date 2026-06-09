@@ -595,7 +595,7 @@
                 <a href="{% url 'composer:create_landing' workspace_id=request.workspace.id %}" class="mb-1 sidebar-nav-item {% if request.resolver_match.url_name == 'create_landing' or request.resolver_match.url_name == 'compose' %}active{% endif %}">
                     <svg class="flex-shrink-0" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 00-4 12.73V16a1 1 0 001 1h6a1 1 0 001-1v-1.27A7 7 0 0012 2z"/><path d="M9 18h6"/><path d="M10 22h4"/><path d="M10 8.5c0 1.5 2 2.5 2 4"/><path d="M14 8.5c0 1.5-2 2.5-2 4"/></svg>
                     <span class="sidebar-nav-label">Create Idea</span>
-                </a>                
+                </a>
                 <a href="{% url 'inbox:feed' workspace_id=request.workspace.id %}" class="mb-1 sidebar-nav-item {% if request.resolver_match.app_name == 'inbox' %}active{% endif %}">
                     <svg class="flex-shrink-0" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
                     <span class="sidebar-nav-label">Social Inbox</span>
@@ -907,6 +907,7 @@
             }
         });
     </script>
+    <script src="{% static 'js/unsplash-modal.js' %}" defer></script>
     <script src="{% static 'js/alpine.min.js' %}" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
@@ -1345,5 +1346,6 @@
         </div>
     </div>
     {% endif %}
+    {{ unsplash_modal_html|safe }}
 </body>
 </html>

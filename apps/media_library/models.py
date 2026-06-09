@@ -144,6 +144,12 @@ class MediaAsset(models.Model):
     source = models.CharField(max_length=50, blank=True, default="", help_text="e.g., 'upload', 'unsplash', 'pexels'")
     source_url = models.URLField(blank=True, default="")
     attribution = models.TextField(blank=True, default="")
+    external_id = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text="External ID from stock photo provider (e.g., Unsplash photo ID)",
+    )
 
     # Processing
     processing_status = models.CharField(
