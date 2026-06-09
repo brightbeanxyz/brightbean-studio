@@ -27,19 +27,10 @@ def check_social_account_health(account_id: str):
         logger.warning("Health check: account %s not found, skipping", account_id)
         return
 
-    # Load app credentials from the workspace's org or env fallback
-    from django.conf import settings
+    # Load app credentials (.env dominant, admin-entered org creds as fallback).
+    from apps.credentials.models import PlatformCredential, resolve_platform_credentials
 
-    from apps.credentials.models import PlatformCredential
-
-    credentials: dict = {}
-    try:
-        org_id = account.workspace.organization_id
-        cred = PlatformCredential.objects.for_org(org_id).get(platform=account.platform, is_configured=True)
-        credentials = cred.credentials
-    except PlatformCredential.DoesNotExist:
-        env_creds = getattr(settings, "PLATFORM_CREDENTIALS_FROM_ENV", {})
-        credentials = env_creds.get(account.platform, {})
+    credentials = resolve_platform_credentials(account.platform, account.workspace.organization_id)
 
     # For Mastodon, inject instance-specific client credentials
     if account.platform == PlatformCredential.Platform.MASTODON and account.instance_url:

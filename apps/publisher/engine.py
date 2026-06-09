@@ -28,7 +28,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.composer.models import PlatformPost
-from apps.credentials.models import PlatformCredential
+from apps.credentials.models import resolve_platform_credentials
 from providers import get_provider
 from providers.types import AuthType, PostType, PublishContent
 
@@ -43,21 +43,15 @@ RETRY_BACKOFF = [60, 300, 1800]  # 1min, 5min, 30min
 def _resolve_publish_credentials(account):
     """Resolve the credentials dict for publishing on behalf of `account`.
 
-    Combines org-level `PlatformCredential` (falling back to env) with
+    Combines org-level `PlatformCredential` (with `.env` dominant) with
     per-account federation metadata (Mastodon `instance_url` +
     `MastodonAppRegistration`, Bluesky `pds_url`). Returns a plain dict
     suitable for `get_provider(platform, credentials)`.
     """
     platform = account.platform
 
-    try:
-        cred = PlatformCredential.objects.for_org(account.workspace.organization_id).get(
-            platform=platform, is_configured=True
-        )
-        credentials = dict(cred.credentials)
-    except PlatformCredential.DoesNotExist:
-        env_creds = getattr(settings, "PLATFORM_CREDENTIALS_FROM_ENV", {})
-        credentials = dict(env_creds.get(platform, {}))
+    # .env is dominant; admin-entered org credentials are the fallback.
+    credentials = resolve_platform_credentials(platform, account.workspace.organization_id)
 
     if platform == "mastodon" and account.instance_url:
         from apps.common.validators import is_safe_url

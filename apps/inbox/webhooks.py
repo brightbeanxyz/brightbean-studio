@@ -12,6 +12,7 @@ from django.views.decorators.http import require_http_methods
 from django_ratelimit.decorators import ratelimit
 
 from apps.common.validators import safe_xml_fromstring
+from apps.credentials.models import resolve_app_secret, resolve_app_secrets
 from apps.social_accounts.models import SocialAccount
 
 from .models import InboxMessage
@@ -60,11 +61,20 @@ def _verify_meta_signature(body: bytes, signature_header: str, app_secret: str) 
     return hmac.compare_digest(expected, signature_header)
 
 
-def _meta_receive(request, app_secret: str, platforms: list[str]):
-    """Validate signature and dispatch incoming Meta webhook events."""
+def _meta_receive(request, platforms: list[str]):
+    """Validate the HMAC signature and dispatch incoming Meta webhook events.
+
+    A delivery is signed by exactly one Meta app. We accept the request only if
+    the signature matches a configured app secret, then process events *only* for
+    accounts whose owning org's secret actually signed the body (see
+    ``_process_meta_events``) — so one org's secret can never authorize writes
+    into another org's accounts.
+    """
     signature = request.headers.get("X-Hub-Signature-256", "")
-    if not _verify_meta_signature(request.body, signature, app_secret):
-        logger.warning("Invalid Meta webhook signature.")
+    candidate_secrets = resolve_app_secrets(*platforms)
+    valid_secrets = {secret for secret in candidate_secrets if _verify_meta_signature(request.body, signature, secret)}
+    if not valid_secrets:
+        logger.warning("Meta webhook: signature did not match any configured app secret.")
         return HttpResponseForbidden("Invalid signature.")
 
     try:
@@ -73,14 +83,17 @@ def _meta_receive(request, app_secret: str, platforms: list[str]):
         logger.warning("Invalid JSON in Meta webhook payload.")
         return HttpResponse("Bad request", status=400)
 
-    _process_meta_events(payload, platforms)
+    _process_meta_events(payload, platforms, valid_secrets)
     return HttpResponse("OK", status=200)
 
 
-def _process_meta_events(payload: dict, platforms: list[str]):
+def _process_meta_events(payload: dict, platforms: list[str], valid_secrets: set[str]):
     """Process Meta (Facebook/Instagram) webhook events into InboxMessages.
 
-    Only events for SocialAccounts whose platform is in `platforms` are processed.
+    An event is processed only for SocialAccounts whose platform is in
+    `platforms` AND whose owning org's app secret signed this delivery (i.e. is in
+    `valid_secrets`). This binds each event to the org that owns the signing app,
+    preventing one org's secret from forging events into another org's accounts.
     """
     for entry in payload.get("entry", []):
         page_id = entry.get("id")
@@ -94,6 +107,14 @@ def _process_meta_events(payload: dict, platforms: list[str]):
         ).select_related("workspace__organization")
 
         for account in accounts:
+            account_secret = resolve_app_secret(account.platform, account.workspace.organization_id)
+            if not account_secret or account_secret not in valid_secrets:
+                logger.warning(
+                    "Meta webhook: signature not valid for account %s's org app; skipping event.",
+                    account.id,
+                )
+                continue
+
             for change in entry.get("changes", []):
                 _handle_facebook_change(account, change)
 
@@ -115,8 +136,8 @@ def facebook_webhook(request):
     """
     if request.method == "GET":
         return _meta_verify(request, settings.FACEBOOK_WEBHOOK_VERIFY_TOKEN)
-    app_secret = settings.PLATFORM_CREDENTIALS_FROM_ENV.get("facebook", {}).get("app_secret", "")
-    return _meta_receive(request, app_secret, platforms=["facebook", "instagram"])
+    # Facebook + Instagram (Facebook Login) share one Meta app.
+    return _meta_receive(request, platforms=["facebook", "instagram"])
 
 
 @csrf_exempt
@@ -131,8 +152,7 @@ def instagram_login_webhook(request):
     """
     if request.method == "GET":
         return _meta_verify(request, settings.INSTAGRAM_LOGIN_WEBHOOK_VERIFY_TOKEN)
-    app_secret = settings.PLATFORM_CREDENTIALS_FROM_ENV.get("instagram_login", {}).get("app_secret", "")
-    return _meta_receive(request, app_secret, platforms=["instagram_login"])
+    return _meta_receive(request, platforms=["instagram_login"])
 
 
 # --- Event handlers (shared between facebook + instagram_login) ---

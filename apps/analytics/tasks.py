@@ -24,7 +24,6 @@ from datetime import date as dt_date
 from datetime import timedelta
 
 from background_task import background
-from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -235,17 +234,11 @@ def _account_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
 def _resolve_provider(account):
     """Mirror apps.social_accounts.tasks.check_social_account_health's credential
     resolution so platforms with org-level creds (Meta apps, etc.) work."""
-    from apps.credentials.models import PlatformCredential
+    from apps.credentials.models import resolve_platform_credentials
     from providers import get_provider
 
-    credentials: dict = {}
-    try:
-        org_id = account.workspace.organization_id
-        cred = PlatformCredential.objects.for_org(org_id).get(platform=account.platform, is_configured=True)
-        credentials = cred.credentials
-    except PlatformCredential.DoesNotExist:
-        env_creds = getattr(settings, "PLATFORM_CREDENTIALS_FROM_ENV", {})
-        credentials = env_creds.get(account.platform, {})
+    # .env is dominant; admin-entered org credentials are the fallback.
+    credentials = resolve_platform_credentials(account.platform, account.workspace.organization_id)
 
     if account.platform == "mastodon" and account.instance_url:
         from apps.social_accounts.models import MastodonAppRegistration

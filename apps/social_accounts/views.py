@@ -20,7 +20,7 @@ from django.views.decorators.http import require_GET, require_POST
 from django_ratelimit.decorators import ratelimit
 
 from apps.common.validators import is_safe_url as _is_safe_url
-from apps.credentials.models import PlatformCredential
+from apps.credentials.models import PlatformCredential, resolve_platform_credentials
 from apps.members.decorators import require_permission
 
 from .models import MastodonAppRegistration, PlatformVisibility, SocialAccount
@@ -36,13 +36,8 @@ def _get_provider_for_platform(platform: str, org_id, **extra_credentials):
     """Resolve app credentials and instantiate the provider."""
     from providers import get_provider
 
-    # Try org-specific credentials first, then env fallback
-    try:
-        cred = PlatformCredential.objects.for_org(org_id).get(platform=platform, is_configured=True)
-        credentials = cred.credentials
-    except PlatformCredential.DoesNotExist:
-        env_creds = getattr(settings, "PLATFORM_CREDENTIALS_FROM_ENV", {})
-        credentials = env_creds.get(platform, {})
+    # .env is dominant; admin-entered org credentials are the fallback.
+    credentials = resolve_platform_credentials(platform, org_id)
 
     if extra_credentials:
         credentials = {**credentials, **extra_credentials}

@@ -349,7 +349,14 @@ brightbean-studio/
 
 ## Platform Credentials
 
-To connect social media accounts, you need API credentials from each platform's developer portal. You can set these via environment variables in `.env` (see `.env.example`) or through the admin UI at **Settings → Platform Credentials**.
+To connect social media accounts, you need API credentials from each platform's developer portal. You can set these via environment variables in `.env` (see `.env.example`) or, per organization, through the Django admin at `{APP_URL}/admin/` → **Credentials → Platform credentials** (superuser only). If a platform is configured in both places, the `.env` value takes precedence.
+
+**Admin UI access (superuser only):** The Django admin at `{APP_URL}/admin/` (for example `https://brightbean.example.com/admin/`) is restricted to superuser accounts — only a superuser can view or edit platform credentials there. If you don't already have one, create a superuser, then sign in and open **Credentials → Platform credentials**:
+
+```bash
+python manage.py createsuperuser
+# Docker: docker compose exec app python manage.py createsuperuser
+```
 
 **Redirect URI:** When registering your app on any platform, set the OAuth redirect URI to:
 

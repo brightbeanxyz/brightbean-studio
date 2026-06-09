@@ -1080,19 +1080,11 @@ def pinterest_boards(request, workspace_id, account_id):
     workspace = _get_workspace(request, workspace_id)
     account = get_object_or_404(SocialAccount, id=account_id, workspace=workspace, platform="pinterest")
 
-    from apps.credentials.models import PlatformCredential
+    from apps.credentials.models import resolve_platform_credentials
     from providers import get_provider
 
-    try:
-        cred = PlatformCredential.objects.for_org(workspace.organization_id).get(
-            platform="pinterest", is_configured=True
-        )
-        credentials = cred.credentials
-    except PlatformCredential.DoesNotExist:
-        from django.conf import settings as django_settings
-
-        env_creds = getattr(django_settings, "PLATFORM_CREDENTIALS_FROM_ENV", {})
-        credentials = env_creds.get("pinterest", {})
+    # .env is dominant; admin-entered org credentials are the fallback.
+    credentials = resolve_platform_credentials("pinterest", workspace.organization_id)
 
     provider = get_provider("pinterest", credentials)
 

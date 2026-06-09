@@ -229,3 +229,82 @@ class TestFacebookWebhookStillWorks:
         assert response.status_code == 200
         msg = InboxMessage.objects.get(platform_message_id="fb-msg-1")
         assert msg.social_account_id == fb_account.id
+
+
+@pytest.mark.django_db
+class TestMetaWebhookCrossTenantIsolation:
+    """A delivery signed with one org's app secret must not write into a different
+    org's accounts, even though that secret is a valid configured secret."""
+
+    def _setup_org(self, name, page_id, secret):
+        from apps.credentials.models import PlatformCredential
+        from apps.organizations.models import Organization
+        from apps.workspaces.models import Workspace
+
+        org = Organization.objects.create(name=name)
+        ws = Workspace.objects.create(name=f"{name} WS", organization=org)
+        PlatformCredential.objects.create(
+            organization=org,
+            platform="facebook",
+            credentials={"client_id": f"{name}-id", "client_secret": secret},
+        )
+        account = SocialAccount.objects.create(
+            workspace=ws,
+            platform="facebook",
+            account_platform_id=page_id,
+            account_name=f"{name} Page",
+        )
+        return account
+
+    @override_settings(PLATFORM_CREDENTIALS_FROM_ENV={})
+    def test_other_orgs_secret_cannot_forge_into_victim_account(self, client):
+        self._setup_org("OrgA", "page-A", "SECRET_A")  # victim
+        self._setup_org("OrgB", "page-B", "SECRET_B")  # attacker (knows SECRET_B)
+
+        # Attacker forges an event for the victim's page, signed with their own secret.
+        payload = {
+            "entry": [
+                {
+                    "id": "page-A",
+                    "messaging": [
+                        {"sender": {"id": "x", "name": "Mallory"}, "message": {"mid": "forged-1", "text": "forged"}}
+                    ],
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        url = reverse("inbox_webhooks:webhook_facebook")
+        response = client.post(
+            url,
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=_sign_body(body, "SECRET_B"),
+        )
+        # SECRET_B is a valid configured secret, so the signature check passes (not 403),
+        # but the event must NOT be written into Org A's account.
+        assert response.status_code == 200
+        assert not InboxMessage.objects.filter(platform_message_id="forged-1").exists()
+
+    @override_settings(PLATFORM_CREDENTIALS_FROM_ENV={})
+    def test_owning_orgs_secret_processes_event(self, client):
+        account = self._setup_org("OrgC", "page-C", "SECRET_C")
+
+        payload = {
+            "entry": [
+                {
+                    "id": "page-C",
+                    "messaging": [{"sender": {"id": "u", "name": "Bob"}, "message": {"mid": "legit-1", "text": "hi"}}],
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        url = reverse("inbox_webhooks:webhook_facebook")
+        response = client.post(
+            url,
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=_sign_body(body, "SECRET_C"),
+        )
+        assert response.status_code == 200
+        msg = InboxMessage.objects.get(platform_message_id="legit-1")
+        assert msg.social_account_id == account.id
