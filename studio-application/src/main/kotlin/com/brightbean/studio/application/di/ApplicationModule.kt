@@ -1,5 +1,6 @@
 package com.brightbean.studio.application.di
 
+import com.brightbean.studio.application.auth.RbacResolver
 import com.brightbean.studio.application.usecase.AuthUseCases
 import com.brightbean.studio.application.usecase.ConnectSocialAccountUseCase
 import com.brightbean.studio.application.usecase.CreatePostUseCase
@@ -10,6 +11,7 @@ import com.brightbean.studio.infrastructure.security.EncryptionService
 import org.koin.dsl.module
 
 val applicationModule = module {
+    single { RbacResolver(get(), get(), get()) }
     single { AuthUseCases(get(), get()) }
     single { CreateWorkspaceUseCase(get(), get()) }
     single { CreatePostUseCase(get(), get()) }
