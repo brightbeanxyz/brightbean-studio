@@ -28,6 +28,12 @@ import com.brightbean.studio.application.usecase.TransitionPlatformPostUseCase
 import com.brightbean.studio.application.usecase.ApprovePostUseCase
 import com.brightbean.studio.application.usecase.UpdateCustomRoleUseCase
 import com.brightbean.studio.application.usecase.UpdateOrganizationUseCase
+import com.brightbean.studio.application.usecase.PostingSlotUseCases
+import com.brightbean.studio.application.usecase.QueueUseCases
+import com.brightbean.studio.application.usecase.CustomCalendarEventUseCases
+import com.brightbean.studio.application.usecase.ReschedulePostUseCase
+import com.brightbean.studio.application.usecase.PostTemplateUseCases
+import com.brightbean.studio.application.usecase.FeedUseCases
 import com.brightbean.studio.infrastructure.security.EncryptionService
 import org.koin.dsl.module
 
@@ -66,4 +72,10 @@ val applicationModule = module {
         val encryptionService = get<EncryptionService>()
         ReconnectSocialAccountUseCase(get(), get(), get(), { encryptionService.encrypt(it) })
     }
+    single { PostingSlotUseCases(get()) }
+    single { QueueUseCases(get(), get(), get(), get(), get()) }
+    single { CustomCalendarEventUseCases(get()) }
+    single { ReschedulePostUseCase(get(), get()) }
+    single { PostTemplateUseCases(get()) }
+    single { FeedUseCases(get()) }
 }
