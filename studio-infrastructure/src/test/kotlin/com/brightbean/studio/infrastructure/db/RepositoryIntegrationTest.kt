@@ -18,7 +18,7 @@ class RepositoryIntegrationTest {
     private lateinit var socialAccountRepo: JDBISocialAccountRepository
     private lateinit var postRepo: JDBIPostRepository
     private lateinit var platformPostRepo: JDBIPlatformPostRepository
-    private lateinit var inboxRepo: JDBIInboxRepository
+    private lateinit var inboxMessageRepo: JDBIInboxMessageRepository
     private lateinit var approvalRequestRepo: JDBIApprovalRequestRepository
     private lateinit var organizationRepo: JDBIOrganizationRepository
     private lateinit var orgMembershipRepo: JDBIOrgMembershipRepository
@@ -124,22 +124,26 @@ class RepositoryIntegrationTest {
             """).execute()
 
             handle.createUpdate("""
-                CREATE TABLE inbox_item (
+                CREATE TABLE inbox_message (
                     id UUID PRIMARY KEY,
                     workspace_id UUID NOT NULL,
                     social_account_id UUID NOT NULL,
-                    platform_type VARCHAR NOT NULL,
-                    platform_item_id VARCHAR NOT NULL,
-                    type VARCHAR NOT NULL,
-                    content VARCHAR NOT NULL,
-                    author_name VARCHAR NOT NULL,
-                    author_avatar_url VARCHAR,
-                    media_urls VARCHAR,
-                    sentiment VARCHAR,
-                    is_read BOOLEAN NOT NULL DEFAULT FALSE,
-                    is_archived BOOLEAN NOT NULL DEFAULT FALSE,
-                    platform_created_at TIMESTAMP NOT NULL,
-                    received_at TIMESTAMP NOT NULL
+                    platform_message_id VARCHAR NOT NULL,
+                    message_type VARCHAR NOT NULL,
+                    sender_name VARCHAR NOT NULL,
+                    sender_handle VARCHAR NOT NULL DEFAULT '',
+                    sender_avatar_url VARCHAR NOT NULL DEFAULT '',
+                    body TEXT NOT NULL,
+                    sentiment VARCHAR NOT NULL DEFAULT '',
+                    sentiment_source VARCHAR NOT NULL DEFAULT '',
+                    status VARCHAR NOT NULL DEFAULT 'UNREAD',
+                    assigned_to UUID,
+                    parent_message_id UUID,
+                    related_post_id UUID,
+                    extra TEXT,
+                    received_at TIMESTAMP NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    UNIQUE(social_account_id, platform_message_id)
                 )
             """).execute()
 
@@ -224,7 +228,7 @@ class RepositoryIntegrationTest {
         socialAccountRepo = JDBISocialAccountRepository(jdbi)
         postRepo = JDBIPostRepository(jdbi)
         platformPostRepo = JDBIPlatformPostRepository(jdbi)
-        inboxRepo = JDBIInboxRepository(jdbi)
+        inboxMessageRepo = JDBIInboxMessageRepository(jdbi)
         approvalRequestRepo = JDBIApprovalRequestRepository(jdbi)
         organizationRepo = JDBIOrganizationRepository(jdbi)
         orgMembershipRepo = JDBIOrgMembershipRepository(jdbi)
@@ -415,40 +419,39 @@ class RepositoryIntegrationTest {
     }
 
     @Test
-    fun `inboxItem save and findById`() {
-        val item = createTestInboxItem()
-        inboxRepo.save(item)
+    fun `inboxMessage save and findById`() {
+        val message = createTestInboxMessage()
+        inboxMessageRepo.save(message)
 
-        val found = inboxRepo.findById(item.id)
+        val found = inboxMessageRepo.findById(message.id)
 
         assertNotNull(found)
-        assertEquals(item.id, found!!.id)
-        assertEquals(InboxItemType.COMMENT, found.type)
-        assertEquals(Sentiment.POSITIVE, found.sentiment)
-        assertFalse(found.isRead)
+        assertEquals(message.id, found!!.id)
+        assertEquals(InboxMessageType.COMMENT, found.messageType)
+        assertEquals(InboxMessageStatus.UNREAD, found.status)
     }
 
     @Test
-    fun `inboxItem findByWorkspaceId returns items`() {
+    fun `inboxMessage findByWorkspaceId returns messages`() {
         val wsId = UUID.randomUUID()
-        val i1 = createTestInboxItem(workspaceId = wsId)
-        val i2 = createTestInboxItem(workspaceId = wsId)
-        inboxRepo.save(i1)
-        inboxRepo.save(i2)
+        val m1 = createTestInboxMessage(workspaceId = wsId)
+        val m2 = createTestInboxMessage(workspaceId = wsId)
+        inboxMessageRepo.save(m1)
+        inboxMessageRepo.save(m2)
 
-        val results = inboxRepo.findByWorkspaceId(wsId)
+        val results = inboxMessageRepo.findByWorkspaceId(wsId)
 
         assertEquals(2, results.size)
     }
 
     @Test
-    fun `inboxItem delete removes item`() {
-        val item = createTestInboxItem()
-        inboxRepo.save(item)
+    fun `inboxMessage delete removes message`() {
+        val message = createTestInboxMessage()
+        inboxMessageRepo.save(message)
 
-        inboxRepo.delete(item.id)
+        inboxMessageRepo.delete(message.id)
 
-        assertNull(inboxRepo.findById(item.id))
+        assertNull(inboxMessageRepo.findById(message.id))
     }
 
     @Test
@@ -570,24 +573,27 @@ class RepositoryIntegrationTest {
         updatedAt = Instant.now(),
     )
 
-    private fun createTestInboxItem(
+    private fun createTestInboxMessage(
         workspaceId: UUID = UUID.randomUUID(),
-    ) = InboxItem(
+    ) = InboxMessage(
         id = UUID.randomUUID(),
         workspaceId = workspaceId,
         socialAccountId = UUID.randomUUID(),
-        platformType = PlatformType.INSTAGRAM,
-        platformItemId = "ig_comment_456",
-        type = InboxItemType.COMMENT,
-        content = "Great post!",
-        authorName = "Jane Doe",
-        authorAvatarUrl = "https://example.com/jane.jpg",
-        mediaUrls = emptyList(),
-        sentiment = Sentiment.POSITIVE,
-        isRead = false,
-        isArchived = false,
-        platformCreatedAt = Instant.now(),
+        platformMessageId = "ig_msg_${UUID.randomUUID()}",
+        messageType = InboxMessageType.COMMENT,
+        senderName = "Jane Doe",
+        senderHandle = "@janedoe",
+        senderAvatarUrl = "https://example.com/jane.jpg",
+        body = "Great post!",
+        sentiment = "POSITIVE",
+        sentimentSource = "auto",
+        status = InboxMessageStatus.UNREAD,
+        assignedTo = null,
+        parentMessageId = null,
+        relatedPostId = null,
+        extra = null,
         receivedAt = Instant.now(),
+        createdAt = Instant.now(),
     )
 
     private fun createTestApprovalRequest(

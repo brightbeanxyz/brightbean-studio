@@ -1,8 +1,12 @@
 package com.brightbean.studio.application.di
 
 import com.brightbean.studio.application.auth.RbacResolver
+import com.brightbean.studio.application.service.NotificationEngine
+import com.brightbean.studio.application.service.NotificationUseCases
+import com.brightbean.studio.application.usecase.ApprovalUseCases
 import com.brightbean.studio.application.usecase.AuthUseCases
 import com.brightbean.studio.application.usecase.CheckSocialAccountHealthUseCase
+import com.brightbean.studio.application.usecase.CommentUseCases
 import com.brightbean.studio.application.usecase.ConnectSocialAccountUseCase
 import com.brightbean.studio.application.usecase.ContentCategoryUseCases
 import com.brightbean.studio.application.usecase.CreateCustomRoleUseCase
@@ -14,6 +18,7 @@ import com.brightbean.studio.application.usecase.CreateWorkspaceUseCase
 import com.brightbean.studio.application.usecase.DeleteCustomRoleUseCase
 import com.brightbean.studio.application.usecase.IdeaGroupUseCases
 import com.brightbean.studio.application.usecase.IdeaUseCases
+import com.brightbean.studio.application.usecase.InboxUseCases
 import com.brightbean.studio.application.usecase.PublishPostUseCase
 import com.brightbean.studio.application.usecase.ReconnectSocialAccountUseCase
 import com.brightbean.studio.application.usecase.RemoveMemberUseCase
@@ -23,6 +28,7 @@ import com.brightbean.studio.application.usecase.ResendInvitationUseCase
 import com.brightbean.studio.application.usecase.RevokeInvitationUseCase
 import com.brightbean.studio.application.usecase.SavePostVersionUseCase
 import com.brightbean.studio.application.usecase.SchedulePostUseCase
+import com.brightbean.studio.application.usecase.SettingsUseCases
 import com.brightbean.studio.application.usecase.SyncPostScheduledAtUseCase
 import com.brightbean.studio.application.usecase.TransitionPlatformPostUseCase
 import com.brightbean.studio.application.usecase.ApprovePostUseCase
@@ -80,4 +86,10 @@ val applicationModule = module {
     single { PostTemplateUseCases(get()) }
     single { FeedUseCases(get()) }
     single { MediaLibraryUseCases(get(), get(), get()) }
+    single { InboxUseCases(get(), get(), get(), get(), get()) }
+    single { ApprovalUseCases(get(), get()) }
+    single { CommentUseCases(get()) }
+    single { NotificationEngine(get(), get(), get(), get()) }
+    single { NotificationUseCases(get(), get(), get()) }
+    single { SettingsUseCases(get(), get()) }
 }

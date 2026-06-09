@@ -3,10 +3,12 @@ package com.brightbean.studio.application.worker
 import com.brightbean.studio.application.usecase.InMemorySocialAccountRepository
 import com.brightbean.studio.domain.model.InboxItem
 import com.brightbean.studio.domain.model.InboxItemType
+import com.brightbean.studio.domain.model.InboxMessage
+import com.brightbean.studio.domain.model.InboxMessageStatus
 import com.brightbean.studio.domain.model.PlatformType
 import com.brightbean.studio.domain.model.Sentiment
 import com.brightbean.studio.domain.model.SocialAccount
-import com.brightbean.studio.domain.repository.InboxRepository
+import com.brightbean.studio.domain.repository.InboxMessageRepository
 import com.brightbean.studio.domain.repository.SocialAccountRepository
 import com.brightbean.studio.infrastructure.provider.ProviderRegistry
 import com.brightbean.studio.infrastructure.provider.SocialProvider
@@ -19,7 +21,7 @@ import java.util.UUID
 class InboxSyncWorkerTest {
 
     private lateinit var socialAccountRepository: SocialAccountRepository
-    private lateinit var inboxRepository: InboxRepository
+    private lateinit var inboxMessageRepository: InboxMessageRepository
     private lateinit var providerRegistry: ProviderRegistry
     private lateinit var inboxSyncWorker: InboxSyncWorker
 
@@ -30,9 +32,9 @@ class InboxSyncWorkerTest {
     @BeforeEach
     fun setUp() {
         socialAccountRepository = InMemorySocialAccountRepository()
-        inboxRepository = InMemoryInboxRepository()
+        inboxMessageRepository = InMemoryInboxMessageRepository()
         providerRegistry = ProviderRegistry.from(listOf(InboxSyncWorkerFakeFacebookProvider(), InboxSyncWorkerFakeInstagramProvider()))
-        inboxSyncWorker = InboxSyncWorker(socialAccountRepository, inboxRepository, providerRegistry)
+        inboxSyncWorker = InboxSyncWorker(socialAccountRepository, inboxMessageRepository, providerRegistry)
 
         socialAccountRepository.save(
             SocialAccount(
@@ -78,8 +80,8 @@ class InboxSyncWorkerTest {
     fun `syncAccount should fetch inbox items and save new ones`() {
         inboxSyncWorker.syncAccount(socialAccountRepository.findById(facebookAccountId)!!)
 
-        val inboxItems = inboxRepository.findBySocialAccountId(facebookAccountId)
-        assertTrue(inboxItems.size == 2)
+        val messages = inboxMessageRepository.findByWorkspaceId(workspaceId)
+        assertTrue(messages.size == 2)
     }
 
     @Test
@@ -100,36 +102,42 @@ class InboxSyncWorkerTest {
         inboxSyncWorker.syncAccount(account)
         inboxSyncWorker.syncAccount(account)
 
-        val inboxItems = inboxRepository.findBySocialAccountId(facebookAccountId)
-        assertTrue(inboxItems.size == 2)
+        val messages = inboxMessageRepository.findByWorkspaceId(workspaceId)
+        assertTrue(messages.size == 2)
     }
 }
 
-class InMemoryInboxRepository : InboxRepository {
-    private val items = mutableMapOf<UUID, InboxItem>()
+class InMemoryInboxMessageRepository : InboxMessageRepository {
+    private val items = mutableMapOf<UUID, InboxMessage>()
     private val seenKeys = mutableSetOf<String>()
 
-    override fun findById(id: UUID): InboxItem? = items[id]
+    override fun findById(id: UUID): InboxMessage? = items[id]
 
-    override fun findByWorkspaceId(workspaceId: UUID): List<InboxItem> =
+    override fun findByWorkspaceId(workspaceId: UUID): List<InboxMessage> =
         items.values.filter { it.workspaceId == workspaceId }
 
-    override fun findBySocialAccountId(socialAccountId: UUID): List<InboxItem> =
-        items.values.filter { it.socialAccountId == socialAccountId }
+    override fun findByStatus(workspaceId: UUID, status: InboxMessageStatus): List<InboxMessage> =
+        items.values.filter { it.workspaceId == workspaceId && it.status == status }
 
-    override fun save(inboxItem: InboxItem): InboxItem {
-        val key = "${inboxItem.socialAccountId}:${inboxItem.platformItemId}"
+    override fun findByAssignedTo(workspaceId: UUID, userId: UUID): List<InboxMessage> =
+        items.values.filter { it.workspaceId == workspaceId && it.assignedTo == userId }
+
+    override fun findByPlatformMessageId(socialAccountId: UUID, platformMessageId: String): InboxMessage? =
+        items.values.find { it.socialAccountId == socialAccountId && it.platformMessageId == platformMessageId }
+
+    override fun save(message: InboxMessage): InboxMessage {
+        val key = "${message.socialAccountId}:${message.platformMessageId}"
         if (seenKeys.contains(key)) {
-            return inboxItem
+            return message
         }
         seenKeys.add(key)
-        items[inboxItem.id] = inboxItem
-        return inboxItem
+        items[message.id] = message
+        return message
     }
 
-    override fun update(inboxItem: InboxItem): InboxItem {
-        items[inboxItem.id] = inboxItem
-        return inboxItem
+    override fun update(message: InboxMessage): InboxMessage {
+        items[message.id] = message
+        return message
     }
 
     override fun delete(id: UUID) { items.remove(id) }
