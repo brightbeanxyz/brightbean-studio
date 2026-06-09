@@ -1,16 +1,12 @@
 package com.brightbean.studio.infrastructure.db
 
-import com.brightbean.studio.domain.model.PlatformType
 import com.brightbean.studio.domain.model.Post
-import com.brightbean.studio.domain.model.PostStatus
-import com.brightbean.studio.domain.model.Tag
 import com.brightbean.studio.domain.repository.PostRepository
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.jdbi.v3.core.Jdbi
 import org.jdbi.v3.core.kotlin.KotlinPlugin
 import org.jdbi.v3.sqlobject.kotlin.KotlinSqlObjectPlugin
-import java.time.Instant
 import java.util.UUID
 
 class JDBIPostRepository(jdbi: Jdbi) : PostRepository {
@@ -51,31 +47,21 @@ class JDBIPostRepository(jdbi: Jdbi) : PostRepository {
         id = id,
         workspaceId = workspaceId,
         authorId = authorId,
-        content = content,
-        platforms = objectMapper.writeValueAsString(platforms.map { it.name }),
+        title = title,
+        caption = caption,
+        firstComment = firstComment,
+        internalNotes = internalNotes,
+        tags = objectMapper.writeValueAsString(tags),
         categoryId = categoryId,
-        tags = objectMapper.writeValueAsString(tags.map { it.name }),
-        status = status.name,
         scheduledAt = scheduledAt,
         publishedAt = publishedAt,
-        mediaIds = objectMapper.writeValueAsString(mediaIds),
         createdAt = createdAt,
         updatedAt = updatedAt,
     )
 
     private fun PostDto.toDomain(): Post {
-        val platformList: List<PlatformType> = try {
-            objectMapper.readValue(platforms, object : TypeReference<List<String>>() {}).map { PlatformType.valueOf(it) }
-        } catch (_: Exception) {
-            emptyList()
-        }
-        val tagList: List<Tag> = try {
-            objectMapper.readValue(tags, object : TypeReference<List<String>>() {}).map { Tag(id = UUID.randomUUID(), workspaceId = UUID.randomUUID(), name = it, createdAt = Instant.now()) }
-        } catch (_: Exception) {
-            emptyList()
-        }
-        val mediaIdList: List<UUID> = try {
-            objectMapper.readValue(mediaIds, object : TypeReference<List<UUID>>() {})
+        val tagList: List<String> = try {
+            objectMapper.readValue(tags, object : TypeReference<List<String>>() {})
         } catch (_: Exception) {
             emptyList()
         }
@@ -83,14 +69,14 @@ class JDBIPostRepository(jdbi: Jdbi) : PostRepository {
             id = id,
             workspaceId = workspaceId,
             authorId = authorId,
-            content = content,
-            platforms = platformList,
-            categoryId = categoryId,
+            title = title,
+            caption = caption,
+            firstComment = firstComment,
+            internalNotes = internalNotes,
             tags = tagList,
-            status = PostStatus.valueOf(status),
+            categoryId = categoryId,
             scheduledAt = scheduledAt,
             publishedAt = publishedAt,
-            mediaIds = mediaIdList,
             createdAt = createdAt,
             updatedAt = updatedAt,
         )

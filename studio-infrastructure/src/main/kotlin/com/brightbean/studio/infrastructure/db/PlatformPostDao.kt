@@ -8,33 +8,47 @@ import java.util.UUID
 
 @RegisterKotlinMapper(PlatformPostDto::class)
 interface PlatformPostDao {
-    @SqlQuery("SELECT * FROM platform_post WHERE id = :id")
+    @SqlQuery("SELECT * FROM composer_platform_post WHERE id = :id")
     fun findById(id: UUID): PlatformPostDto?
 
-    @SqlQuery("SELECT * FROM platform_post WHERE post_id = :postId")
+    @SqlQuery("SELECT * FROM composer_platform_post WHERE post_id = :postId")
     fun findByPostId(postId: UUID): List<PlatformPostDto>
 
-    @SqlQuery("SELECT * FROM platform_post WHERE social_account_id = :socialAccountId")
+    @SqlQuery("SELECT * FROM composer_platform_post WHERE social_account_id = :socialAccountId")
     fun findBySocialAccountId(socialAccountId: UUID): List<PlatformPostDto>
 
+    @SqlQuery("SELECT * FROM composer_platform_post WHERE status = :status")
+    fun findByStatus(status: String): List<PlatformPostDto>
+
+    @SqlQuery("SELECT * FROM composer_platform_post WHERE status = 'SCHEDULED' AND scheduled_at <= :time")
+    fun findScheduledBefore(time: Instant): List<PlatformPostDto>
+
     @SqlUpdate("""
-        INSERT INTO platform_post (id, post_id, social_account_id, platform_post_id, platform_url, status, error_message, published_at)
-        VALUES (:dto.id, :dto.postId, :dto.socialAccountId, :dto.platformPostId, :dto.platformUrl, :dto.status, :dto.errorMessage, :dto.publishedAt)
+        INSERT INTO composer_platform_post (id, post_id, social_account_id, platform_specific_title, platform_specific_caption, platform_specific_media, platform_specific_first_comment, platform_extra, status, platform_post_id, publish_error, published_at, scheduled_at, retry_count, next_retry_at, created_at, updated_at)
+        VALUES (:dto.id, :dto.postId, :dto.socialAccountId, :dto.platformTitle, :dto.platformCaption, :dto.platformMedia, :dto.platformFirstComment, :dto.platformExtra, :dto.status, :dto.platformPostId, :dto.publishError, :dto.publishedAt, :dto.scheduledAt, :dto.retryCount, :dto.nextRetryAt, :dto.createdAt, :dto.updatedAt)
     """)
     fun insert(dto: PlatformPostDto)
 
     @SqlUpdate("""
-        UPDATE platform_post SET
-            platform_post_id = :dto.platformPostId,
-            platform_url = :dto.platformUrl,
+        UPDATE composer_platform_post SET
+            platform_specific_title = :dto.platformTitle,
+            platform_specific_caption = :dto.platformCaption,
+            platform_specific_media = :dto.platformMedia,
+            platform_specific_first_comment = :dto.platformFirstComment,
+            platform_extra = :dto.platformExtra,
             status = :dto.status,
-            error_message = :dto.errorMessage,
-            published_at = :dto.publishedAt
+            platform_post_id = :dto.platformPostId,
+            publish_error = :dto.publishError,
+            published_at = :dto.publishedAt,
+            scheduled_at = :dto.scheduledAt,
+            retry_count = :dto.retryCount,
+            next_retry_at = :dto.nextRetryAt,
+            updated_at = :dto.updatedAt
         WHERE id = :dto.id
     """)
     fun update(dto: PlatformPostDto)
 
-    @SqlUpdate("DELETE FROM platform_post WHERE id = :id")
+    @SqlUpdate("DELETE FROM composer_platform_post WHERE id = :id")
     fun delete(id: UUID)
 }
 
@@ -42,9 +56,18 @@ data class PlatformPostDto(
     val id: UUID,
     val postId: UUID,
     val socialAccountId: UUID,
-    val platformPostId: String?,
-    val platformUrl: String?,
+    val platformTitle: String?,
+    val platformCaption: String?,
+    val platformMedia: String?,
+    val platformFirstComment: String?,
+    val platformExtra: String?,
     val status: String,
-    val errorMessage: String?,
+    val platformPostId: String,
+    val publishError: String,
     val publishedAt: Instant?,
+    val scheduledAt: Instant?,
+    val retryCount: Int,
+    val nextRetryAt: Instant?,
+    val createdAt: Instant,
+    val updatedAt: Instant,
 )

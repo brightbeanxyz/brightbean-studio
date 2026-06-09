@@ -2,14 +2,12 @@ package com.brightbean.studio.application.worker
 
 import com.brightbean.studio.application.usecase.PublishPostUseCase
 import com.brightbean.studio.domain.model.PlatformPost
+import com.brightbean.studio.domain.model.PlatformPostStatus
 import com.brightbean.studio.domain.model.PlatformType
 import com.brightbean.studio.domain.model.Post
-import com.brightbean.studio.domain.model.PostStatus
-import com.brightbean.studio.domain.model.QueueStatus
 import com.brightbean.studio.domain.model.SocialAccount
 import com.brightbean.studio.domain.repository.PlatformPostRepository
 import com.brightbean.studio.domain.repository.PostRepository
-import com.brightbean.studio.domain.repository.PublishingQueueRepository
 import com.brightbean.studio.domain.repository.SocialAccountRepository
 import com.brightbean.studio.infrastructure.provider.PlatformProfile
 import com.brightbean.studio.infrastructure.provider.ProviderRegistry
@@ -26,7 +24,6 @@ class PublishingWorkerTest {
     private lateinit var postRepository: PostRepository
     private lateinit var socialAccountRepository: SocialAccountRepository
     private lateinit var platformPostRepository: PlatformPostRepository
-    private lateinit var publishingQueueRepository: PublishingQueueRepository
     private lateinit var providerRegistry: ProviderRegistry
     private lateinit var publishPostUseCase: PublishPostUseCase
     private lateinit var publishingWorker: PublishingWorker
@@ -37,18 +34,17 @@ class PublishingWorkerTest {
 
     @BeforeEach
     fun setUp() {
-        postRepository = InMemoryPostRepository()
-        socialAccountRepository = InMemorySocialAccountRepository()
-        platformPostRepository = InMemoryPlatformPostRepository()
-        publishingQueueRepository = InMemoryPublishingQueueRepository()
-        providerRegistry = ProviderRegistry.from(listOf(FakeFacebookProvider()))
+        postRepository = WorkerInMemoryPostRepository()
+        socialAccountRepository = WorkerInMemorySocialAccountRepository()
+        platformPostRepository = WorkerInMemoryPlatformPostRepository()
+        providerRegistry = ProviderRegistry.from(listOf(WorkerFakeFacebookProvider()))
         publishPostUseCase = PublishPostUseCase(
             postRepository,
             socialAccountRepository,
             platformPostRepository,
             providerRegistry
         )
-        publishingWorker = PublishingWorker(publishingQueueRepository, publishPostUseCase)
+        publishingWorker = PublishingWorker(platformPostRepository, publishPostUseCase)
 
         socialAccountRepository.save(
             SocialAccount(
@@ -66,187 +62,115 @@ class PublishingWorkerTest {
     }
 
     @Test
-    fun `processQueue should process pending items and mark as completed`() {
+    fun `processQueue should process scheduled items and publish`() {
         val post = postRepository.save(
             Post(
                 id = UUID.randomUUID(),
                 workspaceId = workspaceId,
                 authorId = authorId,
-                content = "Test content",
-                platforms = listOf(PlatformType.FACEBOOK),
-                categoryId = null,
+                title = "",
+                caption = "Test content",
+                firstComment = "",
+                internalNotes = "",
                 tags = emptyList(),
-                status = PostStatus.DRAFT,
-                scheduledAt = null,
+                categoryId = null,
+                scheduledAt = Instant.now().minusSeconds(60),
                 publishedAt = null,
-                mediaIds = emptyList(),
                 createdAt = Instant.now(),
                 updatedAt = Instant.now(),
             )
         )
 
-        val queueItem = publishingQueueRepository.save(
-            com.brightbean.studio.domain.model.PublishingQueue(
-                id = UUID.randomUUID(),
-                workspaceId = workspaceId,
-                postId = post.id,
-                scheduledFor = Instant.now().minusSeconds(60),
-                attempts = 0,
-                lastAttemptAt = null,
-                status = QueueStatus.PENDING,
-                errorMessage = null,
-            )
-        )
+        platformPostRepository.save(PlatformPost(
+            id = UUID.randomUUID(), postId = post.id, socialAccountId = facebookAccountId,
+            platformTitle = null, platformCaption = null, platformFirstComment = null,
+            platformMedia = null, platformExtra = null, status = PlatformPostStatus.SCHEDULED,
+            platformPostId = "", publishError = "", publishedAt = null,
+            scheduledAt = Instant.now().minusSeconds(60),
+            retryCount = 0, nextRetryAt = null, createdAt = Instant.now(), updatedAt = Instant.now(),
+        ))
 
         publishingWorker.processQueue()
 
-        val updatedQueue = publishingQueueRepository.findById(queueItem.id)
-        assertEquals(QueueStatus.COMPLETED, updatedQueue?.status)
+        val updatedPp = platformPostRepository.findByPostId(post.id)
+        assertEquals(1, updatedPp.size)
+        assertEquals(PlatformPostStatus.PUBLISHED, updatedPp[0].status)
     }
 
     @Test
-    fun `processItem should increment attempts on failure`() {
+    fun `processPost should mark as FAILED on error`() {
         val post = postRepository.save(
             Post(
                 id = UUID.randomUUID(),
                 workspaceId = workspaceId,
                 authorId = authorId,
-                content = "Test content",
-                platforms = listOf(PlatformType.TIKTOK),
-                categoryId = null,
+                title = "",
+                caption = "Test content",
+                firstComment = "",
+                internalNotes = "",
                 tags = emptyList(),
-                status = PostStatus.DRAFT,
+                categoryId = null,
                 scheduledAt = null,
                 publishedAt = null,
-                mediaIds = emptyList(),
                 createdAt = Instant.now(),
                 updatedAt = Instant.now(),
             )
         )
 
-        val queueItem = publishingQueueRepository.save(
-            com.brightbean.studio.domain.model.PublishingQueue(
-                id = UUID.randomUUID(),
-                workspaceId = workspaceId,
-                postId = post.id,
-                scheduledFor = Instant.now().minusSeconds(60),
-                attempts = 0,
-                lastAttemptAt = null,
-                status = QueueStatus.PENDING,
-                errorMessage = null,
-            )
-        )
+        platformPostRepository.save(PlatformPost(
+            id = UUID.randomUUID(), postId = post.id, socialAccountId = UUID.randomUUID(),
+            platformTitle = null, platformCaption = null, platformFirstComment = null,
+            platformMedia = null, platformExtra = null, status = PlatformPostStatus.SCHEDULED,
+            platformPostId = "", publishError = "", publishedAt = null,
+            scheduledAt = Instant.now().minusSeconds(60),
+            retryCount = 0, nextRetryAt = null, createdAt = Instant.now(), updatedAt = Instant.now(),
+        ))
 
-        publishingWorker.processItem(queueItem.id)
+        publishingWorker.processPost(post.id)
 
-        val updatedQueue = publishingQueueRepository.findById(queueItem.id)
-        assertEquals(1, updatedQueue?.attempts)
+        val updatedPp = platformPostRepository.findByPostId(post.id)
+        assertEquals(1, updatedPp.size)
+        assertEquals(PlatformPostStatus.FAILED, updatedPp[0].status)
     }
 }
 
-class InMemoryPublishingQueueRepository : PublishingQueueRepository {
-    private val queues = mutableMapOf<UUID, com.brightbean.studio.domain.model.PublishingQueue>()
-
-    override fun findById(id: UUID): com.brightbean.studio.domain.model.PublishingQueue? = queues[id]
-
-    override fun findByPostId(postId: UUID): List<com.brightbean.studio.domain.model.PublishingQueue> =
-        queues.values.filter { it.postId == postId }
-
-    override fun findByWorkspaceId(workspaceId: UUID): List<com.brightbean.studio.domain.model.PublishingQueue> =
-        queues.values.filter { it.workspaceId == workspaceId }
-
-    override fun findPending(): List<com.brightbean.studio.domain.model.PublishingQueue> =
-        queues.values.filter { it.status == QueueStatus.PENDING }
-
-    override fun save(queue: com.brightbean.studio.domain.model.PublishingQueue): com.brightbean.studio.domain.model.PublishingQueue {
-        queues[queue.id] = queue
-        return queue
-    }
-
-    override fun update(queue: com.brightbean.studio.domain.model.PublishingQueue): com.brightbean.studio.domain.model.PublishingQueue {
-        queues[queue.id] = queue
-        return queue
-    }
-
-    override fun delete(id: UUID) { queues.remove(id) }
-}
-
-class InMemoryPostRepository : PostRepository {
+class WorkerInMemoryPostRepository : PostRepository {
     private val posts = mutableMapOf<UUID, Post>()
 
     override fun findById(id: UUID): Post? = posts[id]
-
-    override fun findByWorkspaceId(workspaceId: UUID): List<Post> =
-        posts.values.filter { it.workspaceId == workspaceId }
-
-    override fun findByAuthorId(authorId: UUID): List<Post> =
-        posts.values.filter { it.authorId == authorId }
-
-    override fun save(post: Post): Post {
-        posts[post.id] = post
-        return post
-    }
-
-    override fun update(post: Post): Post {
-        posts[post.id] = post
-        return post
-    }
-
+    override fun findByWorkspaceId(workspaceId: UUID): List<Post> = posts.values.filter { it.workspaceId == workspaceId }
+    override fun findByAuthorId(authorId: UUID): List<Post> = posts.values.filter { it.authorId == authorId }
+    override fun save(post: Post): Post { posts[post.id] = post; return post }
+    override fun update(post: Post): Post { posts[post.id] = post; return post }
     override fun delete(id: UUID) { posts.remove(id) }
 }
 
-class InMemorySocialAccountRepository : SocialAccountRepository {
+class WorkerInMemorySocialAccountRepository : SocialAccountRepository {
     private val accounts = mutableMapOf<UUID, SocialAccount>()
 
     override fun findById(id: UUID): SocialAccount? = accounts[id]
-
-    override fun findByWorkspaceId(workspaceId: UUID): List<SocialAccount> =
-        accounts.values.filter { it.workspaceId == workspaceId }
-
-    override fun findByPlatformType(workspaceId: UUID, platformType: PlatformType): List<SocialAccount> =
-        accounts.values.filter { it.workspaceId == workspaceId && it.platformType == platformType }
-
-    override fun findActiveByWorkspace(workspaceId: UUID): List<SocialAccount> =
-        accounts.values.filter { it.workspaceId == workspaceId && it.isActive }
-
-    override fun save(socialAccount: SocialAccount): SocialAccount {
-        accounts[socialAccount.id] = socialAccount
-        return socialAccount
-    }
-
-    override fun update(socialAccount: SocialAccount): SocialAccount {
-        accounts[socialAccount.id] = socialAccount
-        return socialAccount
-    }
-
+    override fun findByWorkspaceId(workspaceId: UUID): List<SocialAccount> = accounts.values.filter { it.workspaceId == workspaceId }
+    override fun findByPlatformType(workspaceId: UUID, platformType: PlatformType): List<SocialAccount> = accounts.values.filter { it.workspaceId == workspaceId && it.platformType == platformType }
+    override fun findActiveByWorkspace(workspaceId: UUID): List<SocialAccount> = accounts.values.filter { it.workspaceId == workspaceId && it.isActive }
+    override fun save(socialAccount: SocialAccount): SocialAccount { accounts[socialAccount.id] = socialAccount; return socialAccount }
+    override fun update(socialAccount: SocialAccount): SocialAccount { accounts[socialAccount.id] = socialAccount; return socialAccount }
     override fun delete(id: UUID) { accounts.remove(id) }
 }
 
-class InMemoryPlatformPostRepository : PlatformPostRepository {
+class WorkerInMemoryPlatformPostRepository : PlatformPostRepository {
     private val platformPosts = mutableMapOf<UUID, PlatformPost>()
 
     override fun findById(id: UUID): PlatformPost? = platformPosts[id]
-
-    override fun findByPostId(postId: UUID): List<PlatformPost> =
-        platformPosts.values.filter { it.postId == postId }
-
-    override fun findBySocialAccountId(socialAccountId: UUID): List<PlatformPost> =
-        platformPosts.values.filter { it.socialAccountId == socialAccountId }
-
-    override fun save(platformPost: PlatformPost): PlatformPost {
-        platformPosts[platformPost.id] = platformPost
-        return platformPost
-    }
-
-    override fun update(platformPost: PlatformPost): PlatformPost {
-        platformPosts[platformPost.id] = platformPost
-        return platformPost
-    }
-
+    override fun findByPostId(postId: UUID): List<PlatformPost> = platformPosts.values.filter { it.postId == postId }
+    override fun findBySocialAccountId(socialAccountId: UUID): List<PlatformPost> = platformPosts.values.filter { it.socialAccountId == socialAccountId }
+    override fun findByStatus(status: PlatformPostStatus): List<PlatformPost> = platformPosts.values.filter { it.status == status }
+    override fun findScheduledBefore(time: Instant): List<PlatformPost> = platformPosts.values.filter { it.status == PlatformPostStatus.SCHEDULED && it.scheduledAt != null && it.scheduledAt!!.compareTo(time) <= 0 }
+    override fun save(platformPost: PlatformPost): PlatformPost { platformPosts[platformPost.id] = platformPost; return platformPost }
+    override fun update(platformPost: PlatformPost): PlatformPost { platformPosts[platformPost.id] = platformPost; return platformPost }
     override fun delete(id: UUID) { platformPosts.remove(id) }
 }
 
-class FakeFacebookProvider : SocialProvider {
+class WorkerFakeFacebookProvider : SocialProvider {
     override val platformType = PlatformType.FACEBOOK
 
     override fun getProfile(socialAccount: SocialAccount) = PlatformProfile(

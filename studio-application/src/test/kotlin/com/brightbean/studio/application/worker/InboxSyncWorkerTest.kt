@@ -1,5 +1,6 @@
 package com.brightbean.studio.application.worker
 
+import com.brightbean.studio.application.usecase.InMemorySocialAccountRepository
 import com.brightbean.studio.domain.model.InboxItem
 import com.brightbean.studio.domain.model.InboxItemType
 import com.brightbean.studio.domain.model.PlatformType

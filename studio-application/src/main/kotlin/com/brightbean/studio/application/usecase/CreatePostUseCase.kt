@@ -2,10 +2,7 @@ package com.brightbean.studio.application.usecase
 
 import com.brightbean.studio.domain.model.ApprovalRequest
 import com.brightbean.studio.domain.model.ApprovalStatus
-import com.brightbean.studio.domain.model.PlatformType
 import com.brightbean.studio.domain.model.Post
-import com.brightbean.studio.domain.model.PostStatus
-import com.brightbean.studio.domain.model.Tag
 import com.brightbean.studio.domain.repository.ApprovalRequestRepository
 import com.brightbean.studio.domain.repository.PostRepository
 import java.time.Instant
@@ -17,34 +14,29 @@ class CreatePostUseCase(
 ) {
     fun execute(
         workspaceId: UUID,
-        authorId: UUID,
+        authorId: UUID?,
         content: String,
-        platforms: List<PlatformType>,
+        socialAccountIds: List<UUID>,
         scheduledAt: Instant?,
         requiresApproval: Boolean,
         categoryId: UUID? = null,
-        tags: List<Tag> = emptyList(),
+        tags: List<String> = emptyList(),
         mediaIds: List<UUID> = emptyList(),
     ): Post {
         val now = Instant.now()
-        val status = when {
-            scheduledAt != null -> PostStatus.SCHEDULED
-            requiresApproval -> PostStatus.PENDING_APPROVAL
-            else -> PostStatus.DRAFT
-        }
 
         val post = Post(
             id = UUID.randomUUID(),
             workspaceId = workspaceId,
             authorId = authorId,
-            content = content,
-            platforms = platforms,
-            categoryId = categoryId,
+            title = "",
+            caption = content,
+            firstComment = "",
+            internalNotes = "",
             tags = tags,
-            status = status,
+            categoryId = categoryId,
             scheduledAt = scheduledAt,
             publishedAt = null,
-            mediaIds = mediaIds,
             createdAt = now,
             updatedAt = now,
         )
@@ -55,7 +47,7 @@ class CreatePostUseCase(
                 id = UUID.randomUUID(),
                 workspaceId = workspaceId,
                 postId = post.id,
-                requestedBy = authorId,
+                requestedBy = authorId ?: throw IllegalArgumentException("authorId required for approval"),
                 requestedAt = now,
                 status = ApprovalStatus.PENDING,
                 reviewedBy = null,

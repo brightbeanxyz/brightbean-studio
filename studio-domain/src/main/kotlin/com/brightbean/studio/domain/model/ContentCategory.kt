@@ -8,5 +8,7 @@ data class ContentCategory(
     val workspaceId: UUID,
     val name: String,
     val color: String,
+    val position: Int,
     val createdAt: Instant,
+    val updatedAt: Instant,
 )

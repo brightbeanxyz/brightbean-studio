@@ -2,9 +2,8 @@ package com.brightbean.studio.web.api.dto
 
 import com.brightbean.studio.domain.model.PlatformType
 import com.brightbean.studio.domain.model.Post
-import com.brightbean.studio.domain.model.PostStatus
+import com.brightbean.studio.domain.model.PlatformPostStatus
 import com.brightbean.studio.domain.model.SocialAccount
-import com.brightbean.studio.domain.model.Tag
 import com.brightbean.studio.domain.model.Workspace
 import java.time.Instant
 import java.util.UUID
@@ -12,22 +11,17 @@ import java.util.UUID
 data class PostResponse(
     val id: UUID,
     val workspaceId: UUID,
-    val authorId: UUID,
-    val content: String,
-    val platforms: List<PlatformType>,
+    val authorId: UUID?,
+    val title: String,
+    val caption: String,
+    val firstComment: String,
+    val internalNotes: String,
+    val tags: List<String>,
     val categoryId: UUID?,
-    val tags: List<TagResponse>,
-    val status: PostStatus,
     val scheduledAt: Instant?,
     val publishedAt: Instant?,
-    val mediaIds: List<UUID>,
     val createdAt: Instant,
     val updatedAt: Instant,
-)
-
-data class TagResponse(
-    val id: UUID,
-    val name: String,
 )
 
 data class SocialAccountResponse(
@@ -70,14 +64,14 @@ fun Post.toResponse(): PostResponse = PostResponse(
     id = id,
     workspaceId = workspaceId,
     authorId = authorId,
-    content = content,
-    platforms = platforms,
+    title = title,
+    caption = caption,
+    firstComment = firstComment,
+    internalNotes = internalNotes,
+    tags = tags,
     categoryId = categoryId,
-    tags = tags.map { TagResponse(id = it.id, name = it.name) },
-    status = status,
     scheduledAt = scheduledAt,
     publishedAt = publishedAt,
-    mediaIds = mediaIds,
     createdAt = createdAt,
     updatedAt = updatedAt,
 )

@@ -1,42 +1,38 @@
 package com.brightbean.studio.application.usecase
 
-import com.brightbean.studio.domain.model.PostStatus
-import com.brightbean.studio.domain.model.PublishingQueue
-import com.brightbean.studio.domain.model.QueueStatus
+import com.brightbean.studio.domain.model.PlatformPost
+import com.brightbean.studio.domain.model.PlatformPostStatus
+import com.brightbean.studio.domain.model.Post
+import com.brightbean.studio.domain.repository.PlatformPostRepository
 import com.brightbean.studio.domain.repository.PostRepository
-import com.brightbean.studio.domain.repository.PublishingQueueRepository
 import java.time.Instant
 import java.util.UUID
 
 class SchedulePostUseCase(
     private val postRepository: PostRepository,
-    private val publishingQueueRepository: PublishingQueueRepository,
+    private val platformPostRepository: PlatformPostRepository,
 ) {
-    fun execute(postId: UUID, scheduledFor: Instant): PublishingQueue {
+    fun execute(postId: UUID, scheduledFor: Instant): Post {
         val post = postRepository.findById(postId)
             ?: throw IllegalArgumentException("Post not found: $postId")
 
-        if (post.status != PostStatus.SCHEDULED && post.status != PostStatus.DRAFT) {
-            throw IllegalArgumentException("Post cannot be scheduled: ${post.status}")
-        }
-
+        val now = Instant.now()
         val updatedPost = post.copy(
-            status = PostStatus.SCHEDULED,
             scheduledAt = scheduledFor,
-            updatedAt = Instant.now(),
+            updatedAt = now,
         )
         postRepository.update(updatedPost)
 
-        val queue = PublishingQueue(
-            id = UUID.randomUUID(),
-            workspaceId = post.workspaceId,
-            postId = postId,
-            scheduledFor = scheduledFor,
-            attempts = 0,
-            lastAttemptAt = null,
-            status = QueueStatus.PENDING,
-            errorMessage = null,
-        )
-        return publishingQueueRepository.save(queue)
+        val platformPosts = platformPostRepository.findByPostId(postId)
+        for (pp in platformPosts) {
+            val updated = pp.copy(
+                status = PlatformPostStatus.SCHEDULED,
+                scheduledAt = scheduledFor,
+                updatedAt = now,
+            )
+            platformPostRepository.update(updated)
+        }
+
+        return updatedPost
     }
 }

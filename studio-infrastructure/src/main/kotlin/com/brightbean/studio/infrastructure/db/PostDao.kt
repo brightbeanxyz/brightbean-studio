@@ -7,55 +7,52 @@ import java.util.UUID
 
 @RegisterKotlinMapper(PostDto::class)
 interface PostDao {
-    @SqlQuery("SELECT * FROM post WHERE id = :id")
+    @SqlQuery("SELECT * FROM composer_post WHERE id = :id")
     fun findById(id: UUID): PostDto?
 
-    @SqlQuery("SELECT * FROM post WHERE workspace_id = :workspaceId")
+    @SqlQuery("SELECT * FROM composer_post WHERE workspace_id = :workspaceId ORDER BY created_at DESC")
     fun findByWorkspaceId(workspaceId: UUID): List<PostDto>
 
-    @SqlQuery("SELECT * FROM post WHERE workspace_id = :workspaceId AND status = :status")
-    fun findByStatus(workspaceId: UUID, status: String): List<PostDto>
-
-    @SqlQuery("SELECT * FROM post WHERE author_id = :authorId")
+    @SqlQuery("SELECT * FROM composer_post WHERE author_id = :authorId ORDER BY created_at DESC")
     fun findByAuthorId(authorId: UUID): List<PostDto>
 
     @SqlUpdate("""
-        INSERT INTO post (id, workspace_id, author_id, content, platforms, category_id, tags, status, scheduled_at, published_at, media_ids, created_at, updated_at)
-        VALUES (:dto.id, :dto.workspaceId, :dto.authorId, :dto.content, :dto.platforms, :dto.categoryId, :dto.tags, :dto.status, :dto.scheduledAt, :dto.publishedAt, :dto.mediaIds, :dto.createdAt, :dto.updatedAt)
+        INSERT INTO composer_post (id, workspace_id, author_id, title, caption, first_comment, internal_notes, tags, category_id, scheduled_at, published_at, created_at, updated_at)
+        VALUES (:dto.id, :dto.workspaceId, :dto.authorId, :dto.title, :dto.caption, :dto.firstComment, :dto.internalNotes, :dto.tags, :dto.categoryId, :dto.scheduledAt, :dto.publishedAt, :dto.createdAt, :dto.updatedAt)
     """)
     fun insert(dto: PostDto)
 
     @SqlUpdate("""
-        UPDATE post SET
-            content = :dto.content,
-            platforms = :dto.platforms,
-            category_id = :dto.categoryId,
+        UPDATE composer_post SET
+            title = :dto.title,
+            caption = :dto.caption,
+            first_comment = :dto.firstComment,
+            internal_notes = :dto.internalNotes,
             tags = :dto.tags,
-            status = :dto.status,
+            category_id = :dto.categoryId,
             scheduled_at = :dto.scheduledAt,
             published_at = :dto.publishedAt,
-            media_ids = :dto.mediaIds,
             updated_at = :dto.updatedAt
         WHERE id = :dto.id
     """)
     fun update(dto: PostDto)
 
-    @SqlUpdate("DELETE FROM post WHERE id = :id")
+    @SqlUpdate("DELETE FROM composer_post WHERE id = :id")
     fun delete(id: UUID)
 }
 
 data class PostDto(
     val id: UUID,
     val workspaceId: UUID,
-    val authorId: UUID,
-    val content: String,
-    val platforms: String,
-    val categoryId: UUID?,
+    val authorId: UUID?,
+    val title: String,
+    val caption: String,
+    val firstComment: String,
+    val internalNotes: String,
     val tags: String,
-    val status: String,
+    val categoryId: UUID?,
     val scheduledAt: java.time.Instant?,
     val publishedAt: java.time.Instant?,
-    val mediaIds: String,
     val createdAt: java.time.Instant,
     val updatedAt: java.time.Instant,
 )

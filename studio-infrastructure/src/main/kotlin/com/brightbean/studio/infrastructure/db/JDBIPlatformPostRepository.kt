@@ -1,11 +1,12 @@
 package com.brightbean.studio.infrastructure.db
 
 import com.brightbean.studio.domain.model.PlatformPost
-import com.brightbean.studio.domain.model.PostStatus
+import com.brightbean.studio.domain.model.PlatformPostStatus
 import com.brightbean.studio.domain.repository.PlatformPostRepository
 import org.jdbi.v3.core.Jdbi
 import org.jdbi.v3.core.kotlin.KotlinPlugin
 import org.jdbi.v3.sqlobject.kotlin.KotlinSqlObjectPlugin
+import java.time.Instant
 import java.util.UUID
 
 class JDBIPlatformPostRepository(jdbi: Jdbi) : PlatformPostRepository {
@@ -26,6 +27,12 @@ class JDBIPlatformPostRepository(jdbi: Jdbi) : PlatformPostRepository {
     override fun findBySocialAccountId(socialAccountId: UUID): List<PlatformPost> =
         dao.findBySocialAccountId(socialAccountId).map { it.toDomain() }
 
+    override fun findByStatus(status: PlatformPostStatus): List<PlatformPost> =
+        dao.findByStatus(status.name).map { it.toDomain() }
+
+    override fun findScheduledBefore(time: Instant): List<PlatformPost> =
+        dao.findScheduledBefore(time).map { it.toDomain() }
+
     override fun save(platformPost: PlatformPost): PlatformPost {
         dao.insert(platformPost.toDto())
         return platformPost
@@ -44,21 +51,39 @@ class JDBIPlatformPostRepository(jdbi: Jdbi) : PlatformPostRepository {
         id = id,
         postId = postId,
         socialAccountId = socialAccountId,
-        platformPostId = platformPostId,
-        platformUrl = platformUrl,
+        platformTitle = platformTitle,
+        platformCaption = platformCaption,
+        platformMedia = platformMedia,
+        platformFirstComment = platformFirstComment,
+        platformExtra = platformExtra,
         status = status.name,
-        errorMessage = errorMessage,
+        platformPostId = platformPostId,
+        publishError = publishError,
         publishedAt = publishedAt,
+        scheduledAt = scheduledAt,
+        retryCount = retryCount,
+        nextRetryAt = nextRetryAt,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
     )
 
     private fun PlatformPostDto.toDomain() = PlatformPost(
         id = id,
         postId = postId,
         socialAccountId = socialAccountId,
+        platformTitle = platformTitle,
+        platformCaption = platformCaption,
+        platformMedia = platformMedia,
+        platformFirstComment = platformFirstComment,
+        platformExtra = platformExtra,
+        status = try { PlatformPostStatus.valueOf(status) } catch (_: Exception) { PlatformPostStatus.DRAFT },
         platformPostId = platformPostId,
-        platformUrl = platformUrl,
-        status = PostStatus.valueOf(status),
-        errorMessage = errorMessage,
+        publishError = publishError,
         publishedAt = publishedAt,
+        scheduledAt = scheduledAt,
+        retryCount = retryCount,
+        nextRetryAt = nextRetryAt,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
     )
 }

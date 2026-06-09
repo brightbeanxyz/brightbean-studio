@@ -4,7 +4,6 @@ import com.brightbean.studio.application.auth.WorkspacePermissionKeys
 import com.brightbean.studio.application.usecase.CreatePostUseCase
 import com.brightbean.studio.application.usecase.PublishPostUseCase
 import com.brightbean.studio.application.usecase.SchedulePostUseCase
-import com.brightbean.studio.domain.model.PostStatus
 import com.brightbean.studio.domain.repository.PostRepository
 import com.brightbean.studio.web.api.dto.CreatePostRequest
 import com.brightbean.studio.web.api.dto.ErrorResponse
@@ -56,19 +55,8 @@ class PostApi(
             val queryParams = parseQueryParams(exchange.requestURI.query ?: "")
             val page = queryParams["page"]?.toIntOrNull() ?: 1
             val pageSize = queryParams["pageSize"]?.toIntOrNull() ?: 25
-            val statusFilter = queryParams["status"]
 
-            var posts = postRepository.findByWorkspaceId(workspaceId)
-
-            if (statusFilter != null) {
-                val status = try {
-                    PostStatus.valueOf(statusFilter.uppercase())
-                } catch (e: IllegalArgumentException) {
-                    sendError(exchange, 400, "Invalid status: $statusFilter")
-                    return
-                }
-                posts = posts.filter { it.status == status }
-            }
+            val posts = postRepository.findByWorkspaceId(workspaceId)
 
             val totalCount = posts.size
             val totalPages = (totalCount + pageSize - 1) / pageSize
@@ -104,7 +92,7 @@ class PostApi(
                 workspaceId = workspaceId,
                 authorId = UUID.randomUUID(),
                 content = request.content,
-                platforms = request.platforms,
+                socialAccountIds = emptyList(),
                 scheduledAt = request.scheduledAt,
                 requiresApproval = request.requiresApproval,
                 categoryId = request.categoryId,
@@ -143,12 +131,11 @@ class PostApi(
             val body = InputStreamReader(exchange.requestBody).readText()
             val request = gson.fromJson(body, SchedulePostRequest::class.java)
 
-            val queue = schedulePostUseCase.execute(postId, request.scheduledFor)
-            val post = postRepository.findById(postId)
+            val post = schedulePostUseCase.execute(postId, request.scheduledFor)
 
             sendJson(exchange, 200, mapOf(
-                "queueId" to queue.id,
-                "post" to post?.toResponse()
+                "postId" to post.id,
+                "post" to post.toResponse()
             ))
         } catch (e: Exception) {
             sendError(exchange, 400, e.message ?: "Failed to schedule post")

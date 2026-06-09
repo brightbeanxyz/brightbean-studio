@@ -17,7 +17,6 @@ class RepositoryIntegrationTest {
     private lateinit var credentialRepo: JDBICredentialRepository
     private lateinit var socialAccountRepo: JDBISocialAccountRepository
     private lateinit var postRepo: JDBIPostRepository
-    private lateinit var publishingQueueRepo: JDBIPublishingQueueRepository
     private lateinit var platformPostRepo: JDBIPlatformPostRepository
     private lateinit var inboxRepo: JDBIInboxRepository
     private lateinit var approvalRequestRepo: JDBIApprovalRequestRepository
@@ -85,46 +84,42 @@ class RepositoryIntegrationTest {
             """).execute()
 
             handle.createUpdate("""
-                CREATE TABLE post (
+                CREATE TABLE composer_post (
                     id UUID PRIMARY KEY,
                     workspace_id UUID NOT NULL,
-                    author_id UUID NOT NULL,
-                    content VARCHAR NOT NULL,
-                    platforms VARCHAR NOT NULL,
+                    author_id UUID,
+                    title VARCHAR(255) NOT NULL DEFAULT '',
+                    caption TEXT NOT NULL DEFAULT '',
+                    first_comment TEXT NOT NULL DEFAULT '',
+                    internal_notes TEXT NOT NULL DEFAULT '',
+                    tags TEXT NOT NULL DEFAULT '[]',
                     category_id UUID,
-                    tags VARCHAR NOT NULL,
-                    status VARCHAR NOT NULL,
                     scheduled_at TIMESTAMP,
                     published_at TIMESTAMP,
-                    media_ids VARCHAR NOT NULL,
                     created_at TIMESTAMP NOT NULL,
                     updated_at TIMESTAMP NOT NULL
                 )
             """).execute()
 
             handle.createUpdate("""
-                CREATE TABLE publishing_queue (
-                    id UUID PRIMARY KEY,
-                    workspace_id UUID NOT NULL,
-                    post_id UUID NOT NULL,
-                    scheduled_for TIMESTAMP NOT NULL,
-                    attempts INT NOT NULL DEFAULT 0,
-                    last_attempt_at TIMESTAMP,
-                    status VARCHAR NOT NULL DEFAULT 'PENDING',
-                    error_message VARCHAR
-                )
-            """).execute()
-
-            handle.createUpdate("""
-                CREATE TABLE platform_post (
+                CREATE TABLE composer_platform_post (
                     id UUID PRIMARY KEY,
                     post_id UUID NOT NULL,
                     social_account_id UUID NOT NULL,
-                    platform_post_id VARCHAR,
-                    platform_url VARCHAR,
-                    status VARCHAR NOT NULL DEFAULT 'DRAFT',
-                    error_message VARCHAR,
-                    published_at TIMESTAMP
+                    platform_specific_title TEXT,
+                    platform_specific_caption TEXT,
+                    platform_specific_media TEXT,
+                    platform_specific_first_comment TEXT,
+                    platform_extra TEXT NOT NULL DEFAULT '{}',
+                    status VARCHAR(30) NOT NULL DEFAULT 'DRAFT',
+                    platform_post_id VARCHAR(255) NOT NULL DEFAULT '',
+                    publish_error TEXT NOT NULL DEFAULT '',
+                    published_at TIMESTAMP,
+                    scheduled_at TIMESTAMP,
+                    retry_count INT NOT NULL DEFAULT 0,
+                    next_retry_at TIMESTAMP,
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
                 )
             """).execute()
 
@@ -228,7 +223,6 @@ class RepositoryIntegrationTest {
         credentialRepo = JDBICredentialRepository(jdbi)
         socialAccountRepo = JDBISocialAccountRepository(jdbi)
         postRepo = JDBIPostRepository(jdbi)
-        publishingQueueRepo = JDBIPublishingQueueRepository(jdbi)
         platformPostRepo = JDBIPlatformPostRepository(jdbi)
         inboxRepo = JDBIInboxRepository(jdbi)
         approvalRequestRepo = JDBIApprovalRequestRepository(jdbi)
@@ -357,9 +351,8 @@ class RepositoryIntegrationTest {
 
         assertNotNull(found)
         assertEquals(post.id, found!!.id)
-        assertEquals("Hello world", found.content)
-        assertEquals(PostStatus.DRAFT, found.status)
-        assertEquals(listOf(PlatformType.INSTAGRAM), found.platforms)
+        assertEquals("Hello world", found.caption)
+        assertEquals(listOf("tag1"), found.tags)
     }
 
     @Test
@@ -386,42 +379,6 @@ class RepositoryIntegrationTest {
     }
 
     @Test
-    fun `publishingQueue save and findById`() {
-        val queue = createTestPublishingQueue()
-        publishingQueueRepo.save(queue)
-
-        val found = publishingQueueRepo.findById(queue.id)
-
-        assertNotNull(found)
-        assertEquals(queue.id, found!!.id)
-        assertEquals(QueueStatus.PENDING, found.status)
-        assertEquals(0, found.attempts)
-    }
-
-    @Test
-    fun `publishingQueue findPending returns pending items`() {
-        val pending = createTestPublishingQueue(status = QueueStatus.PENDING)
-        val completed = createTestPublishingQueue(status = QueueStatus.COMPLETED)
-        publishingQueueRepo.save(pending)
-        publishingQueueRepo.save(completed)
-
-        val results = publishingQueueRepo.findPending()
-
-        assertTrue(results.any { it.id == pending.id })
-        assertTrue(results.none { it.id == completed.id })
-    }
-
-    @Test
-    fun `publishingQueue delete removes item`() {
-        val queue = createTestPublishingQueue()
-        publishingQueueRepo.save(queue)
-
-        publishingQueueRepo.delete(queue.id)
-
-        assertNull(publishingQueueRepo.findById(queue.id))
-    }
-
-    @Test
     fun `platformPost save and findById`() {
         val pp = createTestPlatformPost()
         platformPostRepo.save(pp)
@@ -431,7 +388,7 @@ class RepositoryIntegrationTest {
         assertNotNull(found)
         assertEquals(pp.id, found!!.id)
         assertEquals("ig_post_789", found.platformPostId)
-        assertEquals(PostStatus.DRAFT, found.status)
+        assertEquals(PlatformPostStatus.DRAFT, found.status)
     }
 
     @Test
@@ -574,34 +531,21 @@ class RepositoryIntegrationTest {
     )
 
     private fun createTestPost(
-        authorId: UUID = UUID.randomUUID(),
+        authorId: UUID? = UUID.randomUUID(),
     ) = Post(
         id = UUID.randomUUID(),
         workspaceId = UUID.randomUUID(),
         authorId = authorId,
-        content = "Hello world",
-        platforms = listOf(PlatformType.INSTAGRAM),
+        title = "",
+        caption = "Hello world",
+        firstComment = "",
+        internalNotes = "",
+        tags = listOf("tag1"),
         categoryId = null,
-        tags = emptyList(),
-        status = PostStatus.DRAFT,
         scheduledAt = null,
         publishedAt = null,
-        mediaIds = emptyList(),
         createdAt = Instant.now(),
         updatedAt = Instant.now(),
-    )
-
-    private fun createTestPublishingQueue(
-        status: QueueStatus = QueueStatus.PENDING,
-    ) = PublishingQueue(
-        id = UUID.randomUUID(),
-        workspaceId = UUID.randomUUID(),
-        postId = UUID.randomUUID(),
-        scheduledFor = Instant.now().plusSeconds(3600),
-        attempts = 0,
-        lastAttemptAt = null,
-        status = status,
-        errorMessage = null,
     )
 
     private fun createTestPlatformPost(
@@ -610,11 +554,20 @@ class RepositoryIntegrationTest {
         id = UUID.randomUUID(),
         postId = postId,
         socialAccountId = UUID.randomUUID(),
+        platformTitle = null,
+        platformCaption = null,
+        platformFirstComment = null,
+        platformMedia = null,
+        platformExtra = "{}",
+        status = PlatformPostStatus.DRAFT,
         platformPostId = "ig_post_789",
-        platformUrl = "https://instagram.com/p/789",
-        status = PostStatus.DRAFT,
-        errorMessage = null,
+        publishError = "",
         publishedAt = null,
+        scheduledAt = null,
+        retryCount = 0,
+        nextRetryAt = null,
+        createdAt = Instant.now(),
+        updatedAt = Instant.now(),
     )
 
     private fun createTestInboxItem(

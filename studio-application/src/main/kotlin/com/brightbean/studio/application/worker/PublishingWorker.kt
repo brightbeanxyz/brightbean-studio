@@ -1,51 +1,41 @@
 package com.brightbean.studio.application.worker
 
 import com.brightbean.studio.application.usecase.PublishPostUseCase
-import com.brightbean.studio.domain.model.QueueStatus
-import com.brightbean.studio.domain.repository.PublishingQueueRepository
+import com.brightbean.studio.domain.model.PlatformPostStatus
+import com.brightbean.studio.domain.repository.PlatformPostRepository
 import java.time.Instant
 import java.util.UUID
 
 class PublishingWorker(
-    private val publishingQueueRepository: PublishingQueueRepository,
+    private val platformPostRepository: PlatformPostRepository,
     private val publishPostUseCase: PublishPostUseCase,
 ) {
     fun processQueue() {
-        val pendingItems = publishingQueueRepository.findPending()
-        for (item in pendingItems) {
-            processItem(item.id)
+        val duePosts = platformPostRepository.findScheduledBefore(Instant.now())
+        val processedPostIds = mutableSetOf<UUID>()
+        for (platformPost in duePosts) {
+            if (platformPost.postId !in processedPostIds) {
+                processPost(platformPost.postId)
+                processedPostIds.add(platformPost.postId)
+            }
         }
     }
 
-    fun processItem(queueId: UUID) {
-        val queueItem = publishingQueueRepository.findById(queueId) ?: return
-
-        val processingItem = queueItem.copy(
-            status = QueueStatus.PROCESSING,
-            lastAttemptAt = Instant.now(),
-        )
-        publishingQueueRepository.update(processingItem)
-
+    fun processPost(postId: UUID) {
         try {
-            publishPostUseCase.execute(queueItem.postId)
-            val completedItem = processingItem.copy(status = QueueStatus.COMPLETED)
-            publishingQueueRepository.update(completedItem)
-        } catch (e: Exception) {
-            val attempts = queueItem.attempts + 1
-            if (attempts >= MAX_ATTEMPTS) {
-                val failedItem = processingItem.copy(
-                    status = QueueStatus.FAILED,
-                    attempts = attempts,
-                    errorMessage = e.message,
-                )
-                publishingQueueRepository.update(failedItem)
-            } else {
-                val retryItem = processingItem.copy(
-                    attempts = attempts,
-                    status = QueueStatus.PENDING,
-                    errorMessage = e.message,
-                )
-                publishingQueueRepository.update(retryItem)
+            publishPostUseCase.execute(postId)
+        } catch (_: Exception) {
+            val platformPosts = platformPostRepository.findByPostId(postId)
+            for (pp in platformPosts) {
+                if (pp.status == PlatformPostStatus.SCHEDULED) {
+                    val updated = pp.copy(
+                        status = PlatformPostStatus.FAILED,
+                        publishError = "Publishing failed",
+                        retryCount = pp.retryCount + 1,
+                        updatedAt = Instant.now(),
+                    )
+                    platformPostRepository.update(updated)
+                }
             }
         }
     }

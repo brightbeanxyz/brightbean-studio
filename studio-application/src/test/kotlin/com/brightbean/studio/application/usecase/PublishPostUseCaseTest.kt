@@ -1,9 +1,9 @@
 package com.brightbean.studio.application.usecase
 
 import com.brightbean.studio.domain.model.PlatformPost
+import com.brightbean.studio.domain.model.PlatformPostStatus
 import com.brightbean.studio.domain.model.PlatformType
 import com.brightbean.studio.domain.model.Post
-import com.brightbean.studio.domain.model.PostStatus
 import com.brightbean.studio.domain.model.SocialAccount
 import com.brightbean.studio.domain.repository.PlatformPostRepository
 import com.brightbean.studio.domain.repository.PostRepository
@@ -13,6 +13,7 @@ import com.brightbean.studio.infrastructure.provider.ProviderRegistry
 import com.brightbean.studio.infrastructure.provider.PublishResult
 import com.brightbean.studio.infrastructure.provider.SocialProvider
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -77,32 +78,49 @@ class PublishPostUseCaseTest {
     }
 
     @Test
-    fun `publish post should publish to all platforms and update post status`() {
+    fun `publish post should publish to all platforms and update post`() {
         val post = postRepository.save(
             Post(
                 id = UUID.randomUUID(),
                 workspaceId = workspaceId,
                 authorId = authorId,
-                content = "Test content",
-                platforms = listOf(PlatformType.FACEBOOK, PlatformType.INSTAGRAM),
-                categoryId = null,
+                title = "",
+                caption = "Test content",
+                firstComment = "",
+                internalNotes = "",
                 tags = emptyList(),
-                status = PostStatus.DRAFT,
+                categoryId = null,
                 scheduledAt = null,
                 publishedAt = null,
-                mediaIds = emptyList(),
                 createdAt = Instant.now(),
                 updatedAt = Instant.now(),
             )
         )
 
+        platformPostRepository.save(PlatformPost(
+            id = UUID.randomUUID(), postId = post.id, socialAccountId = facebookAccountId,
+            platformTitle = null, platformCaption = null, platformFirstComment = null,
+            platformMedia = null, platformExtra = null, status = PlatformPostStatus.DRAFT,
+            platformPostId = "", publishError = "", publishedAt = null, scheduledAt = null,
+            retryCount = 0, nextRetryAt = null, createdAt = Instant.now(), updatedAt = Instant.now(),
+        ))
+        platformPostRepository.save(PlatformPost(
+            id = UUID.randomUUID(), postId = post.id, socialAccountId = instagramAccountId,
+            platformTitle = null, platformCaption = null, platformFirstComment = null,
+            platformMedia = null, platformExtra = null, status = PlatformPostStatus.DRAFT,
+            platformPostId = "", publishError = "", publishedAt = null, scheduledAt = null,
+            retryCount = 0, nextRetryAt = null, createdAt = Instant.now(), updatedAt = Instant.now(),
+        ))
+
         val result = publishPostUseCase.execute(post.id)
 
-        assertEquals(PostStatus.PUBLISHED, result.status)
         assertEquals(post.id, result.id)
+        assertNotNull(result.publishedAt)
 
         val platformPosts = platformPostRepository.findByPostId(post.id)
         assertEquals(2, platformPosts.size)
+        assertEquals(PlatformPostStatus.PUBLISHED, platformPosts[0].status)
+        assertEquals(PlatformPostStatus.PUBLISHED, platformPosts[1].status)
     }
 
     @Test
@@ -113,45 +131,20 @@ class PublishPostUseCaseTest {
     }
 
     @Test
-    fun `publish post should throw when post requires approval`() {
-        val post = postRepository.save(
-            Post(
-                id = UUID.randomUUID(),
-                workspaceId = workspaceId,
-                authorId = authorId,
-                content = "Test content requiring approval",
-                platforms = listOf(PlatformType.FACEBOOK),
-                categoryId = null,
-                tags = emptyList(),
-                status = PostStatus.PENDING_APPROVAL,
-                scheduledAt = null,
-                publishedAt = null,
-                mediaIds = emptyList(),
-                createdAt = Instant.now(),
-                updatedAt = Instant.now(),
-            )
-        )
-
-        assertThrows<IllegalArgumentException> {
-            publishPostUseCase.execute(post.id)
-        }
-    }
-
-    @Test
     fun `publish post should throw when no social accounts found`() {
         val post = postRepository.save(
             Post(
                 id = UUID.randomUUID(),
                 workspaceId = workspaceId,
                 authorId = authorId,
-                content = "Test content",
-                platforms = listOf(PlatformType.TIKTOK),
-                categoryId = null,
+                title = "",
+                caption = "Test content",
+                firstComment = "",
+                internalNotes = "",
                 tags = emptyList(),
-                status = PostStatus.DRAFT,
+                categoryId = null,
                 scheduledAt = null,
                 publishedAt = null,
-                mediaIds = emptyList(),
                 createdAt = Instant.now(),
                 updatedAt = Instant.now(),
             )
@@ -266,6 +259,12 @@ class InMemoryPlatformPostRepository : PlatformPostRepository {
 
     override fun findBySocialAccountId(socialAccountId: UUID): List<PlatformPost> =
         platformPosts.values.filter { it.socialAccountId == socialAccountId }
+
+    override fun findByStatus(status: PlatformPostStatus): List<PlatformPost> =
+        platformPosts.values.filter { it.status == status }
+
+    override fun findScheduledBefore(time: Instant): List<PlatformPost> =
+        platformPosts.values.filter { it.status == PlatformPostStatus.SCHEDULED && it.scheduledAt != null && it.scheduledAt!!.compareTo(time) <= 0 }
 
     override fun save(platformPost: PlatformPost): PlatformPost {
         platformPosts[platformPost.id] = platformPost

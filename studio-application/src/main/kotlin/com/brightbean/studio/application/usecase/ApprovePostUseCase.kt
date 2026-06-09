@@ -1,7 +1,9 @@
 package com.brightbean.studio.application.usecase
 
+import com.brightbean.studio.domain.model.ApprovalRequest
 import com.brightbean.studio.domain.model.ApprovalStatus
-import com.brightbean.studio.domain.model.PostStatus
+import com.brightbean.studio.domain.model.PlatformPostStatus
+import com.brightbean.studio.domain.model.Post
 import com.brightbean.studio.domain.repository.ApprovalRequestRepository
 import com.brightbean.studio.domain.repository.PostRepository
 import java.time.Instant
@@ -37,13 +39,12 @@ class ApprovePostUseCase(
             val post = postRepository.findById(approvalRequest.postId)
                 ?: throw IllegalStateException("Post not found: ${approvalRequest.postId}")
             val updatedPost = post.copy(
-                status = PostStatus.DRAFT,
                 updatedAt = now,
             )
             postRepository.update(updatedPost)
         }
     }
 
-    private fun com.brightbean.studio.domain.model.ApprovalRequest.isPending(): Boolean =
+    private fun ApprovalRequest.isPending(): Boolean =
         status == ApprovalStatus.PENDING
 }

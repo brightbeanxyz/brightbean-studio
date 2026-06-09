@@ -14,7 +14,21 @@ import com.brightbean.studio.domain.repository.PlatformCredentialRepository
 import com.brightbean.studio.domain.repository.PlatformPostRepository
 import com.brightbean.studio.domain.repository.PlatformVisibilityRepository
 import com.brightbean.studio.domain.repository.PostRepository
-import com.brightbean.studio.domain.repository.PublishingQueueRepository
+import com.brightbean.studio.domain.repository.ContentCategoryRepository
+import com.brightbean.studio.domain.repository.CSVImportJobRepository
+import com.brightbean.studio.domain.repository.CustomCalendarEventRepository
+import com.brightbean.studio.domain.repository.FeedRepository
+import com.brightbean.studio.domain.repository.IdeaGroupRepository
+import com.brightbean.studio.domain.repository.IdeaMediaRepository
+import com.brightbean.studio.domain.repository.IdeaRepository
+import com.brightbean.studio.domain.repository.PostingSlotRepository
+import com.brightbean.studio.domain.repository.PostMediaRepository
+import com.brightbean.studio.domain.repository.PostTemplateRepository
+import com.brightbean.studio.domain.repository.PostVersionRepository
+import com.brightbean.studio.domain.repository.QueueEntryRepository
+import com.brightbean.studio.domain.repository.QueueRepository
+import com.brightbean.studio.domain.repository.RecurrenceRuleRepository
+import com.brightbean.studio.domain.repository.TagRepository
 import com.brightbean.studio.domain.repository.SessionRepository
 import com.brightbean.studio.domain.repository.SocialAccountRepository
 import com.brightbean.studio.domain.repository.UserRepository
@@ -35,7 +49,21 @@ import com.brightbean.studio.infrastructure.db.JDBIPlatformCredentialRepository
 import com.brightbean.studio.infrastructure.db.JDBIPlatformPostRepository
 import com.brightbean.studio.infrastructure.db.JDBIPlatformVisibilityRepository
 import com.brightbean.studio.infrastructure.db.JDBIPostRepository
-import com.brightbean.studio.infrastructure.db.JDBIPublishingQueueRepository
+import com.brightbean.studio.infrastructure.db.JDBIContentCategoryRepository
+import com.brightbean.studio.infrastructure.db.JDBICSVImportJobRepository
+import com.brightbean.studio.infrastructure.db.JDBICustomCalendarEventRepository
+import com.brightbean.studio.infrastructure.db.JDBIFeedRepository
+import com.brightbean.studio.infrastructure.db.JDBIIdeaGroupRepository
+import com.brightbean.studio.infrastructure.db.JDBIIdeaMediaRepository
+import com.brightbean.studio.infrastructure.db.JDBIIdeaRepository
+import com.brightbean.studio.infrastructure.db.JDBIPostingSlotRepository
+import com.brightbean.studio.infrastructure.db.JDBIPostMediaRepository
+import com.brightbean.studio.infrastructure.db.JDBIPostTemplateRepository
+import com.brightbean.studio.infrastructure.db.JDBIPostVersionRepository
+import com.brightbean.studio.infrastructure.db.JDBIQueueEntryRepository
+import com.brightbean.studio.infrastructure.db.JDBIQueueRepository
+import com.brightbean.studio.infrastructure.db.JDBIRecurrenceRuleRepository
+import com.brightbean.studio.infrastructure.db.JDBITagRepository
 import com.brightbean.studio.infrastructure.db.JDBISessionRepository
 import com.brightbean.studio.infrastructure.db.JDBISocialAccountRepository
 import com.brightbean.studio.infrastructure.db.JDBIUserRepository
@@ -60,8 +88,22 @@ val infrastructureModule = module {
     single<CredentialRepository> { JDBICredentialRepository(get()) }
     single<SocialAccountRepository> { JDBISocialAccountRepository(get()) }
     single<PostRepository> { JDBIPostRepository(get()) }
-    single<PublishingQueueRepository> { JDBIPublishingQueueRepository(get()) }
     single<PlatformPostRepository> { JDBIPlatformPostRepository(get()) }
+    single<ContentCategoryRepository> { JDBIContentCategoryRepository(get()) }
+    single<TagRepository> { JDBITagRepository(get()) }
+    single<IdeaRepository> { JDBIIdeaRepository(get()) }
+    single<IdeaGroupRepository> { JDBIIdeaGroupRepository(get()) }
+    single<IdeaMediaRepository> { JDBIIdeaMediaRepository(get()) }
+    single<PostMediaRepository> { JDBIPostMediaRepository(get()) }
+    single<PostVersionRepository> { JDBIPostVersionRepository(get()) }
+    single<PostTemplateRepository> { JDBIPostTemplateRepository(get()) }
+    single<CSVImportJobRepository> { JDBICSVImportJobRepository(get()) }
+    single<FeedRepository> { JDBIFeedRepository(get()) }
+    single<PostingSlotRepository> { JDBIPostingSlotRepository(get()) }
+    single<QueueRepository> { JDBIQueueRepository(get()) }
+    single<QueueEntryRepository> { JDBIQueueEntryRepository(get()) }
+    single<RecurrenceRuleRepository> { JDBIRecurrenceRuleRepository(get()) }
+    single<CustomCalendarEventRepository> { JDBICustomCalendarEventRepository(get()) }
     single<InboxRepository> { JDBIInboxRepository(get()) }
     single<ApprovalRequestRepository> { JDBIApprovalRequestRepository(get()) }
     single<OrganizationRepository> { JDBIOrganizationRepository(get()) }

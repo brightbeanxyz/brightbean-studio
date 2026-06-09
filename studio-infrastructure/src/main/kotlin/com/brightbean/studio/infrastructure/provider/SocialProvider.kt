@@ -46,7 +46,7 @@ interface SocialProvider {
 
     @Deprecated("Use publishPost instead", ReplaceWith("publishPost(account, content)"))
     fun publish(post: Post, socialAccount: SocialAccount): PublishResult =
-        publishPost(socialAccount, PublishContent(text = post.content))
+        publishPost(socialAccount, PublishContent(text = post.caption))
 
     @Deprecated("No longer part of the provider interface")
     fun getComments(postId: String): List<Comment> = emptyList()

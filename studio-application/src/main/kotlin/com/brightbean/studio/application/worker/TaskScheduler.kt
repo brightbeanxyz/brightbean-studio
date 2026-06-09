@@ -1,90 +1,75 @@
 package com.brightbean.studio.application.worker
 
-import com.brightbean.studio.domain.model.PostStatus
-import com.brightbean.studio.domain.model.PublishingQueue
-import com.brightbean.studio.domain.model.QueueStatus
+import com.brightbean.studio.domain.model.PlatformPost
+import com.brightbean.studio.domain.model.PlatformPostStatus
+import com.brightbean.studio.domain.model.Post
+import com.brightbean.studio.domain.repository.PlatformPostRepository
 import com.brightbean.studio.domain.repository.PostRepository
-import com.brightbean.studio.domain.repository.PublishingQueueRepository
 import java.time.Instant
 import java.util.UUID
 
 class TaskScheduler(
     private val postRepository: PostRepository,
-    private val publishingQueueRepository: PublishingQueueRepository,
+    private val platformPostRepository: PlatformPostRepository,
 ) {
-    fun schedulePost(postId: UUID, scheduledFor: Instant): PublishingQueue {
+    fun schedulePost(postId: UUID, scheduledFor: Instant): Post {
         val post = postRepository.findById(postId)
             ?: throw IllegalArgumentException("Post not found: $postId")
 
-        if (post.status != PostStatus.SCHEDULED && post.status != PostStatus.DRAFT) {
-            throw IllegalArgumentException("Post cannot be scheduled: ${post.status}")
-        }
-
         val updatedPost = post.copy(
-            status = PostStatus.SCHEDULED,
             scheduledAt = scheduledFor,
             updatedAt = Instant.now(),
         )
         postRepository.update(updatedPost)
 
-        val queue = PublishingQueue(
-            id = UUID.randomUUID(),
-            workspaceId = post.workspaceId,
-            postId = postId,
-            scheduledFor = scheduledFor,
-            attempts = 0,
-            lastAttemptAt = null,
-            status = QueueStatus.PENDING,
-            errorMessage = null,
-        )
-        return publishingQueueRepository.save(queue)
+        val platformPosts = platformPostRepository.findByPostId(postId)
+        for (pp in platformPosts) {
+            val updated = pp.copy(
+                status = PlatformPostStatus.SCHEDULED,
+                scheduledAt = scheduledFor,
+                updatedAt = Instant.now(),
+            )
+            platformPostRepository.update(updated)
+        }
+
+        return updatedPost
     }
 
     fun processDueTasks() {
         val now = Instant.now()
-        val allPending = publishingQueueRepository.findPending()
-        val dueTasks = allPending.filter { it.scheduledFor <= now }
-        for (task in dueTasks) {
-            processTask(task.id)
+        val scheduled = platformPostRepository.findScheduledBefore(now)
+        val processedPostIds = mutableSetOf<UUID>()
+        for (pp in scheduled) {
+            if (pp.postId !in processedPostIds) {
+                processTask(pp.postId)
+                processedPostIds.add(pp.postId)
+            }
         }
     }
 
-    fun processTask(queueId: UUID) {
-        val queueItem = publishingQueueRepository.findById(queueId) ?: return
+    fun processTask(postId: UUID) {
+        val post = postRepository.findById(postId) ?: return
+        val platformPosts = platformPostRepository.findByPostId(postId)
 
-        val processingItem = queueItem.copy(
-            status = QueueStatus.PROCESSING,
-            lastAttemptAt = Instant.now(),
-        )
-        publishingQueueRepository.update(processingItem)
+        for (pp in platformPosts) {
+            if (pp.status != PlatformPostStatus.SCHEDULED) continue
 
-        try {
-            val post = postRepository.findById(queueItem.postId)
-                ?: throw IllegalArgumentException("Post not found: ${queueItem.postId}")
-            val updatedPost = post.copy(
-                status = PostStatus.PUBLISHED,
-                publishedAt = Instant.now(),
-                updatedAt = Instant.now(),
-            )
-            postRepository.update(updatedPost)
-            val completedItem = processingItem.copy(status = QueueStatus.COMPLETED)
-            publishingQueueRepository.update(completedItem)
-        } catch (e: Exception) {
-            val attempts = queueItem.attempts + 1
-            if (attempts >= MAX_ATTEMPTS) {
-                val failedItem = processingItem.copy(
-                    status = QueueStatus.FAILED,
-                    attempts = attempts,
-                    errorMessage = e.message,
+            val now = Instant.now()
+            val newRetryCount = pp.retryCount + 1
+            if (newRetryCount >= MAX_ATTEMPTS) {
+                val failed = pp.copy(
+                    status = PlatformPostStatus.FAILED,
+                    retryCount = newRetryCount,
+                    publishError = "Max retries exceeded",
+                    updatedAt = now,
                 )
-                publishingQueueRepository.update(failedItem)
+                platformPostRepository.update(failed)
             } else {
-                val retryItem = processingItem.copy(
-                    attempts = attempts,
-                    status = QueueStatus.PENDING,
-                    errorMessage = e.message,
+                val retry = pp.copy(
+                    retryCount = newRetryCount,
+                    updatedAt = now,
                 )
-                publishingQueueRepository.update(retryItem)
+                platformPostRepository.update(retry)
             }
         }
     }

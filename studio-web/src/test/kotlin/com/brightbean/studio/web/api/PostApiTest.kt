@@ -3,10 +3,7 @@ package com.brightbean.studio.web.api
 import com.brightbean.studio.application.usecase.CreatePostUseCase
 import com.brightbean.studio.application.usecase.PublishPostUseCase
 import com.brightbean.studio.application.usecase.SchedulePostUseCase
-import com.brightbean.studio.domain.model.PlatformType
 import com.brightbean.studio.domain.model.Post
-import com.brightbean.studio.domain.model.PostStatus
-import com.brightbean.studio.domain.model.Tag
 import com.brightbean.studio.domain.repository.PostRepository
 import com.brightbean.studio.web.server.Middleware
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -91,14 +88,14 @@ class PostApiTest {
             id = UUID.randomUUID(),
             workspaceId = workspaceId,
             authorId = authorId,
-            content = "Test content 1",
-            platforms = listOf(PlatformType.FACEBOOK),
-            categoryId = null,
+            title = "",
+            caption = "Test content 1",
+            firstComment = "",
+            internalNotes = "",
             tags = emptyList(),
-            status = PostStatus.DRAFT,
+            categoryId = null,
             scheduledAt = null,
             publishedAt = null,
-            mediaIds = emptyList(),
             createdAt = Instant.now(),
             updatedAt = Instant.now(),
         )
@@ -106,14 +103,14 @@ class PostApiTest {
             id = UUID.randomUUID(),
             workspaceId = workspaceId,
             authorId = authorId,
-            content = "Test content 2",
-            platforms = listOf(PlatformType.INSTAGRAM),
-            categoryId = null,
+            title = "",
+            caption = "Test content 2",
+            firstComment = "",
+            internalNotes = "",
             tags = emptyList(),
-            status = PostStatus.SCHEDULED,
+            categoryId = null,
             scheduledAt = Instant.now(),
             publishedAt = null,
-            mediaIds = emptyList(),
             createdAt = Instant.now(),
             updatedAt = Instant.now(),
         )
@@ -135,50 +132,6 @@ class PostApiTest {
             assertEquals(200, response.statusCode())
             assertTrue(response.body().contains("\"items\""))
             assertTrue(response.body().contains("\"totalCount\":2"))
-        } finally {
-            server.stop(0)
-        }
-    }
-
-    @Test
-    fun `list posts with status filter`() {
-        val postRepository = Mockito.mock(PostRepository::class.java)
-        val createPostUseCase = Mockito.mock(CreatePostUseCase::class.java)
-        val schedulePostUseCase = Mockito.mock(SchedulePostUseCase::class.java)
-        val publishPostUseCase = Mockito.mock(PublishPostUseCase::class.java)
-
-        val draftPost = Post(
-            id = UUID.randomUUID(),
-            workspaceId = workspaceId,
-            authorId = authorId,
-            content = "Draft content",
-            platforms = listOf(PlatformType.FACEBOOK),
-            categoryId = null,
-            tags = emptyList(),
-            status = PostStatus.DRAFT,
-            scheduledAt = null,
-            publishedAt = null,
-            mediaIds = emptyList(),
-            createdAt = Instant.now(),
-            updatedAt = Instant.now(),
-        )
-
-        Mockito.doReturn(listOf(draftPost)).`when`(postRepository).findByWorkspaceId(workspaceId)
-
-        val postApi = PostApi(createPostUseCase, schedulePostUseCase, publishPostUseCase, postRepository)
-        val handler = Middleware.corsMiddleware(listOf("*"), postApi)
-        val server = createTestServer(handler)
-        server.start()
-        try {
-            val client = HttpClient.newHttpClient()
-            val request = HttpRequest.newBuilder()
-                .uri(URI("http://localhost:8087/api/workspaces/${workspaceId}/posts?status=DRAFT"))
-                .GET()
-                .build()
-            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
-
-            assertEquals(200, response.statusCode())
-            assertTrue(response.body().contains("\"status\":\"DRAFT\""))
         } finally {
             server.stop(0)
         }
@@ -214,7 +167,7 @@ class PostApiTest {
             val response = client.send(request, HttpResponse.BodyHandlers.ofString())
 
             assertEquals(201, response.statusCode())
-            assertTrue(response.body().contains("\"content\":\"New post content\""))
+            assertTrue(response.body().contains("\"caption\":\"New post content\""))
         } finally {
             server.stop(0)
         }
@@ -232,14 +185,14 @@ class PostApiTest {
             id = postId,
             workspaceId = workspaceId,
             authorId = authorId,
-            content = "Published content",
-            platforms = listOf(PlatformType.FACEBOOK),
-            categoryId = null,
+            title = "",
+            caption = "Published content",
+            firstComment = "",
+            internalNotes = "",
             tags = emptyList(),
-            status = PostStatus.PUBLISHED,
+            categoryId = null,
             scheduledAt = null,
             publishedAt = Instant.now(),
-            mediaIds = emptyList(),
             createdAt = Instant.now(),
             updatedAt = Instant.now(),
         )
@@ -260,50 +213,37 @@ class PostApiTest {
             val response = client.send(request, HttpResponse.BodyHandlers.ofString())
 
             assertEquals(200, response.statusCode())
-            assertTrue(response.body().contains("\"status\":\"PUBLISHED\""))
         } finally {
             server.stop(0)
         }
     }
 
     @Test
-    fun `schedule post returns 200 with queue info`() {
+    fun `schedule post returns 200 with post info`() {
         val postRepository = Mockito.mock(PostRepository::class.java)
         val createPostUseCase = Mockito.mock(CreatePostUseCase::class.java)
         val schedulePostUseCase = Mockito.mock(SchedulePostUseCase::class.java)
         val publishPostUseCase = Mockito.mock(PublishPostUseCase::class.java)
 
         val postId = UUID.randomUUID()
-        val queueId = UUID.randomUUID()
         val scheduledFor = Instant.parse("2025-12-01T10:00:00Z")
         val scheduledPost = Post(
             id = postId,
             workspaceId = workspaceId,
             authorId = authorId,
-            content = "Scheduled content",
-            platforms = listOf(PlatformType.FACEBOOK),
-            categoryId = null,
+            title = "",
+            caption = "Scheduled content",
+            firstComment = "",
+            internalNotes = "",
             tags = emptyList(),
-            status = PostStatus.SCHEDULED,
+            categoryId = null,
             scheduledAt = scheduledFor,
             publishedAt = null,
-            mediaIds = emptyList(),
             createdAt = Instant.now(),
             updatedAt = Instant.now(),
         )
-        val queue = com.brightbean.studio.domain.model.PublishingQueue(
-            id = queueId,
-            workspaceId = workspaceId,
-            postId = postId,
-            scheduledFor = scheduledFor,
-            attempts = 0,
-            lastAttemptAt = null,
-            status = com.brightbean.studio.domain.model.QueueStatus.PENDING,
-            errorMessage = null,
-        )
 
-        Mockito.doReturn(queue).`when`(schedulePostUseCase).execute(postId, scheduledFor)
-        Mockito.doReturn(scheduledPost).`when`(postRepository).findById(postId)
+        Mockito.doReturn(scheduledPost).`when`(schedulePostUseCase).execute(postId, scheduledFor)
 
         val postApi = PostApi(createPostUseCase, schedulePostUseCase, publishPostUseCase, postRepository)
         val handler = Middleware.corsMiddleware(listOf("*"), postApi)
@@ -324,7 +264,7 @@ class PostApiTest {
             val response = client.send(request, HttpResponse.BodyHandlers.ofString())
 
             assertEquals(200, response.statusCode())
-            assertTrue(response.body().contains("\"queueId\":\"$queueId\""))
+            assertTrue(response.body().contains("\"postId\":\"$postId\""))
         } finally {
             server.stop(0)
         }
