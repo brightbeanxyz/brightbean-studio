@@ -2,6 +2,7 @@ package com.brightbean.studio.application.di
 
 import com.brightbean.studio.application.auth.RbacResolver
 import com.brightbean.studio.application.usecase.AuthUseCases
+import com.brightbean.studio.application.usecase.CheckSocialAccountHealthUseCase
 import com.brightbean.studio.application.usecase.ConnectSocialAccountUseCase
 import com.brightbean.studio.application.usecase.CreateCustomRoleUseCase
 import com.brightbean.studio.application.usecase.CreateOrganizationUseCase
@@ -11,6 +12,7 @@ import com.brightbean.studio.application.usecase.CreateInvitationUseCase
 import com.brightbean.studio.application.usecase.CreateWorkspaceUseCase
 import com.brightbean.studio.application.usecase.DeleteCustomRoleUseCase
 import com.brightbean.studio.application.usecase.PublishPostUseCase
+import com.brightbean.studio.application.usecase.ReconnectSocialAccountUseCase
 import com.brightbean.studio.application.usecase.RemoveMemberUseCase
 import com.brightbean.studio.application.usecase.UpdateMemberOrgRoleUseCase
 import com.brightbean.studio.application.usecase.UpdateWorkspaceAssignmentsUseCase
@@ -45,4 +47,9 @@ val applicationModule = module {
     single { UpdateMemberOrgRoleUseCase(get()) }
     single { RemoveMemberUseCase(get(), get(), get()) }
     single { UpdateWorkspaceAssignmentsUseCase(get(), get(), get()) }
+    single { CheckSocialAccountHealthUseCase(get(), get(), get()) }
+    single {
+        val encryptionService = get<EncryptionService>()
+        ReconnectSocialAccountUseCase(get(), get(), get(), { encryptionService.encrypt(it) })
+    }
 }
