@@ -17,6 +17,10 @@ import com.brightbean.studio.web.api.PlatformConfigApi
 import com.brightbean.studio.web.api.PlatformCredentialApi
 import com.brightbean.studio.web.api.PlatformPostTransitionApi
 import com.brightbean.studio.web.api.PostApi
+import com.brightbean.studio.web.api.AnalyticsApi
+import com.brightbean.studio.web.api.ApiKeyApi
+import com.brightbean.studio.web.api.ClientPortalApi
+import com.brightbean.studio.web.api.OnboardingApi
 import com.brightbean.studio.web.api.SettingsApi
 import com.brightbean.studio.web.api.SocialAccountApi
 import com.brightbean.studio.web.api.TemplateApi
@@ -45,4 +49,8 @@ val webModule = module {
     single { ApprovalApi(get(), get()) }
     single { NotificationApi(get(), get()) }
     single { SettingsApi(get()) }
+    single { AnalyticsApi(get()) }
+    single { ClientPortalApi(get()) }
+    single { OnboardingApi(get()) }
+    single { ApiKeyApi(get()) }
 }

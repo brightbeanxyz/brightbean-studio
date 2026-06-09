@@ -40,7 +40,12 @@ import com.brightbean.studio.application.usecase.CustomCalendarEventUseCases
 import com.brightbean.studio.application.usecase.ReschedulePostUseCase
 import com.brightbean.studio.application.usecase.PostTemplateUseCases
 import com.brightbean.studio.application.usecase.FeedUseCases
+import com.brightbean.studio.application.usecase.AnalyticsUseCases
+import com.brightbean.studio.application.usecase.ApiKeyUseCases
+import com.brightbean.studio.application.usecase.ClientPortalUseCases
 import com.brightbean.studio.application.usecase.MediaLibraryUseCases
+import com.brightbean.studio.application.usecase.OnboardingUseCases
+import com.brightbean.studio.infrastructure.config.StudioConfig
 import com.brightbean.studio.infrastructure.security.EncryptionService
 import org.koin.dsl.module
 
@@ -92,4 +97,8 @@ val applicationModule = module {
     single { NotificationEngine(get(), get(), get(), get()) }
     single { NotificationUseCases(get(), get(), get()) }
     single { SettingsUseCases(get(), get()) }
+    single { AnalyticsUseCases(get(), get()) }
+    single { ClientPortalUseCases(get()) }
+    single { OnboardingUseCases(get(), get(), get()) }
+    single { ApiKeyUseCases(get(), get(), get<StudioConfig>().secretKey) }
 }

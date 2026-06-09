@@ -20,6 +20,10 @@ import com.brightbean.studio.web.api.OrganizationApi
 import com.brightbean.studio.web.api.PlatformConfigApi
 import com.brightbean.studio.web.api.PlatformCredentialApi
 import com.brightbean.studio.web.api.PlatformPostTransitionApi
+import com.brightbean.studio.web.api.AnalyticsApi
+import com.brightbean.studio.web.api.ApiKeyApi
+import com.brightbean.studio.web.api.ClientPortalApi
+import com.brightbean.studio.web.api.OnboardingApi
 import com.brightbean.studio.web.api.PostApi
 import com.brightbean.studio.web.api.SettingsApi
 import com.brightbean.studio.web.api.SocialAccountApi
@@ -59,18 +63,22 @@ class BrightBeanServer(
     private val approvalApi: ApprovalApi by inject()
     private val notificationApi: NotificationApi by inject()
     private val settingsApi: SettingsApi by inject()
+    private val analyticsApi: AnalyticsApi by inject()
+    private val clientPortalApi: ClientPortalApi by inject()
+    private val onboardingApi: OnboardingApi by inject()
+    private val apiKeyApi: ApiKeyApi by inject()
 
     fun start() {
         startKoin {
             modules(infrastructureModule, applicationModule, webModule)
         }
 
-        val publicPaths = setOf("/health", "/api/auth")
+        val publicPaths = setOf("/health", "/api/auth", "/api/portal", "/api/connect")
         val router = Router(
             routes = mapOf(
                 "/health" to HealthHandler(),
                 "/api/auth" to authApi,
-                "/api" to ApiDispatcher(postApi, socialAccountApi, workspaceApi, invitationApi, memberApi, organizationApi, customRoleApi, platformConfigApi, platformCredentialApi, categoryApi, ideaApi, templateApi, feedApi, calendarApi, platformPostTransitionApi, mediaApi, inboxApi, approvalApi, notificationApi, settingsApi),
+                "/api" to ApiDispatcher(postApi, socialAccountApi, workspaceApi, invitationApi, memberApi, organizationApi, customRoleApi, platformConfigApi, platformCredentialApi, categoryApi, ideaApi, templateApi, feedApi, calendarApi, platformPostTransitionApi, mediaApi, inboxApi, approvalApi, notificationApi, settingsApi, analyticsApi, clientPortalApi, onboardingApi, apiKeyApi),
             )
         )
         val authed = RBACMiddleware(authUseCases, rbacResolver, publicPaths, router)

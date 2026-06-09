@@ -49,6 +49,14 @@ import com.brightbean.studio.domain.repository.MediaAssetVersionRepository
 import com.brightbean.studio.domain.repository.MediaFolderRepository
 import com.brightbean.studio.domain.repository.WorkspaceMembershipRepository
 import com.brightbean.studio.domain.repository.WorkspaceRepository
+import com.brightbean.studio.domain.repository.AccountInsightsSnapshotRepository
+import com.brightbean.studio.domain.repository.ApiKeyAuditLogRepository
+import com.brightbean.studio.domain.repository.ApiKeyRepository
+import com.brightbean.studio.domain.repository.ConnectionLinkRepository
+import com.brightbean.studio.domain.repository.ConnectionLinkUsageRepository
+import com.brightbean.studio.domain.repository.MagicLinkTokenRepository
+import com.brightbean.studio.domain.repository.OnboardingChecklistRepository
+import com.brightbean.studio.domain.repository.PostInsightsSnapshotRepository
 import com.brightbean.studio.domain.repository.WorkspaceSettingRepository
 import com.brightbean.studio.infrastructure.config.StudioConfig
 import com.brightbean.studio.infrastructure.db.JDBIApprovalActionRepository
@@ -69,6 +77,14 @@ import com.brightbean.studio.infrastructure.db.JDBIOAuthConnectionRepository
 import com.brightbean.studio.infrastructure.db.JDBIOrgMembershipRepository
 import com.brightbean.studio.infrastructure.db.JDBIOrgSettingRepository
 import com.brightbean.studio.infrastructure.db.JDBIOrganizationRepository
+import com.brightbean.studio.infrastructure.db.JDBIAccountInsightsSnapshotRepository
+import com.brightbean.studio.infrastructure.db.JDBIApiKeyAuditLogRepository
+import com.brightbean.studio.infrastructure.db.JDBIApiKeyRepository
+import com.brightbean.studio.infrastructure.db.JDBIConnectionLinkRepository
+import com.brightbean.studio.infrastructure.db.JDBIConnectionLinkUsageRepository
+import com.brightbean.studio.infrastructure.db.JDBIOnboardingChecklistRepository
+import com.brightbean.studio.infrastructure.db.JDBIMagicLinkTokenRepository
+import com.brightbean.studio.infrastructure.db.JDBIPostInsightsSnapshotRepository
 import com.brightbean.studio.infrastructure.db.JDBIAnalyticsPlatformConfigRepository
 import com.brightbean.studio.infrastructure.db.JDBIMediaAssetRepository
 import com.brightbean.studio.infrastructure.db.JDBIMediaAssetVersionRepository
@@ -162,6 +178,14 @@ val infrastructureModule = module {
     single<MediaFolderRepository> { JDBIMediaFolderRepository(get()) }
     single<MediaAssetRepository> { JDBIMediaAssetRepository(get()) }
     single<MediaAssetVersionRepository> { JDBIMediaAssetVersionRepository(get()) }
+    single<AccountInsightsSnapshotRepository> { JDBIAccountInsightsSnapshotRepository(get()) }
+    single<PostInsightsSnapshotRepository> { JDBIPostInsightsSnapshotRepository(get()) }
+    single<MagicLinkTokenRepository> { JDBIMagicLinkTokenRepository(get()) }
+    single<ConnectionLinkRepository> { JDBIConnectionLinkRepository(get()) }
+    single<ConnectionLinkUsageRepository> { JDBIConnectionLinkUsageRepository(get()) }
+    single<OnboardingChecklistRepository> { JDBIOnboardingChecklistRepository(get()) }
+    single<ApiKeyRepository> { JDBIApiKeyRepository(get()) }
+    single<ApiKeyAuditLogRepository> { JDBIApiKeyAuditLogRepository(get()) }
     single { ProviderRegistry.from(emptyList()) }
 }
 

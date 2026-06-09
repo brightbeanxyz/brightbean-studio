@@ -15,6 +15,10 @@ import com.brightbean.studio.web.api.OrganizationApi
 import com.brightbean.studio.web.api.PlatformConfigApi
 import com.brightbean.studio.web.api.PlatformCredentialApi
 import com.brightbean.studio.web.api.PlatformPostTransitionApi
+import com.brightbean.studio.web.api.AnalyticsApi
+import com.brightbean.studio.web.api.ApiKeyApi
+import com.brightbean.studio.web.api.ClientPortalApi
+import com.brightbean.studio.web.api.OnboardingApi
 import com.brightbean.studio.web.api.PostApi
 import com.brightbean.studio.web.api.SettingsApi
 import com.brightbean.studio.web.api.SocialAccountApi
@@ -44,6 +48,10 @@ class ApiDispatcher(
     private val approvalApi: ApprovalApi,
     private val notificationApi: NotificationApi,
     private val settingsApi: SettingsApi,
+    private val analyticsApi: AnalyticsApi,
+    private val clientPortalApi: ClientPortalApi,
+    private val onboardingApi: OnboardingApi,
+    private val apiKeyApi: ApiKeyApi,
 ) : HttpHandler {
     private val postPattern = Regex("^/api/workspaces/[^/]+/posts|^/api/posts/[^/]+/(publish|schedule)")
     private val transitionPattern = Regex("^/api/workspaces/[^/]+/posts/[^/]+/platform-posts")
@@ -63,11 +71,19 @@ class ApiDispatcher(
     private val orgSettingsPattern = Regex("^/api/orgs/[^/]+/settings")
     private val platformPattern = Regex("^/api/platforms")
     private val notificationPattern = Regex("^/api/notifications")
+    private val analyticsPattern = Regex("^/api/workspaces/[^/]+/analytics")
+    private val portalPattern = Regex("^/api/portal")
+    private val connectPattern = Regex("^/api/connect")
+    private val connectionLinkPattern = Regex("^/api/workspaces/[^/]+/connection-links")
+    private val checklistPattern = Regex("^/api/workspaces/[^/]+/checklist")
+    private val apiKeyPattern = Regex("^/api/orgs/[^/]+/api-keys")
 
     override fun handle(exchange: HttpExchange) {
         val path = exchange.requestURI.path
         when {
             notificationPattern.containsMatchIn(path) -> notificationApi.handle(exchange)
+            portalPattern.containsMatchIn(path) -> clientPortalApi.handle(exchange)
+            connectPattern.containsMatchIn(path) -> onboardingApi.handle(exchange)
             transitionPattern.containsMatchIn(path) -> platformPostTransitionApi.handle(exchange)
             postPattern.containsMatchIn(path) -> postApi.handle(exchange)
             categoryPattern.containsMatchIn(path) -> categoryApi.handle(exchange)
@@ -82,8 +98,13 @@ class ApiDispatcher(
             calendarPattern.containsMatchIn(path) -> calendarApi.handle(exchange)
             transitionPattern.containsMatchIn(path) -> platformPostTransitionApi.handle(exchange)
             path.startsWith("/api/workspaces") -> {
-                if (workspaceSettingsPattern.containsMatchIn(path)) settingsApi.handle(exchange)
-                else workspaceApi.handle(exchange)
+                when {
+                    workspaceSettingsPattern.containsMatchIn(path) -> settingsApi.handle(exchange)
+                    analyticsPattern.containsMatchIn(path) -> analyticsApi.handle(exchange)
+                    connectionLinkPattern.containsMatchIn(path) -> onboardingApi.handle(exchange)
+                    checklistPattern.containsMatchIn(path) -> onboardingApi.handle(exchange)
+                    else -> workspaceApi.handle(exchange)
+                }
             }
             path.startsWith("/api/workspaces/[^/]+/approvals") -> approvalApi.handle(exchange)
             invitationAcceptPattern.containsMatchIn(path) -> invitationApi.handle(exchange)
@@ -93,10 +114,10 @@ class ApiDispatcher(
             orgSettingsPattern.containsMatchIn(path) -> settingsApi.handle(exchange)
             platformPattern.containsMatchIn(path) -> platformConfigApi.handle(exchange)
             path.startsWith("/api/orgs") -> {
-                if (path.contains("/credentials")) {
-                    platformCredentialApi.handle(exchange)
-                } else {
-                    organizationApi.handle(exchange)
+                when {
+                    path.contains("/credentials") -> platformCredentialApi.handle(exchange)
+                    apiKeyPattern.containsMatchIn(path) -> apiKeyApi.handle(exchange)
+                    else -> organizationApi.handle(exchange)
                 }
             }
             else -> NotFoundHandler().handle(exchange)
