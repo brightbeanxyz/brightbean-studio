@@ -1,0 +1,22 @@
+{% comment %}
+  Returned by ``@intelligence_subscription_required`` when a tool POST
+  is attempted without an active subscription. Renders inside the
+  result panel (HTMX swap target) so users see the prompt right where
+  they clicked. Status 402 on the response, telegraphs "payment
+  required" to clients.
+{% endcomment %}
+<div class="flex flex-col items-center justify-center py-8 text-center">
+    <div class="w-12 h-12 rounded-full flex items-center justify-center mb-3"
+         style="background: var(--primary-soft, #fff7ed); color: var(--primary);">
+        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+    </div>
+    <div class="text-sm font-semibold text-stone-900">Activate Intelligence to use this</div>
+    <p class="mt-1 text-xs text-stone-500 max-w-[260px] leading-relaxed">
+        You're previewing the playground. Subscribe to score, benchmark, and pull content gaps for real.
+    </p>
+    <a href="{% url 'intelligence:subscribe' org_id=organization.id %}"
+       class="intel-cta-primary intel-cta-primary--sm mt-4">
+        Activate Intelligence
+        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+    </a>
+</div>

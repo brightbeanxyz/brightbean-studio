@@ -15,7 +15,9 @@
     {% if workspaces %}
     <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-bottom: 24px;">
         {% for workspace in workspaces %}
-        <a href="{% url 'calendar:calendar' workspace_id=workspace.id %}" style="
+        <a href="{% url 'calendar:calendar' workspace_id=workspace.id %}"
+           class="card-hover-lift"
+           style="
             display: block;
             background: var(--surface-0);
             border: 1px solid var(--border);
@@ -23,7 +25,7 @@
             padding: 20px;
             text-decoration: none;
             transition: all var(--dur-base) var(--ease-out);
-        " onmouseover="this.style.boxShadow='var(--shadow-lg)';this.style.borderColor='transparent';this.style.transform='translateY(-2px)'" onmouseout="this.style.boxShadow='none';this.style.borderColor='var(--border)';this.style.transform='none'">
+        ">
             <div style="font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">{{ workspace.name }}</div>
             {% if workspace.description %}
             <div style="font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.6;">{{ workspace.description|truncatechars:80 }}</div>

@@ -59,10 +59,8 @@
   <!-- Actions -->
   <div class="col-span-1 flex justify-end">
     <button @click.stop
-            class="w-7 h-7 rounded-lg flex items-center justify-center transition-colors"
+            class="btn-icon-hover w-7 h-7 rounded-lg flex items-center justify-center"
             style="color: var(--text-ghost);"
-            onmouseenter="this.style.background='var(--surface-2)'; this.style.color='var(--text-primary)'"
-            onmouseleave="this.style.background='transparent'; this.style.color='var(--text-ghost)'"
             hx-post="{% url 'media_library:asset_star' workspace_id=workspace.id asset_id=asset.id %}"
             hx-swap="outerHTML"
             hx-target="closest div[class*='grid-cols-12']">

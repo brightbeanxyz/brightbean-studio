@@ -13,10 +13,8 @@
     <h3 class="text-base font-semibold mb-1" style="color: var(--text-primary, #1C1917);">No media matches your search</h3>
     <p class="text-sm mb-4" style="color: var(--text-secondary, #57534E);">Try adjusting your search terms or filters.</p>
     <a href="{% url 'media_library:index' workspace_id=workspace.id %}"
-       class="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-full border transition-colors"
-       style="border-color: var(--border, #E7E5E4); color: var(--text-secondary, #57534E);"
-       onmouseenter="this.style.background='var(--surface-1)'"
-       onmouseleave="this.style.background='transparent'">
+       class="btn-surface-1 inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-full border transition-colors"
+       style="border-color: var(--border, #E7E5E4); color: var(--text-secondary, #57534E);">
       Clear search
     </a>
   {% else %}

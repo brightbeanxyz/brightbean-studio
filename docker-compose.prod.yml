@@ -1,10 +1,25 @@
 services:
+  migrate:
+    build: .
+    command: python manage.py migrate --noinput
+    env_file:
+      - .env
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/brightbean
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   app:
     command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2
     volumes:
       - media_data:/app/media
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   worker:
@@ -12,6 +27,9 @@ services:
       - media_data:/app/media
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   postgres:
@@ -35,7 +53,8 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
     depends_on:
-      - postgres
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   caddy:

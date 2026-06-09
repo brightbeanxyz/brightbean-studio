@@ -3,6 +3,7 @@ import uuid
 from django.db import models
 
 from apps.common.managers import OrgScopedManager
+from apps.common.validators import validate_hex_color
 
 
 class Workspace(models.Model):
@@ -22,8 +23,8 @@ class Workspace(models.Model):
     icon = models.ImageField(upload_to="workspaces/icons/%Y/%m/", blank=True)
     description = models.CharField(max_length=500, blank=True, default="")
     timezone = models.CharField(max_length=63, blank=True, default="")
-    primary_color = models.CharField(max_length=7, blank=True, default="")
-    secondary_color = models.CharField(max_length=7, blank=True, default="")
+    primary_color = models.CharField(max_length=7, blank=True, default="", validators=[validate_hex_color])
+    secondary_color = models.CharField(max_length=7, blank=True, default="", validators=[validate_hex_color])
     default_hashtags = models.JSONField(default=list, blank=True)
     default_first_comment = models.TextField(blank=True, default="")
     approval_workflow_mode = models.CharField(

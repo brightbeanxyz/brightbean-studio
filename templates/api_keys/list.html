@@ -1,0 +1,81 @@
+{% extends "layouts/settings.html" %}
+{% block title %}API Keys - Settings - Brightbean{% endblock %}
+{% block content %}
+<div x-data="{ showIssueModal: false, showRevealModal: {% if reveal_token %}true{% else %}false{% endif %} }">
+    <div class="flex items-start justify-between mb-8 gap-6">
+        <div>
+            <h2 class="text-xl font-semibold" style="color: var(--text-primary);">API Keys</h2>
+            <p class="text-sm mt-1 max-w-xl" style="color: var(--text-tertiary);">
+                Used by AI agents and external scripts to act in your workspaces.
+                Each key can be scoped to one workspace and an explicit list of social accounts.
+            </p>
+        </div>
+        <button type="button"
+                @click="showIssueModal = true"
+                class="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-orange-600 bg-orange-50 border border-orange-200 rounded-full hover:bg-orange-100 hover:border-orange-300 active:bg-orange-100 transition-all duration-150 cursor-pointer whitespace-nowrap">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+            Issue new key
+        </button>
+    </div>
+
+    {# Flash messages — success / error from the issue + revoke flows. #}
+    {% if messages %}
+    <div class="mb-6 space-y-2">
+        {% for message in messages %}
+        <div class="rounded-lg px-4 py-3 text-sm"
+             style="background: var({% if message.tags == 'error' %}--error-soft, #FEE2E2{% else %}--surface-1, #F3F4F6{% endif %});
+                    color: var(--text-primary);
+                    border: 1px solid var({% if message.tags == 'error' %}--error-500, #EF4444{% else %}--border{% endif %});">
+            {{ message }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if revoked_count %}
+    <div class="flex justify-end mb-3 text-xs">
+        {% if show_all %}
+        <a href="{% url 'api_keys:list' %}" style="color: var(--text-tertiary);">Hide revoked keys</a>
+        {% else %}
+        <a href="?show=all" style="color: var(--text-tertiary);">Show {{ revoked_count }} revoked</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if rows %}
+    <div style="background: var(--surface-0); border: 1px solid var(--border); border-radius: var(--radius-xl);">
+        {% for row in rows %}
+        <div class="px-6 py-4{% if not forloop.last %} border-b" style="border-bottom: 1px solid var(--border);"{% else %}"{% endif %}>
+            {% include "api_keys/_key_row.html" with row=row %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="px-6 py-12 text-center rounded-xl" style="background: var(--surface-0); border: 1px solid var(--border);">
+        {% if revoked_count and not show_all %}
+        <p class="text-sm" style="color: var(--text-tertiary);">No active API keys.</p>
+        <p class="text-xs mt-2" style="color: var(--text-tertiary);">
+            <a href="?show=all" style="color: var(--text-secondary); text-decoration: underline;">Show {{ revoked_count }} revoked</a>
+            or click <strong>Issue new key</strong> to mint a new one.
+        </p>
+        {% else %}
+        <p class="text-sm" style="color: var(--text-tertiary);">No API keys issued yet.</p>
+        <p class="text-xs mt-2" style="color: var(--text-tertiary);">
+            Click <strong>Issue new key</strong> to mint one for an agent.
+        </p>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# ---- Issuance modal ---------------------------------------------- #}
+    {% include "api_keys/_issue_modal.html" %}
+
+    {% comment %}
+    One-time token reveal modal (rendered server-side when a key
+    was just issued; ``showRevealModal`` is initialised above).
+    {% endcomment %}
+    {% if reveal_token %}
+        {% include "api_keys/_token_reveal.html" with token=reveal_token key_name=reveal_key_name %}
+    {% endif %}
+</div>
+{% endblock %}

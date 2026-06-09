@@ -22,6 +22,7 @@
                 <div class="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center
                     {% if value == 'facebook' %}bg-blue-50 text-blue-600
                     {% elif value == 'instagram' %}bg-gradient-to-br from-purple-50 to-pink-50 text-pink-600
+                    {% elif value == 'instagram_login' %}bg-gradient-to-br from-purple-50 to-pink-50 text-pink-600
                     {% elif value == 'linkedin_personal' %}bg-blue-50 text-blue-700
                     {% elif value == 'linkedin_company' %}bg-blue-50 text-blue-700
                     {% elif value == 'tiktok' %}bg-stone-900 text-white
@@ -38,8 +39,9 @@
                 <div class="flex-1 min-w-0">
                     <h3 class="text-sm font-semibold text-stone-900">{{ label }}</h3>
                     <p class="text-xs text-stone-400 mt-0.5">
-                        {% if value == 'facebook' %}Pages &amp; Groups
-                        {% elif value == 'instagram' %}Business &amp; Creator
+                        {% if value == 'facebook' %}Your Pages &amp; Groups
+                        {% elif value == 'instagram' %}For accounts linked to a Facebook Page
+                        {% elif value == 'instagram_login' %}Sign in with Instagram &middot; no Facebook needed
                         {% elif value == 'linkedin_personal' %}Personal profile
                         {% elif value == 'linkedin_company' %}Company pages
                         {% elif value == 'tiktok' %}Video content

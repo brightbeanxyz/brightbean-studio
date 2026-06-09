@@ -26,7 +26,7 @@ def create_default_queue_and_slots(social_account):
 
     queue = Queue.objects.create(
         workspace=social_account.workspace,
-        name=f"{social_account.account_name} Queue",
+        name=f"{social_account.account_name or social_account.account_handle} Queue",
         social_account=social_account,
     )
 

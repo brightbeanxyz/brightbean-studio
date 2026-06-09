@@ -1,5 +1,10 @@
 {% comment %}Version history list. Expects: asset, versions, workspace{% endcomment %}
 
+<style>
+  .ml-version-restore { transition: background var(--dur-fast, 150ms) ease; }
+  .ml-version-restore:hover { background: var(--primary-soft) !important; }
+</style>
+
 {% if versions %}
 <div class="space-y-2">
   {% for version in versions %}
@@ -31,10 +36,8 @@
     </div>
 
     {% if asset.current_version_id != version.id and not asset.is_shared %}
-    <button class="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0 transition-colors"
+    <button class="text-xs font-semibold px-2.5 py-1 rounded-full flex-shrink-0 ml-version-restore"
             style="color: var(--primary, #F97316);"
-            onmouseenter="this.style.background='var(--primary-soft)'"
-            onmouseleave="this.style.background='transparent'"
             hx-post="{% url 'media_library:version_restore' workspace_id=workspace.id asset_id=asset.id version_id=version.id %}"
             hx-target="#version-list-{{ asset.id }}"
             hx-confirm="Restore version {{ version.version_number }}? This will create a new version.">

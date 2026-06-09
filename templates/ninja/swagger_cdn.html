@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link type="text/css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+    <link rel="icon" href="https://django-ninja.dev/img/favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="https://django-ninja.dev/img/favicon.png" type="image/png">
+    <title>{{ api.title }}</title>
+</head>
+<body>
+    <div id="swagger-ui">
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script type="application/json" id="swagger-settings" nonce="{{ request.csp_nonce }}">
+        {{ swagger_settings | safe }}
+    </script>
+    <script nonce="{{ request.csp_nonce }}">
+
+        const configJson = document.getElementById("swagger-settings").textContent;
+        const configObject = JSON.parse(configJson);
+
+        configObject.dom_id = "#swagger-ui";
+        configObject.presets = [
+            SwaggerUIBundle.presets.apis,
+            SwaggerUIBundle.SwaggerUIStandalonePreset
+        ];
+    {% if add_csrf %}
+        configObject.requestInterceptor = (req) => {
+            req.headers['X-CSRFToken'] = "{{csrf_token}}";
+            return req;
+        };
+    {% endif %}
+
+        const ui = SwaggerUIBundle(configObject);
+
+    </script>
+</body>
+</html>

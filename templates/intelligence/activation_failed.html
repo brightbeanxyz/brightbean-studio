@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block page_title %}Activation failed{% endblock %}
+
+{% block extra_head %}
+{% include "intelligence/_cta_styles.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="max-w-xl mx-auto py-16 px-4 text-center">
+  <div class="mx-auto mb-5 w-12 h-12 rounded-full flex items-center justify-center"
+       style="background: var(--primary-soft, #fff7ed); color: var(--primary); border: 1px solid var(--primary-muted, #fed7aa);">
+    <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+  </div>
+
+  <h1 class="text-xl font-semibold text-stone-900 mb-2">We couldn't activate Intelligence</h1>
+  <p class="text-sm text-stone-600 mb-6">{{ message }}</p>
+  {% if code %}
+    <p class="text-xs text-stone-400 font-mono mb-6">code: {{ code }}</p>
+  {% endif %}
+
+  {% comment %}
+    Most failure codes here are recoverable by starting a fresh checkout
+    (wrong_mode, unknown_checkout_attempt, session_not_found, no_line_items,
+    missing_subscription_id, unknown_plan, no_pending_activation,
+    session_id_mismatch, invalid_token, token_deployment_mismatch,
+    token_expired, token_already_consumed). For the rare codes that need a
+    human (price_not_allowlisted, unmapped_price), the support mailto below
+    is the right next step.
+  {% endcomment %}
+  {% if organization %}
+  <div class="flex items-center justify-center gap-3 flex-wrap">
+    <a href="{% url 'intelligence:subscribe' org_id=organization.id %}" class="intel-cta-primary">
+      Start a new checkout
+      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+    </a>
+    <a href="{% url 'intelligence:playground' org_id=organization.id %}" class="intel-cta-text-link">
+      Back to Intelligence
+    </a>
+  </div>
+  {% endif %}
+
+  <p class="text-xs text-stone-500 mt-8">
+    If Stripe charged you and you don't see your subscription, contact
+    <a href="mailto:support@brightbean.xyz"
+       class="text-orange-600 hover:text-orange-700 cursor-pointer">support@brightbean.xyz</a>.
+  </p>
+</div>
+{% endblock %}

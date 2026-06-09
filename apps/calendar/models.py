@@ -6,6 +6,7 @@ from django.conf import settings
 from django.db import models
 
 from apps.common.managers import WorkspaceScopedManager
+from apps.common.validators import validate_hex_color
 
 
 class PostingSlot(models.Model):
@@ -188,6 +189,7 @@ class CustomCalendarEvent(models.Model):
         max_length=7,
         default="#3B82F6",
         help_text="Hex color for the event bar.",
+        validators=[validate_hex_color],
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

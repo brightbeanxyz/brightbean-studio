@@ -4,7 +4,7 @@ import json
 
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from apps.approvals import comments as comment_service
 from apps.approvals import services as approval_services
@@ -12,22 +12,39 @@ from apps.approvals.models import ApprovalAction
 from apps.composer.models import Post
 
 from .decorators import portal_auth_required
-from .services import create_portal_session, verify_magic_link
+from .services import consume_magic_link, create_portal_session, peek_magic_link
 
 # ---------------------------------------------------------------------------
 # Magic Link Entry
 # ---------------------------------------------------------------------------
 
 
+@require_http_methods(["GET", "POST"])
 def magic_link_entry(request, token):
-    """Verify magic link token, create portal session, redirect to dashboard."""
-    user, workspace, is_valid = verify_magic_link(token)
+    """Confirm and consume a magic link.
 
-    if not is_valid:
+    GET renders a confirmation page without consuming the token, so email link
+    scanners that prefetch the URL cannot burn the one-time token. POST consumes
+    the token, creates the portal session, and redirects to the dashboard.
+    """
+    if request.method == "POST":
+        user, workspace, is_valid = consume_magic_link(token)
+        if not is_valid:
+            return redirect("client_portal:magic_link_expired")
+        create_portal_session(request, user, workspace)
+        return redirect("client_portal:dashboard")
+
+    magic_token = peek_magic_link(token)
+    if magic_token is None:
         return redirect("client_portal:magic_link_expired")
-
-    create_portal_session(request, user, workspace)
-    return redirect("client_portal:dashboard")
+    return render(
+        request,
+        "client_portal/magic_link_confirm.html",
+        {
+            "token": token,
+            "workspace": magic_token.workspace,
+        },
+    )
 
 
 def magic_link_expired(request):

@@ -1,0 +1,57 @@
+<div id="intel-panel-video-hook" class="intel-panel mt-6 grid-cols-1 gap-6 lg:grid-cols-2">
+    <div class="rounded-xl border border-stone-200 bg-white shadow-sm">
+        <div class="flex items-center justify-between border-b border-stone-100 px-5 py-3.5">
+            <h2 class="text-sm font-semibold text-stone-900">Score video hook</h2>
+            <span class="inline-flex items-center rounded-md bg-stone-100 px-2 py-0.5 text-[11px] font-mono text-stone-600">10 credits</span>
+        </div>
+        <div class="p-5">
+            <p class="text-xs text-stone-500 mb-5 leading-relaxed">
+                Analyze the first ~6 seconds of a YouTube video for hook quality, archetype, and improvement suggestions.
+            </p>
+
+            <form class="intel-form space-y-5"
+                  hx-post="{% url 'intelligence:score-video-hook' org_id=organization.id %}"
+                  hx-target="#video-hook-result"
+                  hx-swap="innerHTML">
+                {% csrf_token %}
+                <div>
+                    <label for="vh-url" class="intel-label">YouTube URL</label>
+                    <input type="url" name="youtube_url" id="vh-url" required maxlength="1024"
+                           placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+                           value="{% if is_preview %}{{ preview_inputs.score_video_hook.youtube_url }}{% endif %}"
+                           class="intel-input">
+                    <p class="intel-helper">Accepts <code class="font-mono text-[11px]">watch?v=…</code>, <code class="font-mono text-[11px]">youtu.be/…</code>, <code class="font-mono text-[11px]">shorts/…</code>, or <code class="font-mono text-[11px]">embed/…</code>.</p>
+                </div>
+                <div>
+                    <button type="submit" class="intel-submit"{% if is_preview %} disabled aria-disabled="true"{% endif %}>
+                        <svg class="intel-submit-icon h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>
+                        <svg class="intel-submit-spinner hidden h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+                        <span class="intel-submit-label">Analyze hook</span>
+                        <span class="intel-submit-loading hidden">Analyzing…</span>
+                    </button>
+                    {% if is_preview %}
+                    <p class="intel-activate-note">
+                        {% if can_manage_billing %}<a href="{% url 'intelligence:subscribe' org_id=organization.id %}">Activate Intelligence</a> to analyze your own video hooks.{% else %}Ask an admin to activate Intelligence to analyze your own video hooks.{% endif %}
+                    </p>
+                    {% else %}
+                    <p class="mt-2 text-[11px] text-stone-400">First call on a video can take 25–29 s. Cache hits return instantly.</p>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="rounded-xl border border-stone-200 bg-white shadow-sm">
+        <div class="border-b border-stone-100 px-5 py-3.5">
+            <h2 class="text-sm font-semibold text-stone-900">Result</h2>
+        </div>
+        <div id="video-hook-result" class="p-5 min-h-[220px]">
+            {% if is_preview %}
+                {% include "intelligence/_preview_badge.html" %}
+                {% include "intelligence/_score_video_hook_result.html" with result=preview_results.score_video_hook %}
+            {% else %}
+                {% include "intelligence/_panel_empty_state.html" with hint="Submit a URL to score the first 6 seconds." %}
+            {% endif %}
+        </div>
+    </div>
+</div>

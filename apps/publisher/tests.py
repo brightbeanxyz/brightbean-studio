@@ -3,11 +3,12 @@
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from apps.publisher.engine import MAX_RETRIES, RETRY_BACKOFF, PublishEngine
 from apps.publisher.models import PublishLog, RateLimitState
+from providers.types import AuthType, PostType, PublishResult
 
 
 class RateLimitStateModelTest(TestCase):
@@ -92,3 +93,89 @@ class PublishLogModelTest(TestCase):
         s = str(log)
         self.assertIn("2", s)
         self.assertIn("200", s)
+
+
+def _build_dispatch_mocks(platform: str, account_platform_id: str, platform_extra: dict | None = None):
+    """Build the minimal mocks needed to exercise _dispatch_to_provider's
+    extras-assembly without DB or filesystem side effects.
+
+    Returns (engine, platform_post, mock_provider).
+    """
+    engine = PublishEngine()
+
+    account = MagicMock()
+    account.platform = platform
+    account.account_platform_id = account_platform_id
+    account.token_expires_at = None  # skip the OAuth refresh branch
+    account.oauth_access_token = "tok"
+    account.account_name = "Test Account"
+
+    platform_post = MagicMock()
+    platform_post.social_account = account
+    platform_post.post.media_attachments.select_related.return_value.order_by.return_value = []
+    platform_post.post.tags = []
+    platform_post.effective_caption = "hello"
+    platform_post.effective_title = None
+    platform_post.effective_first_comment = None
+    platform_post.platform_extra = platform_extra or {}
+
+    mock_provider = MagicMock()
+    mock_provider.auth_type = AuthType.OAUTH2
+    mock_provider.supported_post_types = [PostType.TEXT]
+    mock_provider.publish_post.return_value = PublishResult(
+        platform_post_id="post-1",
+        url="https://example.com/p/1",
+        extra={},
+    )
+    return engine, platform_post, mock_provider
+
+
+class DispatchExtraInjectionTest(SimpleTestCase):
+    """Verify _dispatch_to_provider injects platform-specific extras."""
+
+    @patch("apps.publisher.engine.get_provider")
+    @patch("apps.publisher.engine._resolve_publish_credentials", return_value={})
+    def test_injects_organization_author_for_linkedin_company(self, _mock_creds, mock_get_provider):
+        engine, platform_post, mock_provider = _build_dispatch_mocks(
+            platform="linkedin_company",
+            account_platform_id="98765",
+        )
+        mock_get_provider.return_value = mock_provider
+
+        engine._dispatch_to_provider(platform_post)
+
+        mock_provider.publish_post.assert_called_once()
+        _access_token, content = mock_provider.publish_post.call_args.args
+        self.assertEqual(content.extra.get("author"), "urn:li:organization:98765")
+
+    @patch("apps.publisher.engine.get_provider")
+    @patch("apps.publisher.engine._resolve_publish_credentials", return_value={})
+    def test_does_not_overwrite_explicit_author(self, _mock_creds, mock_get_provider):
+        # When the caller has already set extra["author"], the engine must not
+        # overwrite it — important for callers that pass a different URN.
+        engine, platform_post, mock_provider = _build_dispatch_mocks(
+            platform="linkedin_company",
+            account_platform_id="98765",
+            platform_extra={"author": "urn:li:organization:override"},
+        )
+        mock_get_provider.return_value = mock_provider
+
+        engine._dispatch_to_provider(platform_post)
+
+        _access_token, content = mock_provider.publish_post.call_args.args
+        self.assertEqual(content.extra.get("author"), "urn:li:organization:override")
+
+    @patch("apps.publisher.engine.get_provider")
+    @patch("apps.publisher.engine._resolve_publish_credentials", return_value={})
+    def test_does_not_inject_author_for_other_platforms(self, _mock_creds, mock_get_provider):
+        # Sanity: the author-injection branch is scoped to linkedin_company only.
+        engine, platform_post, mock_provider = _build_dispatch_mocks(
+            platform="linkedin_personal",
+            account_platform_id="11111",
+        )
+        mock_get_provider.return_value = mock_provider
+
+        engine._dispatch_to_provider(platform_post)
+
+        _access_token, content = mock_provider.publish_post.call_args.args
+        self.assertNotIn("author", content.extra)

@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}Intelligence billing - {{ organization.name }} - Brightbean{% endblock %}
+
+{% block page_header %}
+<div class="flex items-center justify-between mb-4 lg:mb-[25px]">
+    <div>
+        <h1 class="text-xl sm:text-2xl font-semibold" style="color: var(--text-primary); letter-spacing: -0.01em;">Billing</h1>
+        <p class="text-sm mt-1" style="color: var(--text-secondary);">
+            Intelligence subscription for {{ organization.name }}.
+        </p>
+    </div>
+
+    <a href="{% url 'intelligence:playground' org_id=organization.id %}"
+       class="intel-cta-text-link">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        Back to Intelligence
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl">
+
+    {# ---- Subscription overview ---- #}
+    {% if subscription %}
+    <h2 class="text-xl font-semibold mb-6" style="color: var(--text-primary);">Subscription</h2>
+
+    <div class="grid grid-cols-2 gap-x-8 gap-y-5 mb-8">
+        <div>
+            <div class="text-xs font-semibold uppercase tracking-wide mb-1.5" style="color: var(--text-tertiary);">Plan</div>
+            <div class="flex items-center gap-2">
+                <span class="text-sm font-medium capitalize" style="color: var(--text-primary);">{{ subscription.plan_slug|default:"," }}</span>
+            </div>
+        </div>
+        <div>
+            <div class="text-xs font-semibold uppercase tracking-wide mb-1.5" style="color: var(--text-tertiary);">Status</div>
+            <div class="flex items-center gap-2 flex-wrap">
+                {% comment %}
+                  Stripe keeps status='active' until the period actually
+                  ends. When ``cancel_at`` is set, the user has clicked
+                  "Cancel" in the portal and is in the grace period,
+                  show an amber pill so it's visually distinct from a
+                  healthy "Active". (Must use {% comment %} not {# #}
+                  because the latter is single-line in Django.)
+                {% endcomment %}
+                {% if cancel_at and subscription.status == 'active' %}
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-full bg-amber-50 text-amber-700">
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                    Active · canceling
+                </span>
+                {% else %}
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-full
+                             {% if subscription.status == 'active' %}bg-green-50 text-green-700
+                             {% elif subscription.status == 'past_due' %}bg-amber-50 text-amber-700
+                             {% elif subscription.status == 'canceled' %}bg-stone-100 text-stone-600
+                             {% else %}bg-blue-50 text-blue-700{% endif %}">
+                    <span class="w-1.5 h-1.5 rounded-full
+                                 {% if subscription.status == 'active' %}bg-green-500
+                                 {% elif subscription.status == 'past_due' %}bg-amber-500
+                                 {% elif subscription.status == 'canceled' %}bg-stone-400
+                                 {% else %}bg-blue-500{% endif %}"></span>
+                    {{ subscription.get_status_display }}
+                </span>
+                {% endif %}
+            </div>
+        </div>
+        {% if cancel_at %}
+        <div class="mt-4">
+            <div class="text-xs font-semibold uppercase tracking-wide mb-1.5" style="color: var(--text-tertiary);">Access ends</div>
+            <div class="text-sm" style="color: var(--text-primary);">{{ cancel_at|date:"F j, Y" }}</div>
+            <div class="text-xs mt-1" style="color: var(--text-secondary);">
+                You'll keep full Intelligence access until then, after which the subscription will be canceled and tool calls will stop.
+            </div>
+        </div>
+        {% elif subscription.current_period_end %}
+        <div class="mt-4">
+            <div class="text-xs font-semibold uppercase tracking-wide mb-1.5" style="color: var(--text-tertiary);">Current period ends</div>
+            <div class="text-sm" style="color: var(--text-primary);">{{ subscription.current_period_end|date:"F j, Y" }}</div>
+        </div>
+        {% endif %}
+    </div>
+
+    {# ---- Manage in Stripe ---- #}
+    <form method="post" action="{% url 'intelligence:portal' org_id=organization.id %}" class="mb-10">
+        {% csrf_token %}
+        <p class="text-sm mb-3" style="color: var(--text-secondary);">
+            Update your card, view past invoices, or cancel through Stripe's secure customer portal.
+        </p>
+        <button type="submit"
+                class="inline-flex items-center gap-2 px-4 py-1.5 text-sm font-semibold text-orange-600 bg-orange-50 border border-orange-200 rounded-full hover:bg-orange-100 hover:border-orange-300 active:bg-orange-100 transition-all duration-150 cursor-pointer">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+            Manage payment + invoices in Stripe
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+        </button>
+    </form>
+
+    {# Divider between subscription section and contact section. #}
+    <hr class="my-10" style="border-color: var(--border);">
+    {% endif %}
+
+    {# ---- Billing contact email ---- #}
+    <h2 class="text-xl font-semibold mb-2" style="color: var(--text-primary);">Billing contact</h2>
+    <p class="text-sm mb-6" style="color: var(--text-secondary);">
+        Stripe invoices and failed-payment notices route to this email. Changing it also updates the Stripe Customer's contact email.
+    </p>
+
+    <form method="post"
+          action="{% url 'intelligence:update-billing-contact' org_id=organization.id %}"
+          hx-post="{% url 'intelligence:update-billing-contact' org_id=organization.id %}"
+          hx-target="#billing-contact-saved"
+          hx-swap="outerHTML">
+        {% csrf_token %}
+        <div class="flex items-end gap-4">
+            <div class="flex-1">
+                <label for="billing_email" class="block text-sm font-semibold mb-2" style="color: var(--text-primary);">Email</label>
+                <input type="email" name="billing_email" id="billing_email"
+                       value="{{ billing_email }}" required
+                       class="input-focus w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
+                       style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
+            </div>
+            <button type="submit"
+                    class="btn-neutral px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer whitespace-nowrap"
+                    style="background: var(--neutral-100); color: var(--text-primary);">
+                Save changes
+            </button>
+        </div>
+
+        <div id="billing-contact-saved" class="mt-3 min-h-[20px]"></div>
+    </form>
+
+
+</div>
+{% endblock %}
+
+{% block extra_head %}
+{% include "intelligence/_cta_styles.html" %}
+{% endblock %}

@@ -24,8 +24,8 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 AUTH_URL = "https://www.pinterest.com/oauth/"
-TOKEN_URL = "https://api.pinterest.com/v5/oauth/token"
 API_BASE = os.environ.get("PINTEREST_API_BASE", "https://api.pinterest.com/v5")
+TOKEN_URL = f"{API_BASE}/oauth/token"
 
 
 class PinterestProvider(SocialProvider):

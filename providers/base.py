@@ -77,6 +77,30 @@ class SocialProvider(ABC):
         """OAuth scopes required for full functionality."""
 
     @property
+    def analytics_only_scopes(self) -> list[str]:
+        """OAuth scopes that are ONLY needed for the analytics feature.
+
+        These are conditionally excluded from the OAuth init flow when the
+        platform's analytics is disabled in ``AnalyticsPlatformConfig`` — so
+        a self-hoster whose Meta / TikTok app hasn't yet been approved for
+        the analytics scope can still connect accounts for publishing.
+
+        Providers without analytics-specific scopes return the default `[]`.
+        """
+        return []
+
+    # OAuth init can flip this to False to omit ``analytics_only_scopes``
+    # from the requested scope list. Default True keeps backward compat.
+    include_analytics_scopes: bool = True
+
+    # True when ``get_account_metrics`` actually filters by the ``date_range``
+    # argument. Providers whose stats endpoint returns only lifetime totals
+    # (TikTok ``/v2/user/info/``) should set this to False so the sync layer
+    # doesn't replay the same cumulative values into multiple historical
+    # date rows on first sync.
+    account_metrics_supports_date_range: bool = True
+
+    @property
     def rate_limits(self) -> RateLimitConfig:
         """Platform rate limit configuration."""
         return RateLimitConfig()

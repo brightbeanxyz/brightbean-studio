@@ -35,10 +35,8 @@
               hx-swap="outerHTML">
             {% csrf_token %}
             <button type="submit"
-                    class="text-xs px-3 py-1.5 rounded-full font-medium cursor-pointer transition-colors"
-                    style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);"
-                    onmouseenter="this.style.background='var(--neutral-50)'"
-                    onmouseleave="this.style.background='var(--surface-0)'">
+                    class="btn-neutral-surface text-xs px-3 py-1.5 rounded-full font-medium cursor-pointer transition-colors"
+                    style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
                 {% if client.token %}Resend Link{% else %}Send Portal Link{% endif %}
             </button>
         </form>
@@ -50,10 +48,8 @@
               hx-confirm="Remove {{ client.user.display_name }} from this workspace? Their portal access will be revoked.">
             {% csrf_token %}
             <button type="submit"
-                    class="text-xs px-3 py-1.5 rounded-full font-medium cursor-pointer transition-colors"
-                    style="color: #DC2626; background: transparent;"
-                    onmouseenter="this.style.background='#FEF2F2'"
-                    onmouseleave="this.style.background='transparent'">
+                    class="btn-danger-soft-bg text-xs px-3 py-1.5 rounded-full font-medium cursor-pointer transition-colors"
+                    style="color: #DC2626; background: transparent;">
                 Remove
             </button>
         </form>

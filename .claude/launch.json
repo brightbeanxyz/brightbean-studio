@@ -3,12 +3,15 @@
   "configurations": [
     {
       "name": "django",
-      "runtimeExecutable": ".venv/bin/python",
-      "runtimeArgs": ["manage.py", "runserver", "8001"],
-      "port": 8001,
-      "env": {
-        "DJANGO_SETTINGS_MODULE": "config.settings.development"
-      }
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "while true; do sleep 3600; done"],
+      "port": 8001
+    },
+    {
+      "name": "docker",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "while true; do sleep 3600; done"],
+      "port": 8000
     }
   ]
 }

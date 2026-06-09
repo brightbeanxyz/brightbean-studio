@@ -1,0 +1,83 @@
+{% comment %}
+Issuance modal — Alpine for open/close, HTMX for the cascading workspace
+→ accounts + permissions partial. The actual POST is a normal Django
+form submit (no HTMX) so the response can render the one-time token
+reveal modal on top of the freshly-rendered list page.
+{% endcomment %}
+<template x-teleport="body">
+    <div x-show="showIssueModal" x-transition.opacity
+         @keydown.escape.window="showIssueModal = false"
+         class="fixed inset-0 z-50 flex items-center justify-center"
+         style="background: rgba(0,0,0,0.4);">
+        <div @click.outside="showIssueModal = false"
+             x-show="showIssueModal" x-transition
+             class="w-full max-w-xl mx-4 rounded-xl flex flex-col"
+             style="background: var(--surface-0); border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0,0,0,0.18); max-height: 90vh;">
+            <form method="POST" action="{% url 'api_keys:issue' %}" class="flex flex-col min-h-0">
+                {% csrf_token %}
+                <div class="flex items-start justify-between px-6 pt-6 pb-5 flex-shrink-0">
+                    <div>
+                        <h3 class="text-lg font-semibold" style="color: var(--text-primary);">Issue a new API key</h3>
+                        <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+                            The plaintext token is shown <strong>once</strong> immediately after creation.
+                        </p>
+                    </div>
+                    <button type="button" @click="showIssueModal = false"
+                            class="text-xl leading-none px-2 cursor-pointer"
+                            style="color: var(--text-tertiary);">&times;</button>
+                </div>
+
+                <div class="space-y-4 px-6 overflow-y-auto flex-1 min-h-0">
+                    <div>
+                        <label for="name" class="block text-sm font-semibold mb-1" style="color: var(--text-primary);">Name</label>
+                        <input type="text" id="name" name="name" required maxlength="100" autocomplete="off"
+                               placeholder="e.g. Zapier bot, content pipeline"
+                               class="input-focus w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
+                               style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
+                    </div>
+
+                    <div>
+                        <label for="workspace_id" class="block text-sm font-semibold mb-1" style="color: var(--text-primary);">Workspace</label>
+                        <select id="workspace_id" name="workspace_id" required
+                                hx-get="{% url 'api_keys:workspace_options' %}"
+                                hx-trigger="change"
+                                hx-target="#workspace-options-target"
+                                hx-include="this"
+                                class="input-focus w-full pl-3 pr-10 py-2 text-sm rounded-lg outline-none transition-colors"
+                                style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
+                            <option value="">Pick a workspace…</option>
+                            {% for ws in issuance.workspaces %}
+                            <option value="{{ ws.id }}">{{ ws.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    {# Populated by HTMX once a workspace is picked. #}
+                    <div id="workspace-options-target" class="space-y-4"></div>
+
+                    <div>
+                        <label for="expires_at" class="block text-sm font-semibold mb-1" style="color: var(--text-primary);">
+                            Expires at <span class="font-normal" style="color: var(--text-tertiary);">(optional)</span>
+                        </label>
+                        <input type="date" id="expires_at" name="expires_at"
+                               class="input-focus w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
+                               style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-end gap-3 px-6 pt-5 pb-6 flex-shrink-0">
+                    <button type="button" @click="showIssueModal = false"
+                            class="btn-neutral px-4 py-2 text-sm font-medium rounded-full cursor-pointer"
+                            style="background: var(--neutral-100); color: var(--text-primary);">
+                        Cancel
+                    </button>
+                    <button type="submit"
+                            class="btn-primary-hover px-5 py-2 text-sm font-medium rounded-full cursor-pointer"
+                            style="background: var(--primary); color: white;">
+                        Generate
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</template>

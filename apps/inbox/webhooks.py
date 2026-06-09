@@ -4,7 +4,6 @@ import hashlib
 import hmac
 import json
 import logging
-import xml.etree.ElementTree as ET
 
 from django.conf import settings
 from django.http import HttpResponse, HttpResponseForbidden
@@ -12,6 +11,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django_ratelimit.decorators import ratelimit
 
+from apps.common.validators import safe_xml_fromstring
+from apps.credentials.models import resolve_app_secret, resolve_app_secrets
 from apps.social_accounts.models import SocialAccount
 
 from .models import InboxMessage
@@ -20,29 +21,22 @@ from .sentiment import analyze_sentiment
 logger = logging.getLogger(__name__)
 
 
-@csrf_exempt
-@ratelimit(key="ip", rate="60/m", block=True)
-@require_http_methods(["GET", "POST"])
-def facebook_webhook(request):
-    """Facebook & Instagram webhook endpoint.
+# --- Meta (Facebook + Instagram) shared helpers ---
 
-    GET:  Verification handshake (hub.mode, hub.verify_token, hub.challenge).
-    POST: Incoming events with HMAC-SHA256 signature in X-Hub-Signature-256.
+
+def _meta_verify(request, configured_token: str):
+    """Handle Meta webhook verification handshake.
+
+    Meta hits this endpoint with hub.mode=subscribe + hub.verify_token + hub.challenge.
+    We compare the supplied token to the one configured for this endpoint and echo
+    the challenge on match.
     """
-    if request.method == "GET":
-        return _facebook_verify(request)
-    return _facebook_receive(request)
-
-
-def _facebook_verify(request):
-    """Handle Facebook webhook verification handshake."""
     mode = request.GET.get("hub.mode")
     token = request.GET.get("hub.verify_token")
     challenge = request.GET.get("hub.challenge", "")
-    configured_token = settings.FACEBOOK_WEBHOOK_VERIFY_TOKEN
 
     if not configured_token:
-        logger.error("FACEBOOK_WEBHOOK_VERIFY_TOKEN is not configured. Rejecting verification.")
+        logger.error("Webhook verify token not configured. Rejecting verification.")
         return HttpResponseForbidden("Webhook verify token not configured.")
 
     if mode == "subscribe" and token == configured_token:
@@ -50,28 +44,10 @@ def _facebook_verify(request):
     return HttpResponseForbidden("Verification failed.")
 
 
-def _facebook_receive(request):
-    """Handle incoming Facebook/Instagram webhook events."""
-    signature = request.headers.get("X-Hub-Signature-256", "")
-    if not _verify_facebook_signature(request.body, signature):
-        logger.warning("Invalid Facebook webhook signature.")
-        return HttpResponseForbidden("Invalid signature.")
-
-    try:
-        payload = json.loads(request.body)
-    except json.JSONDecodeError:
-        logger.warning("Invalid JSON in Facebook webhook payload.")
-        return HttpResponse("Bad request", status=400)
-
-    _process_facebook_events(payload)
-    return HttpResponse("OK", status=200)
-
-
-def _verify_facebook_signature(body: bytes, signature_header: str) -> bool:
-    """Verify HMAC-SHA256 signature from Facebook."""
-    app_secret = settings.PLATFORM_CREDENTIALS_FROM_ENV.get("facebook", {}).get("app_secret", "")
+def _verify_meta_signature(body: bytes, signature_header: str, app_secret: str) -> bool:
+    """Verify HMAC-SHA256 signature (X-Hub-Signature-256) from Meta."""
     if not app_secret:
-        logger.error("Facebook app_secret not configured. Cannot verify webhook.")
+        logger.error("Meta app_secret not configured. Cannot verify webhook.")
         return False
 
     expected = (
@@ -85,8 +61,40 @@ def _verify_facebook_signature(body: bytes, signature_header: str) -> bool:
     return hmac.compare_digest(expected, signature_header)
 
 
-def _process_facebook_events(payload: dict):
-    """Process Facebook/Instagram webhook events and upsert InboxMessages."""
+def _meta_receive(request, platforms: list[str]):
+    """Validate the HMAC signature and dispatch incoming Meta webhook events.
+
+    A delivery is signed by exactly one Meta app. We accept the request only if
+    the signature matches a configured app secret, then process events *only* for
+    accounts whose owning org's secret actually signed the body (see
+    ``_process_meta_events``) — so one org's secret can never authorize writes
+    into another org's accounts.
+    """
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    candidate_secrets = resolve_app_secrets(*platforms)
+    valid_secrets = {secret for secret in candidate_secrets if _verify_meta_signature(request.body, signature, secret)}
+    if not valid_secrets:
+        logger.warning("Meta webhook: signature did not match any configured app secret.")
+        return HttpResponseForbidden("Invalid signature.")
+
+    try:
+        payload = json.loads(request.body)
+    except json.JSONDecodeError:
+        logger.warning("Invalid JSON in Meta webhook payload.")
+        return HttpResponse("Bad request", status=400)
+
+    _process_meta_events(payload, platforms, valid_secrets)
+    return HttpResponse("OK", status=200)
+
+
+def _process_meta_events(payload: dict, platforms: list[str], valid_secrets: set[str]):
+    """Process Meta (Facebook/Instagram) webhook events into InboxMessages.
+
+    An event is processed only for SocialAccounts whose platform is in
+    `platforms` AND whose owning org's app secret signed this delivery (i.e. is in
+    `valid_secrets`). This binds each event to the org that owns the signing app,
+    preventing one org's secret from forging events into another org's accounts.
+    """
     for entry in payload.get("entry", []):
         page_id = entry.get("id")
         if not page_id:
@@ -94,18 +102,60 @@ def _process_facebook_events(payload: dict):
 
         accounts = SocialAccount.objects.filter(
             account_platform_id=page_id,
-            platform__in=["facebook", "instagram"],
+            platform__in=platforms,
             connection_status=SocialAccount.ConnectionStatus.CONNECTED,
         ).select_related("workspace__organization")
 
         for account in accounts:
-            # Process changes (Facebook Page events)
+            account_secret = resolve_app_secret(account.platform, account.workspace.organization_id)
+            if not account_secret or account_secret not in valid_secrets:
+                logger.warning(
+                    "Meta webhook: signature not valid for account %s's org app; skipping event.",
+                    account.id,
+                )
+                continue
+
             for change in entry.get("changes", []):
                 _handle_facebook_change(account, change)
 
-            # Process messaging events (Instagram/Facebook DMs)
             for messaging in entry.get("messaging", []):
                 _handle_facebook_messaging(account, messaging)
+
+
+# --- Webhook entry points ---
+
+
+@csrf_exempt
+@ratelimit(key="ip", rate="60/m", block=True)
+@require_http_methods(["GET", "POST"])
+def facebook_webhook(request):
+    """Facebook & Instagram (Facebook Login) webhook endpoint.
+
+    GET:  Verification handshake (hub.mode, hub.verify_token, hub.challenge).
+    POST: Incoming events with HMAC-SHA256 signature in X-Hub-Signature-256.
+    """
+    if request.method == "GET":
+        return _meta_verify(request, settings.FACEBOOK_WEBHOOK_VERIFY_TOKEN)
+    # Facebook + Instagram (Facebook Login) share one Meta app.
+    return _meta_receive(request, platforms=["facebook", "instagram"])
+
+
+@csrf_exempt
+@ratelimit(key="ip", rate="60/m", block=True)
+@require_http_methods(["GET", "POST"])
+def instagram_login_webhook(request):
+    """Instagram (Direct, via Instagram Login) webhook endpoint.
+
+    Separate from `facebook_webhook` because it uses its own verify token and
+    its own app secret (the Instagram App is distinct from the parent Meta App
+    when authenticating via Instagram Login).
+    """
+    if request.method == "GET":
+        return _meta_verify(request, settings.INSTAGRAM_LOGIN_WEBHOOK_VERIFY_TOKEN)
+    return _meta_receive(request, platforms=["instagram_login"])
+
+
+# --- Event handlers (shared between facebook + instagram_login) ---
 
 
 def _handle_facebook_change(account, change: dict):
@@ -257,10 +307,9 @@ def youtube_webhook(request):
 
 def _process_youtube_notification(body: bytes):
     """Parse Atom XML notification from YouTube and upsert messages."""
-    try:
-        root = ET.fromstring(body)
-    except ET.ParseError:
-        logger.warning("Invalid XML in YouTube webhook payload.")
+    root = safe_xml_fromstring(body)
+    if root is None:
+        logger.warning("Invalid or unsafe XML in YouTube webhook payload.")
         return
 
     ns = {

@@ -1,17 +1,12 @@
 services:
   app:
     build: .
-    command: python manage.py runserver 0.0.0.0:8000
     volumes:
-      - .:/app
       - media_data:/app/media
     ports:
       - "8000:8000"
     env_file:
       - .env
-    environment:
-      - DJANGO_SETTINGS_MODULE=config.settings.development
-      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/brightbean
     depends_on:
       postgres:
         condition: service_healthy
@@ -20,13 +15,9 @@ services:
     build: .
     command: python manage.py process_tasks
     volumes:
-      - .:/app
       - media_data:/app/media
     env_file:
       - .env
-    environment:
-      - DJANGO_SETTINGS_MODULE=config.settings.development
-      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/brightbean
     depends_on:
       postgres:
         condition: service_healthy

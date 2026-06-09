@@ -15,7 +15,9 @@ def sidebar_context(request):
         return {}
 
     from apps.members.models import WorkspaceMembership
-    from apps.social_accounts.models import SocialAccount
+    from apps.social_accounts.models import AnalyticsPlatformConfig, PlatformVisibility, SocialAccount
+
+    analytics_enabled_platforms = AnalyticsPlatformConfig.enabled_platforms()
 
     # User's workspaces (non-archived)
     workspace_memberships = (
@@ -67,8 +69,11 @@ def sidebar_context(request):
         # always surfaces what can be connected. The connect page itself
         # handles the "not configured" case with an admin prompt.
         connected_platforms = {ch.platform for ch in sidebar_channels}
+        hidden_platforms = set(PlatformVisibility.objects.filter(is_visible=False).values_list("platform", flat=True))
         sidebar_connectable_platforms = [
-            (p, label) for p, label in _platform_display_names() if p not in connected_platforms
+            (p, label)
+            for p, label in _platform_display_names()
+            if p not in connected_platforms and p not in hidden_platforms
         ]
 
     # Unread inbox count for sidebar badge
@@ -111,6 +116,11 @@ def sidebar_context(request):
     if org_membership and org_membership.org_role in ("owner", "admin"):
         can_create_workspace = True
 
+    # Filter the sidebar channel list to those whose platform is analytics-enabled,
+    # so the per-channel deep-links under the Analytics nav item never point at a
+    # disabled platform. The full sidebar channel list above is unrelated.
+    analytics_sidebar_channels = [ch for ch in sidebar_channels if ch.platform in analytics_enabled_platforms]
+
     return {
         "sidebar_workspaces": sidebar_workspaces,
         "can_create_workspace": can_create_workspace,
@@ -121,6 +131,8 @@ def sidebar_context(request):
         "sidebar_pending_approvals": sidebar_pending_approvals,
         "sidebar_idea_columns": sidebar_idea_columns,
         "sidebar_idea_tags": sidebar_idea_tags,
+        "analytics_enabled_platforms": analytics_enabled_platforms,
+        "analytics_sidebar_channels": analytics_sidebar_channels,
     }
 
 

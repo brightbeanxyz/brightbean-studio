@@ -1,0 +1,41 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign in to {{ workspace.name }}</title>
+    <link rel="icon" href="{% static 'favicon/favicon.ico' %}" sizes="any">
+    <link rel="icon" type="image/svg+xml" href="{% static 'favicon/favicon.svg' %}">
+    <link rel="icon" type="image/png" sizes="96x96" href="{% static 'favicon/favicon-96x96.png' %}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{% static 'favicon/apple-touch-icon.png' %}">
+    <link rel="manifest" href="{% static 'favicon/site.webmanifest' %}">
+    <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
+</head>
+<body class="min-h-screen flex items-center justify-center px-4" style="background: var(--surface-1); font-family: var(--font-body);">
+    <div class="w-full max-w-sm text-center">
+        <div class="rounded-2xl border p-8" style="background: var(--surface-0); border-color: var(--border); box-shadow: var(--shadow-lg);">
+            <!-- Icon -->
+            <div class="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-5" style="background: var(--brand-50);">
+                <svg class="w-7 h-7" style="color: var(--brand-primary);" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l3 3m0 0l-3 3m3-3H2.25"/></svg>
+            </div>
+
+            <h1 class="text-lg font-bold tracking-tight mb-2" style="color: var(--text-primary); font-family: var(--font-display);">
+                Sign in to {{ workspace.name }}
+            </h1>
+            <p class="text-sm leading-relaxed mb-6" style="color: var(--text-secondary);">
+                Continue to review and approve scheduled posts for {{ workspace.name }}.
+            </p>
+
+            <form method="post" action="{% url 'client_portal:magic_link_entry' token=token %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="w-full px-4 py-2.5 text-[0.8125rem] font-semibold rounded-full text-white"
+                        style="background: var(--brand-primary);">
+                    Continue to portal
+                </button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

@@ -62,12 +62,20 @@ def create_comment(post, author, body, visibility, parent_id=None, attachment=No
     return comment
 
 
-def update_comment(comment_id, user, body):
-    """Update a comment's body. Only the author can edit."""
-    comment = PostComment.objects.filter(
+def update_comment(comment_id, user, body, *, workspace=None):
+    """Update a comment's body. Only the author can edit.
+
+    When `workspace` is provided, the comment's post is required to belong to
+    that workspace — defends against cross-workspace IDOR via a forged
+    post_id/comment_id pair.
+    """
+    qs = PostComment.objects.filter(
         id=comment_id,
         deleted_at__isnull=True,
-    ).first()
+    )
+    if workspace is not None:
+        qs = qs.filter(post__workspace=workspace)
+    comment = qs.first()
 
     if not comment:
         raise ValueError("Comment not found.")

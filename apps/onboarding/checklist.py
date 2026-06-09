@@ -11,6 +11,10 @@ def get_checklist_items(workspace):
     """Return a list of checklist item dicts with dynamic completion status.
 
     Each item has: key, title, description, completed (bool), url, icon_color, icon_svg
+
+    SECURITY: `icon_svg` is rendered with `|safe` in the checklist template.
+    It MUST remain a server-side constant string. Never populate it from user
+    input, model fields, or any other untrusted source.
     """
     from apps.composer.models import Idea, Post
     from apps.members.models import WorkspaceMembership

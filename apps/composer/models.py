@@ -19,6 +19,7 @@ from django.db import models
 from django.utils import timezone
 
 from apps.common.managers import WorkspaceScopedManager
+from apps.common.validators import validate_hex_color
 
 
 class ContentCategory(models.Model):
@@ -39,6 +40,7 @@ class ContentCategory(models.Model):
         max_length=7,
         default="#3B82F6",
         help_text="Hex color for calendar display, e.g. #FF5733",
+        validators=[validate_hex_color],
     )
     position = models.PositiveIntegerField(default=0)
 

@@ -3,7 +3,7 @@ List view - table format of posts.
 Context: posts, workspace.
 {% endcomment %}
 
-<div class="bg-white overflow-x-auto" style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both">
+<div x-data class="bg-white overflow-x-auto" style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both">
     {% if posts %}
     <table class="w-full min-w-[600px]">
         <thead>
@@ -18,7 +18,7 @@ Context: posts, workspace.
         <tbody>
             {% for post in posts %}
             <tr class="border-b border-stone-100 hover:bg-stone-50 transition-colors duration-100 cursor-pointer"
-                onclick="window.location='{% url 'composer:compose_edit' workspace_id=workspace.id post_id=post.id %}'">
+                @click="window.location='{% url 'composer:compose_edit' workspace_id=workspace.id post_id=post.id %}'">
                 <td class="px-4 py-3">
                     <span class="post-chip status-{{ post.status }} inline-flex">
                         <span class="chip-dot"></span>

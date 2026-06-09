@@ -38,6 +38,10 @@ Context: assets, workspace, post (optional).
             {{ asset.duration|floatformat:0 }}s
         </div>
         {% endif %}
+        {% if asset.is_shared %}
+        <span class="absolute top-1 right-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-white"
+              style="background: rgba(20,184,166,0.9); letter-spacing: 0.06em;">SHARED</span>
+        {% endif %}
         <div class="absolute bottom-0 left-0 right-0 p-1.5 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-150">
             <span class="text-[10px] text-white font-medium truncate block">{{ asset.filename }}</span>
         </div>

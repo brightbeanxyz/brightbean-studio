@@ -64,9 +64,10 @@
 
         <div class="flex items-center justify-between pt-2">
             {% if event %}
-            <form hx-post="{% url 'calendar:event_delete' workspace_id=workspace.id event_id=event.id %}" hx-swap="none" class="inline">
+            <form x-data hx-post="{% url 'calendar:event_delete' workspace_id=workspace.id event_id=event.id %}" hx-swap="none" class="inline"
+                  @submit="if(!confirm('Delete this event?')) $event.preventDefault()">
                 {% csrf_token %}
-                <button type="submit" class="text-xs text-red-500 hover:text-red-700 font-medium" onclick="return confirm('Delete this event?')">Delete Event</button>
+                <button type="submit" class="text-xs text-red-500 hover:text-red-700 font-medium">Delete Event</button>
             </form>
             {% else %}
             <div></div>

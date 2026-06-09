@@ -1,13 +1,14 @@
-{% comment %}Tag editor with autocomplete. Expects: asset, workspace{% endcomment %}
+{% load common_extras %}
+{% comment %}Tag editor with autocomplete. Expects: asset, workspace, is_shared_library, is_admin{% endcomment %}
 
-<div x-data="tagInput({{ asset.tags|safe }})" class="space-y-2">
+<div x-data="tagInput({{ asset.tags|json_attr }})" class="space-y-2">
   <!-- Current tags -->
   <div class="flex flex-wrap gap-1.5">
     <template x-for="(tag, i) in tags" :key="i">
       <span class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-full"
             style="background: var(--primary-soft, #FFF7ED); color: var(--brand-700, #C2410C);">
         <span x-text="tag"></span>
-        {% if not asset.is_shared %}
+        {% if is_shared_library and is_admin or not is_shared_library and not asset.is_shared %}
         <button @click="removeTag(i)" type="button" class="hover:opacity-70 transition-opacity">
           <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
@@ -16,7 +17,7 @@
     </template>
   </div>
 
-  {% if not asset.is_shared %}
+  {% if is_shared_library and is_admin or not is_shared_library and not asset.is_shared %}
   <!-- Add tag input -->
   <div class="relative">
     <input type="text"
@@ -27,10 +28,7 @@
            @input.debounce.300ms="fetchSuggestions()"
            @click.away="suggestions = []"
            placeholder="Add tag..."
-           class="w-full text-xs px-3 py-2 border rounded-lg outline-none"
-           style="border-color: var(--border, #E7E5E4);"
-           onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 3px var(--primary-ring)'"
-           onblur="setTimeout(() => { this.style.borderColor='var(--border)'; this.style.boxShadow='none'; }, 150)">
+           class="input-focus w-full text-xs px-3 py-2 border rounded-lg outline-none">
 
     <!-- Autocomplete dropdown -->
     <div x-show="suggestions.length > 0" x-cloak
@@ -38,10 +36,8 @@
          style="background: var(--surface-0, #FFF); border-color: var(--border, #E7E5E4); box-shadow: var(--shadow-lg);">
       <template x-for="(s, i) in suggestions" :key="i">
         <button @click="addTag(s); suggestions = []"
-                class="w-full text-left px-3 py-1.5 text-xs transition-colors"
+                class="w-full text-left px-3 py-1.5 text-xs transition-colors btn-surface-1"
                 style="color: var(--text-primary);"
-                onmouseenter="this.style.background='var(--surface-1)'"
-                onmouseleave="this.style.background='transparent'"
                 x-text="s"></button>
       </template>
     </div>
@@ -49,7 +45,7 @@
   {% endif %}
 </div>
 
-<script>
+<script nonce="{{ request.csp_nonce }}">
 function tagInput(initialTags) {
   return {
     tags: initialTags || [],
@@ -75,7 +71,7 @@ function tagInput(initialTags) {
 
     saveTags() {
       const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
-      fetch('{% url "media_library:asset_tags" workspace_id=workspace.id asset_id=asset.id %}', {
+      fetch('{% if is_shared_library %}{% url "media_library_org:shared_asset_tags" asset_id=asset.id %}{% else %}{% url "media_library:asset_tags" workspace_id=workspace.id asset_id=asset.id %}{% endif %}', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -92,7 +88,7 @@ function tagInput(initialTags) {
       }
       try {
         const resp = await fetch(
-          '{% url "media_library:tag_autocomplete" workspace_id=workspace.id %}?q=' + encodeURIComponent(this.inputValue)
+          '{% if is_shared_library %}{% url "media_library_org:shared_tag_autocomplete" %}{% else %}{% url "media_library:tag_autocomplete" workspace_id=workspace.id %}{% endif %}?q=' + encodeURIComponent(this.inputValue)
         );
         const data = await resp.json();
         this.suggestions = data.filter(s => !this.tags.includes(s)).slice(0, 8);

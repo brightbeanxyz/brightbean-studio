@@ -125,6 +125,7 @@ def invite_member(request):
             org_role=org_role,
             workspace_assignments=workspace_assignments,
             invited_by=request.user,
+            inviter=request.user,
         )
     except ValueError as e:
         return HttpResponse(
@@ -262,7 +263,7 @@ def update_member_role(request, membership_id):
     new_role = request.POST.get("org_role")
 
     try:
-        services.update_member_org_role(request.org, membership, new_role)
+        services.update_member_org_role(request.org, membership, new_role, caller=request.user)
     except ValueError as e:
         return HttpResponse(
             f'<div class="text-red-600 text-sm">{e}</div>',
@@ -351,7 +352,7 @@ def manage_workspaces(request, membership_id):
                 )
 
         try:
-            services.update_workspace_assignments(org, membership.user, assignments)
+            services.update_workspace_assignments(org, membership.user, assignments, inviter=request.user)
         except ValueError as e:
             return HttpResponse(str(e), status=422)
 

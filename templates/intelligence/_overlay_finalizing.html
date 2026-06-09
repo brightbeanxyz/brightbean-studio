@@ -1,0 +1,14 @@
+{% comment %}Polling overlay during sync-fallback. Lifts when /status/ returns active.{% endcomment %}
+<div id="intelligence-finalizing-overlay"
+     class="absolute inset-0 flex items-center justify-center bg-white/85 backdrop-blur-sm rounded-lg"
+     hx-get="{% url 'intelligence:status' org_id=organization.id %}"
+     hx-trigger="load, every 1s"
+     hx-swap="outerHTML">
+  <div class="text-center max-w-md px-6">
+    <div class="mx-auto mb-4 w-10 h-10 rounded-full border-4 border-orange-200 border-t-orange-600 animate-spin"></div>
+    <h2 class="text-lg font-semibold text-stone-900 mb-2">Setting up your Intelligence access…</h2>
+    <p class="text-sm text-stone-600">
+      Stripe confirmed your payment. We're finalizing access.
+    </p>
+  </div>
+</div>

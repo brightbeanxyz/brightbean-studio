@@ -14,25 +14,19 @@
           hx-swap="innerHTML"
           @htmx:after-request="showNewFolder = false">
       <input type="text" name="name" placeholder="Folder name..."
-             class="w-full text-sm px-3 py-2 border rounded-lg outline-none mb-4"
+             class="input-focus w-full text-sm px-3 py-2 border rounded-lg outline-none mb-4"
              style="border-color: var(--border, #E7E5E4);"
-             onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 3px var(--primary-ring)'"
-             onblur="this.style.borderColor='var(--border)'; this.style.boxShadow='none'"
              required autofocus>
 
       <div class="flex justify-end gap-2">
         <button type="button" @click="showNewFolder = false"
-                class="px-4 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer"
-                style="color: var(--text-secondary, #57534E);"
-                onmouseenter="this.style.background='var(--surface-2, #F5F5F4)'"
-                onmouseleave="this.style.background='transparent'">
+                class="btn-surface-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer"
+                style="color: var(--text-secondary, #57534E);">
           Cancel
         </button>
         <button type="submit"
-                class="px-4 py-2 text-sm font-semibold text-white rounded-lg transition-colors cursor-pointer"
-                style="background: var(--primary, #F97316);"
-                onmouseenter="this.style.background='var(--primary-hover, #EA580C)'"
-                onmouseleave="this.style.background='var(--primary, #F97316)'">
+                class="btn-primary-hover px-4 py-2 text-sm font-semibold text-white rounded-lg transition-colors cursor-pointer"
+                style="background: var(--primary, #F97316);">
           Create Folder
         </button>
       </div>

@@ -29,10 +29,8 @@
                 <div class="mb-5">
                     <label for="client-email" class="block text-sm font-medium mb-1.5" style="color: var(--text-primary);">Email Address</label>
                     <input type="email" id="client-email" name="email" required placeholder="client@example.com"
-                           class="w-full px-4 py-2.5 text-sm rounded-lg outline-none transition-all"
-                           style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-1);"
-                           onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 3px var(--primary-ring)'; this.style.background='var(--surface-0)'"
-                           onblur="this.style.borderColor='var(--border)'; this.style.boxShadow='none'; this.style.background='var(--surface-1)'">
+                           class="input-focus-surface w-full px-4 py-2.5 text-sm rounded-lg outline-none"
+                           style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-1);">
                 </div>
 
                 <!-- Info -->
@@ -46,17 +44,13 @@
                 <!-- Submit -->
                 <div class="flex justify-end gap-3">
                     <button type="button" @click="showInviteModal = false"
-                            class="px-5 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
-                            style="background: var(--neutral-100); color: var(--text-primary);"
-                            onmouseenter="this.style.background='var(--neutral-200)'"
-                            onmouseleave="this.style.background='var(--neutral-100)'">
+                            class="btn-neutral px-5 py-2 text-sm font-medium rounded-full cursor-pointer"
+                            style="background: var(--neutral-100); color: var(--text-primary);">
                         Cancel
                     </button>
                     <button type="submit"
-                            class="px-5 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
-                            style="background: var(--primary); color: white;"
-                            onmouseenter="this.style.opacity='0.9'"
-                            onmouseleave="this.style.opacity='1'">
+                            class="btn-opacity px-5 py-2 text-sm font-medium rounded-full cursor-pointer"
+                            style="background: var(--primary); color: white;">
                         Send Invitation
                     </button>
                 </div>

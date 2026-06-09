@@ -54,10 +54,8 @@
             <div class="flex items-center justify-between mt-2">
                 <p class="text-[10px] text-stone-400">Reply will be posted on {{ message.social_account.get_platform_display|default:message.social_account.platform|title }}</p>
                 <button type="submit"
-                        class="inline-flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold text-white rounded-full transition-all duration-150 cursor-pointer"
-                        style="background: var(--primary); box-shadow: var(--shadow-primary);"
-                        onmouseover="this.style.background='var(--primary-hover)'"
-                        onmouseout="this.style.background='var(--primary)'">
+                        class="btn-primary-hover inline-flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold text-white rounded-full transition-all duration-150 cursor-pointer"
+                        style="background: var(--primary); box-shadow: var(--shadow-primary);">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                     Send Reply
                 </button>

@@ -1,0 +1,19 @@
+<div class="absolute inset-0 flex items-center justify-center bg-white/85 backdrop-blur-sm rounded-lg">
+  <div class="text-center max-w-md px-6">
+    <h2 class="text-lg font-semibold text-stone-900 mb-2">Your subscription is past due</h2>
+    <p class="text-sm text-stone-600 mb-5">
+      Update your payment method to continue using Intelligence.
+    </p>
+    {% if can_manage_billing %}
+      <form method="post" action="{% url 'intelligence:portal' org_id=organization.id %}">
+        {% csrf_token %}
+        <button type="submit"
+                class="inline-flex items-center px-6 py-2 text-sm font-semibold text-white bg-orange-600 rounded-full hover:bg-orange-700 cursor-pointer">
+          Update payment →
+        </button>
+      </form>
+    {% else %}
+      <p class="text-sm text-stone-500">Ask an org admin to update payment.</p>
+    {% endif %}
+  </div>
+</div>

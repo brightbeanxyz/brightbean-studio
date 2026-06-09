@@ -12,7 +12,7 @@
     <link rel="manifest" href="{% static 'favicon/site.webmanifest' %}">
     <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
-    <script>
+    <script nonce="{{ request.csp_nonce }}">
         // Set sidebar state class on <html> before first paint to prevent flash
         if (localStorage.getItem('sidebarCollapsed') === 'true') {
             document.documentElement.classList.add('sidebar-is-collapsed');
@@ -207,7 +207,7 @@
 </head>
 <body class="text-gray-900 min-h-screen" style="background: var(--surface-page);">
     {% csrf_token %}
-    <script>
+    <script nonce="{{ request.csp_nonce }}">
         document.body.addEventListener('htmx:configRequest', function(event) {
             event.detail.headers['X-CSRFToken'] = document.querySelector('[name=csrfmiddlewaretoken]').value;
         });
@@ -542,19 +542,15 @@
                                         <span style="width: 1px; height: 20px; background: var(--border);"></span>
                                     </span>
                                     <button type="button" @click="closeCreateModal()"
-                                            class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
-                                            style="background: var(--neutral-100); color: var(--text-primary);"
-                                            onmouseenter="this.style.background='var(--neutral-200)'"
-                                            onmouseleave="this.style.background='var(--neutral-100)'">
+                                            class="btn-neutral px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
+                                            style="background: var(--neutral-100); color: var(--text-primary);">
                                         Cancel
                                     </button>
                                     <button type="submit"
                                             :disabled="createMediaUploadCount > 0 || isCreateSaving"
                                             :class="(createMediaUploadCount > 0 || isCreateSaving) && 'opacity-50 cursor-not-allowed'"
-                                            class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
-                                            style="background: var(--neutral-100); color: var(--text-primary);"
-                                            onmouseenter="this.style.background='var(--neutral-200)'"
-                                            onmouseleave="this.style.background='var(--neutral-100)'">
+                                            class="btn-neutral px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer"
+                                            style="background: var(--neutral-100); color: var(--text-primary);">
                                         Save Idea
                                     </button>
                                 </div>
@@ -613,6 +609,31 @@
                 </a>
 
                 {% if request.workspace %}
+                {% if analytics_enabled_platforms %}
+                <a href="{% url 'analytics:index' workspace_id=request.workspace.id %}" class="mb-1 sidebar-nav-item {% if request.resolver_match.app_name == 'analytics' %}active{% endif %}">
+                    <svg class="flex-shrink-0" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 12l4-4 4 4 6-6"/></svg>
+                    <span class="sidebar-nav-label">Analytics</span>
+                </a>
+                {% endif %}
+                {% endif %}
+
+                {% comment %}
+                  Intelligence — opt-in via env. INTELLIGENCE_ENABLED is False
+                  for self-hosters who haven't configured the integration, so
+                  they see no Stripe / billing surface at all. (Django's {# #}
+                  comment syntax is single-line only; this used to be a {# #}
+                  block spanning three lines, which rendered as literal text
+                  in the sidebar.)
+                {% endcomment %}
+                {% if INTELLIGENCE_ENABLED and request.org %}
+                <a href="{% url 'intelligence:playground' org_id=request.org.id %}"
+                   class="mb-1 sidebar-nav-item {% if request.resolver_match.app_name == 'intelligence' %}active{% endif %}">
+                    <svg class="flex-shrink-0" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polygon points="16.24 7.76 13.41 13.41 7.76 16.24 10.59 10.59 16.24 7.76"/></svg>
+                    <span class="sidebar-nav-label">Intelligence</span>
+                </a>
+                {% endif %}
+
+                {% if request.workspace %}
                 {% if sidebar_channels or sidebar_unhealthy_channels %}
                 <!-- Channels -->
                 <div class="group flex items-center justify-between mt-3.5 sidebar-section-label-wrap">
@@ -624,18 +645,18 @@
                     </a>
                 </div>
                 {% for channel in sidebar_channels %}
-                <a href="{% url 'social_accounts:list' workspace_id=request.workspace.id %}" class="sidebar-nav-item" title="{{ channel.queued_post_count|default:0 }} upcoming post{{ channel.queued_post_count|default:0|pluralize }} in the queue for {{ channel.account_name }}">
+                <a href="{% url 'social_accounts:list' workspace_id=request.workspace.id %}" class="sidebar-nav-item" title="{{ channel.queued_post_count|default:0 }} upcoming post{{ channel.queued_post_count|default:0|pluralize }} in the queue for {{ channel.account_name|default:channel.account_handle }}">
                     <div class="relative flex-shrink-0">
                         {% if channel.avatar_url %}
                         <img src="{{ channel.avatar_url }}" alt="" class="w-7 h-7 rounded-full object-cover">
                         {% else %}
-                        <div class="w-7 h-7 rounded-full bg-stone-200 flex items-center justify-center text-[11px] font-semibold text-stone-500">{{ channel.account_name|make_list|first|upper }}</div>
+                        <div class="w-7 h-7 rounded-full bg-stone-200 flex items-center justify-center text-[11px] font-semibold text-stone-500">{{ channel.account_name|default:channel.account_handle|make_list|first|upper }}</div>
                         {% endif %}
                         <div class="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-white rounded-full flex items-center justify-center">
                             {% include "partials/_platform_icon.html" with platform=channel.platform size="sm" %}
                         </div>
                     </div>
-                    <span class="sidebar-nav-label truncate">{{ channel.account_name }}</span>
+                    <span class="sidebar-nav-label truncate">{{ channel.account_name|default:channel.account_handle }}</span>
                     <span class="sidebar-badge">{{ channel.queued_post_count|default:0 }}</span>
                 </a>
                 {% endfor %}
@@ -645,19 +666,19 @@
                 <div class="sidebar-nav-item flex items-center gap-2">
                     <div class="relative flex-shrink-0 opacity-60">
                         {% if channel.avatar_url %}
-                        <img src="{{ channel.avatar_url }}" alt="" class="w-7 h-7 rounded-full object-cover grayscale" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-                        <div class="w-7 h-7 rounded-full bg-stone-200 items-center justify-center text-[11px] font-semibold text-stone-500" style="display:none">{{ channel.account_name|make_list|first|upper }}</div>
+                        <img src="{{ channel.avatar_url }}" alt="" class="w-7 h-7 rounded-full object-cover grayscale" x-data @error="$el.style.display='none';$el.nextElementSibling.style.display='flex'">
+                        <div class="w-7 h-7 rounded-full bg-stone-200 items-center justify-center text-[11px] font-semibold text-stone-500" style="display:none">{{ channel.account_name|default:channel.account_handle|make_list|first|upper }}</div>
                         {% else %}
-                        <div class="w-7 h-7 rounded-full bg-stone-200 flex items-center justify-center text-[11px] font-semibold text-stone-500">{{ channel.account_name|make_list|first|upper }}</div>
+                        <div class="w-7 h-7 rounded-full bg-stone-200 flex items-center justify-center text-[11px] font-semibold text-stone-500">{{ channel.account_name|default:channel.account_handle|make_list|first|upper }}</div>
                         {% endif %}
                         <div class="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-white rounded-full flex items-center justify-center">
                             {% include "partials/_platform_icon.html" with platform=channel.platform size="sm" %}
                         </div>
                     </div>
-                    <span class="sidebar-nav-label truncate flex-1 text-stone-400 opacity-60">{{ channel.account_name }}</span>
+                    <span class="sidebar-nav-label truncate flex-1 text-stone-400 opacity-60">{{ channel.account_name|default:channel.account_handle }}</span>
                     <form method="post" action="{% url 'social_accounts:reconnect' workspace_id=request.workspace.id account_id=channel.id %}" class="sidebar-nav-label">
                         {% csrf_token %}
-                        <button type="submit" class="inline-flex items-center px-2 py-0.5 text-[11px] font-semibold text-orange-700 bg-orange-50 rounded-full hover:bg-orange-100 transition-colors cursor-pointer" title="Reconnect {{ channel.account_name }}">
+                        <button type="submit" class="inline-flex items-center px-2 py-0.5 text-[11px] font-semibold text-orange-700 bg-orange-50 rounded-full hover:bg-orange-100 transition-colors cursor-pointer" title="Reconnect {{ channel.account_name|default:channel.account_handle }}">
                             Reconnect
                         </button>
                     </form>
@@ -841,7 +862,7 @@
 
     <!-- Vendored JS -->
     <script src="{% static 'js/htmx.min.js' %}"></script>
-    <script>
+    <script nonce="{{ request.csp_nonce }}">
         /* Notification bell - Alpine.js component */
         function notificationBell() {
             return {
@@ -888,7 +909,81 @@
     </script>
     <script src="{% static 'js/alpine.min.js' %}" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
-    <script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+    <script nonce="{{ request.csp_nonce }}">
+        /* Analytics hero chart: read data attrs off the canvas, (re)create Chart.js.
+           Lives in base.html so its CSP nonce matches the parent page — the chart
+           partial re-renders on HTMX swaps via the htmx:afterSwap hook below. */
+        function bbInitHeroChart(retries) {
+            if (typeof Chart === 'undefined') {
+                /* Chart.js is loaded synchronously above this script, so the
+                   poll should never fire in practice. Cap retries anyway —
+                   if the CDN ever fails (adblock, offline), recursing every
+                   30ms forever burns CPU on every page load. */
+                if ((retries || 0) > 30) return;
+                setTimeout(function () { bbInitHeroChart((retries || 0) + 1); }, 30);
+                return;
+            }
+            var canvas = document.getElementById('analytics-area-chart');
+            if (!canvas) return;
+            var data, labels;
+            try {
+                data = JSON.parse(canvas.dataset.series || '[]');
+                labels = JSON.parse(canvas.dataset.labels || '[]');
+            } catch (e) { return; }
+            var color = '#F97316';
+            if (window._bbHeroChart) { window._bbHeroChart.destroy(); }
+            var ctx = canvas.getContext('2d');
+            var gradient = ctx.createLinearGradient(0, 0, 0, 260);
+            function hexToRgba(c, a) {
+                var v = c.replace('#', '');
+                var r = parseInt(v.slice(0, 2), 16), g = parseInt(v.slice(2, 4), 16), b = parseInt(v.slice(4, 6), 16);
+                return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+            }
+            gradient.addColorStop(0, hexToRgba(color, 0.28));
+            gradient.addColorStop(1, hexToRgba(color, 0.0));
+            window._bbHeroChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        borderColor: color,
+                        backgroundColor: gradient,
+                        fill: true,
+                        tension: 0.32,
+                        pointRadius: 0,
+                        pointHoverRadius: 4,
+                        pointHoverBackgroundColor: color,
+                        borderWidth: 2,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { mode: 'index', intersect: false },
+                    },
+                    scales: {
+                        x: { grid: { display: false }, ticks: { maxTicksLimit: 6, color: '#78716C' } },
+                        y: { beginAtZero: true, grid: { color: '#F5F5F4' }, ticks: { color: '#78716C' } },
+                    },
+                },
+            });
+        }
+        // Wrap in a no-arg callback so the DOMContentLoaded event object
+        // doesn't get passed as ``retries`` — that would make
+        // ``(retries || 0) + 1`` string-concatenate the event each tick and
+        // the ``> 30`` cap below would never trip when Chart.js is offline.
+        document.addEventListener('DOMContentLoaded', function () { bbInitHeroChart(); });
+        document.body.addEventListener('htmx:afterSwap', function(evt) {
+            var target = evt.detail && evt.detail.target;
+            if (target && target.id === 'analytics-hero-chart') {
+                bbInitHeroChart();
+            }
+        });
+
         document.addEventListener('DOMContentLoaded', function() {
             document.querySelectorAll('.form-datetime[type="date"]').forEach(function(el) {
                 var fp = flatpickr(el, {
@@ -915,7 +1010,7 @@
         });
     </script>
     {% if request.workspace %}
-    <script>
+    <script nonce="{{ request.csp_nonce }}">
         window.ideaModalHelpers = window.ideaModalHelpers || {
             mediaAssetIdsCsv(items) {
                 return (items || []).map(function(item) { return item.asset_id; }).join(',');

@@ -1,0 +1,22 @@
+{% comment %}
+  Inline preview banner for non-admin org members. Same layout as the
+  admin variant but no Activate CTA, they can't buy on the org's
+  behalf. The playground below stays fully interactive so they can
+  explore what's available.
+{% endcomment %}
+<div class="mb-6 rounded-2xl border border-stone-200 bg-stone-50">
+    <div class="p-5 sm:p-6">
+        <div class="flex items-start gap-4">
+            <div class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center"
+                 style="background: white; color: var(--primary); border: 1px solid var(--primary-muted, #fed7aa);">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            </div>
+            <div class="min-w-0">
+                <h2 class="text-base font-semibold text-stone-900">You're previewing Intelligence</h2>
+                <p class="mt-1 text-sm text-stone-600 leading-relaxed">
+                    Switch tabs and explore. To actually score packaging, analyse hooks, or pull content gaps for <strong>{{ organization.name }}</strong>, ask an owner or admin of the org to activate Intelligence.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>

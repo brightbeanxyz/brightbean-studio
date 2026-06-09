@@ -33,6 +33,18 @@ httpx>=0.27,<1.0
 # Date utilities
 python-dateutil>=2.9,<3.0
 
+# Agent API — Ninja for REST + Pydantic schemas + OpenAPI docs,
+# mcp SDK for the /api/v1/mcp/ Streamable-HTTP transport that
+# agentic clients (Claude Code, Codex, OpenClaw) connect to.
+django-ninja>=1.3,<2.0
+mcp>=1.0,<2.0
+
+# OAuth 2.1 Authorization Server for the MCP endpoint — lets Claude
+# Desktop (and other native MCP connectors) authenticate via the OAuth
+# DCR + authorization-code + PKCE flow instead of a pre-shared bb_studio_
+# key. Existing API keys keep working unchanged. See apps/oauth_server/.
+django-oauth-toolkit>=3.0,<4.0
+
 
 # Dev/Test
 ruff>=0.6,<1.0

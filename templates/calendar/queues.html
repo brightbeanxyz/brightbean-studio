@@ -43,7 +43,7 @@
                     <select name="social_account_id" required class="form-input w-full text-sm">
                         <option value="">Select channel...</option>
                         {% for acc in accounts %}
-                        <option value="{{ acc.id }}">{{ acc.account_name }} ({{ acc.get_platform_display }})</option>
+                        <option value="{{ acc.id }}">{{ acc.account_name|default:acc.account_handle }} ({{ acc.get_platform_display }})</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -85,7 +85,7 @@
                             <a href="{% url 'calendar:queue_detail' workspace_id=workspace.id queue_id=queue.id %}"
                                class="text-sm font-semibold text-stone-800 hover:text-stone-900">{{ queue.name }}</a>
                             <div class="flex items-center gap-2 mt-0.5">
-                                <span class="text-xs text-stone-500">{{ queue.social_account.account_name }}</span>
+                                <span class="text-xs text-stone-500">{{ queue.social_account.account_name|default:queue.social_account.account_handle }}</span>
                                 {% if queue.category %}
                                 <span class="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border border-stone-200">
                                     <span class="w-2 h-2 rounded-full" style="background: {{ queue.category.color }};"></span>
@@ -101,10 +101,11 @@
                            class="text-xs font-semibold py-1.5 px-3 rounded-full border border-stone-200 hover:border-stone-300 text-stone-600 hover:text-stone-800 transition-colors">
                             View
                         </a>
-                        <form hx-post="{% url 'calendar:queue_delete' workspace_id=workspace.id queue_id=queue.id %}" hx-swap="none"
-                              class="opacity-0 group-hover:opacity-100 transition-all">
+                        <form x-data hx-post="{% url 'calendar:queue_delete' workspace_id=workspace.id queue_id=queue.id %}" hx-swap="none"
+                              class="opacity-0 group-hover:opacity-100 transition-all"
+                              @submit="if(!confirm('Delete this queue?')) $event.preventDefault()">
                             {% csrf_token %}
-                            <button type="submit" class="text-stone-400 hover:text-red-500 p-1" onclick="return confirm('Delete this queue?')">
+                            <button type="submit" class="text-stone-400 hover:text-red-500 p-1">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                             </button>
                         </form>

@@ -1,0 +1,338 @@
+<div id="intel-panel-content-gaps" class="intel-panel mt-6 grid-cols-1 gap-6 lg:grid-cols-2">
+    <div class="rounded-xl border border-stone-200 bg-white shadow-sm">
+        <div class="flex items-center justify-between border-b border-stone-100 px-5 py-3.5">
+            <h2 class="text-sm font-semibold text-stone-900">Research content gaps</h2>
+            <span class="inline-flex items-center rounded-md bg-stone-100 px-2 py-0.5 text-[11px] font-mono text-stone-600">5 credits</span>
+        </div>
+        <div class="p-5">
+            <p class="text-xs text-stone-500 mb-5 leading-relaxed">
+                Find ranked content opportunities in a niche. Returns gaps that are <em>underserved</em> (no quality coverage) or <em>stale</em> (existing top videos are over a year old).
+            </p>
+
+            <form class="intel-form space-y-5"
+                  hx-post="{% url 'intelligence:research-content-gaps' org_id=organization.id %}"
+                  hx-target="#content-gaps-result"
+                  hx-swap="innerHTML">
+                {% csrf_token %}
+
+                <div>
+                    <label for="cg-niche-trigger" class="intel-label">Niche</label>
+                    {% if content_gap_niches %}
+                    {{ content_gap_niches|json_script:"cg-niche-data" }}
+                    <div id="cg-niche-combobox" class="relative">
+                        <input type="hidden" name="niche" id="cg-niche" required
+                               value="{% if is_preview %}{{ preview_inputs.research_content_gaps.niche_slug }}{% endif %}">
+                        {% comment %}
+                          The trigger reuses .intel-input for chrome (border,
+                          padding, hover, focus ring) but .intel-input sets
+                          ``display: block`` which would push the chevron
+                          below the label on its own line. Inline-style the
+                          flex layout so the label + chevron sit on one row
+                          regardless of when .intel-input is parsed relative
+                          to the Tailwind ``flex`` utility.
+                        {% endcomment %}
+                        <button type="button" id="cg-niche-trigger"
+                                role="combobox"
+                                aria-haspopup="listbox"
+                                aria-expanded="false"
+                                aria-controls="cg-niche-listbox"
+                                class="intel-input w-full text-left cursor-pointer"
+                                style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
+                            {% if is_preview %}
+                            <span class="cg-niche-label truncate text-stone-900">{{ preview_inputs.research_content_gaps.niche_name }} ({{ preview_inputs.research_content_gaps.niche_slug }})</span>
+                            {% else %}
+                            <span class="cg-niche-label truncate text-stone-400">Choose a niche…</span>
+                            {% endif %}
+                            <svg class="cg-niche-chevron h-4 w-4 flex-shrink-0 text-stone-400 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/>
+                            </svg>
+                        </button>
+                        <div id="cg-niche-panel"
+                             class="absolute left-0 right-0 top-full z-50 mt-1.5 hidden overflow-hidden rounded-lg border border-stone-200 bg-white shadow-lg">
+                            <div class="border-b border-stone-100 p-2">
+                                <div class="relative">
+                                    <svg class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/>
+                                    </svg>
+                                    <input type="text" id="cg-niche-search" placeholder="Search niches…" autocomplete="off"
+                                           class="block w-full rounded-md border-0 bg-stone-50 py-1.5 pl-8 pr-2.5 text-sm text-stone-900 placeholder:text-stone-400 focus:bg-white focus:outline-none focus:ring-2"
+                                           style="--tw-ring-color: var(--primary-ring, rgba(249,115,22,0.30));">
+                                </div>
+                            </div>
+                            <ul id="cg-niche-listbox" role="listbox" aria-label="Niches" class="max-h-72 overflow-y-auto py-1"></ul>
+                            <div id="cg-niche-empty" class="hidden px-4 py-6 text-center text-sm text-stone-400">No niches match.</div>
+                            <div id="cg-niche-status" class="border-t border-stone-100 bg-stone-50 px-3 py-1.5 text-[11px] text-stone-500"></div>
+                        </div>
+                    </div>
+                    <p class="intel-helper">
+                        {{ content_gap_niches|length }} niche{{ content_gap_niches|length|pluralize }} available · click to browse, type to filter.
+                    </p>
+                    {% else %}
+                    {% comment %}
+                      Fallback path: Intel was unreachable when the page rendered,
+                      so we can't populate the combobox. Degrade to a free-form
+                      slug entry so the form is still usable, the user can type
+                      the slug directly.
+                    {% endcomment %}
+                    <input type="text" name="niche" id="cg-niche" required
+                           placeholder="ai_dev_tools"
+                           class="intel-input">
+                    <p class="intel-helper">
+                        Couldn't load the niche catalog right now. Type a slug directly, or use the <strong>List niches</strong> tab to browse.
+                    </p>
+                    {% endif %}
+                </div>
+
+                <div>
+                    <span class="intel-label">Gap types</span>
+                    <div class="mt-1 flex flex-wrap gap-2">
+                        <label class="cursor-pointer">
+                            <input type="checkbox" name="gap_type" value="underserved" checked class="peer sr-only">
+                            <span class="cg-gap-pill inline-flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-medium shadow-sm transition">
+                                <svg class="cg-gap-pill-check h-3 w-3 opacity-0 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
+                                underserved
+                            </span>
+                        </label>
+                        <label class="cursor-pointer">
+                            <input type="checkbox" name="gap_type" value="stale" checked class="peer sr-only">
+                            <span class="cg-gap-pill inline-flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-medium shadow-sm transition">
+                                <svg class="cg-gap-pill-check h-3 w-3 opacity-0 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
+                                stale
+                            </span>
+                        </label>
+                        <label class="cursor-pointer">
+                            <input type="checkbox" name="gap_type" value="competitive" class="peer sr-only">
+                            <span class="cg-gap-pill inline-flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-medium shadow-sm transition">
+                                <svg class="cg-gap-pill-check h-3 w-3 opacity-0 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
+                                competitive
+                            </span>
+                        </label>
+                    </div>
+                    <p class="intel-helper">Competitive is opt-in, usually means the topic already has plenty of strong recent videos.</p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label for="cg-limit" class="intel-label">Max gaps</label>
+                        <input type="number" name="limit" id="cg-limit" min="1" max="50" value="20"
+                               class="intel-input">
+                        <p class="intel-helper">1–50 results.</p>
+                    </div>
+                    <div>
+                        <label for="cg-min-score" class="intel-label">Min score</label>
+                        <input type="number" name="min_score" id="cg-min-score" min="0" max="100" value="0"
+                               class="intel-input">
+                        <p class="intel-helper">Drops gaps below this opportunity score.</p>
+                    </div>
+                </div>
+
+                <div>
+                    <button type="submit" class="intel-submit"{% if is_preview %} disabled aria-disabled="true"{% endif %}>
+                        <svg class="intel-submit-icon h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>
+                        <svg class="intel-submit-spinner hidden h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+                        <span class="intel-submit-label">Find gaps</span>
+                        <span class="intel-submit-loading hidden">Querying…</span>
+                    </button>
+                    {% if is_preview %}
+                    <p class="intel-activate-note">
+                        {% if can_manage_billing %}<a href="{% url 'intelligence:subscribe' org_id=organization.id %}">Activate Intelligence</a> to research gaps in any niche you choose.{% else %}Ask an admin to activate Intelligence to research gaps in any niche you choose.{% endif %}
+                    </p>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="rounded-xl border border-stone-200 bg-white shadow-sm">
+        <div class="border-b border-stone-100 px-5 py-3.5">
+            <h2 class="text-sm font-semibold text-stone-900">Result</h2>
+        </div>
+        <div id="content-gaps-result" class="p-5 min-h-[220px]">
+            {% if is_preview %}
+                {% include "intelligence/_preview_badge.html" %}
+                {% include "intelligence/_research_content_gaps_result.html" with result=preview_results.research_content_gaps %}
+            {% else %}
+                {% include "intelligence/_panel_empty_state.html" with hint="Submit a niche to see ranked opportunities." %}
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% if content_gap_niches %}
+<style>
+    /* Gap-type pill: hand-CSS so we don't depend on Tailwind's
+       ``peer-checked:`` variants being in the pre-built bundle. */
+    .cg-gap-pill {
+        border-color: #e7e5e4;
+        color: #57534e;
+    }
+    .cg-gap-pill:hover {
+        border-color: #d6d3d1;
+        background: #fafaf9;
+    }
+    label > input[type="checkbox"]:checked + .cg-gap-pill {
+        border-color: var(--primary);
+        background: var(--primary-soft, #fff7ed);
+        color: var(--primary);
+    }
+    label > input[type="checkbox"]:checked + .cg-gap-pill .cg-gap-pill-check {
+        opacity: 1;
+    }
+    label > input[type="checkbox"]:focus + .cg-gap-pill {
+        box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.15);
+    }
+    /* Combobox row hover/selection. */
+    .cg-niche-row {
+        cursor: pointer;
+        padding: 0.5rem 0.75rem;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+        font-size: 0.875rem;
+    }
+    .cg-niche-row:hover,
+    .cg-niche-row.cg-niche-row-active {
+        background: var(--primary-soft, #fff7ed);
+    }
+</style>
+<script nonce="{{ request.csp_nonce }}">
+(function () {
+    var data = [];
+    try {
+        var dataEl = document.getElementById("cg-niche-data");
+        if (dataEl) data = JSON.parse(dataEl.textContent || "[]");
+    } catch (e) { return; }
+    if (!Array.isArray(data) || data.length === 0) return;
+
+    var root = document.getElementById("cg-niche-combobox");
+    if (!root) return;
+    var trigger = document.getElementById("cg-niche-trigger");
+    var labelEl = trigger.querySelector(".cg-niche-label");
+    var chevron = trigger.querySelector(".cg-niche-chevron");
+    var hidden = document.getElementById("cg-niche");
+    var panel = document.getElementById("cg-niche-panel");
+    var search = document.getElementById("cg-niche-search");
+    var listbox = document.getElementById("cg-niche-listbox");
+    var emptyEl = document.getElementById("cg-niche-empty");
+    var statusEl = document.getElementById("cg-niche-status");
+
+    var open = false;
+    var activeIndex = -1;
+    var filtered = data.slice();
+
+    var escapeMap = {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"};
+    function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return escapeMap[c]; }); }
+
+    function renderRows() {
+        if (filtered.length === 0) {
+            listbox.innerHTML = "";
+            listbox.classList.add("hidden");
+            emptyEl.classList.remove("hidden");
+        } else {
+            listbox.classList.remove("hidden");
+            emptyEl.classList.add("hidden");
+            var selected = hidden.value;
+            listbox.innerHTML = filtered.map(function (n, i) {
+                return '<li role="option" data-i="' + i + '" data-slug="' + esc(n.slug) + '"'
+                    + ' aria-selected="' + (selected === n.slug ? "true" : "false") + '"'
+                    + ' class="cg-niche-row">'
+                    +   '<span class="min-w-0 flex-1">'
+                    +     '<span class="block truncate font-medium text-stone-900">' + esc(n.name) + '</span>'
+                    +     '<span class="block truncate font-mono text-[11px] text-stone-400">' + esc(n.slug) + '</span>'
+                    +   '</span>'
+                    +   '<span class="ml-2 inline-flex flex-shrink-0 items-center rounded-md bg-stone-100 px-1.5 py-0.5 text-[11px] font-medium text-stone-600">' + esc(n.gap_count) + ' gaps</span>'
+                    + '</li>';
+            }).join("");
+        }
+        statusEl.textContent = filtered.length === data.length
+            ? data.length + " niches"
+            : filtered.length + " of " + data.length + " match";
+    }
+
+    function setActive(i, scroll) {
+        var items = listbox.querySelectorAll("li");
+        items.forEach(function (el) { el.classList.remove("cg-niche-row-active"); });
+        activeIndex = i;
+        if (i >= 0 && items[i]) {
+            items[i].classList.add("cg-niche-row-active");
+            if (scroll !== false) items[i].scrollIntoView({ block: "nearest" });
+        }
+    }
+    function openPanel() {
+        if (open) return;
+        open = true;
+        panel.classList.remove("hidden");
+        trigger.setAttribute("aria-expanded", "true");
+        chevron.style.transform = "rotate(180deg)";
+        var selIdx = filtered.findIndex(function (n) { return n.slug === hidden.value; });
+        setActive(selIdx >= 0 ? selIdx : 0);
+        setTimeout(function () { search.focus(); }, 0);
+    }
+    function closePanel(restoreFocus) {
+        if (!open) return;
+        open = false;
+        panel.classList.add("hidden");
+        trigger.setAttribute("aria-expanded", "false");
+        chevron.style.transform = "";
+        if (search.value) {
+            search.value = "";
+            filtered = data.slice();
+            renderRows();
+        }
+        activeIndex = -1;
+        if (restoreFocus) trigger.focus();
+    }
+    function select(slug) {
+        var niche = data.find(function (n) { return n.slug === slug; });
+        if (!niche) return;
+        hidden.value = niche.slug;
+        labelEl.textContent = niche.name + " (" + niche.slug + ")";
+        labelEl.classList.remove("text-stone-400");
+        labelEl.classList.add("text-stone-900");
+        closePanel(true);
+    }
+    function applyFilter() {
+        var q = search.value.trim().toLowerCase();
+        filtered = q
+            ? data.filter(function (n) {
+                return n.slug.toLowerCase().indexOf(q) !== -1
+                    || n.name.toLowerCase().indexOf(q) !== -1;
+            })
+            : data.slice();
+        renderRows();
+        setActive(filtered.length > 0 ? 0 : -1, false);
+    }
+
+    renderRows();
+
+    trigger.addEventListener("click", function () { open ? closePanel() : openPanel(); });
+    trigger.addEventListener("keydown", function (e) {
+        if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openPanel();
+        }
+    });
+    search.addEventListener("input", applyFilter);
+    search.addEventListener("keydown", function (e) {
+        if (e.key === "ArrowDown") { e.preventDefault(); setActive(Math.min(activeIndex + 1, filtered.length - 1)); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); setActive(Math.max(activeIndex - 1, 0)); }
+        else if (e.key === "Home") { e.preventDefault(); setActive(0); }
+        else if (e.key === "End") { e.preventDefault(); setActive(filtered.length - 1); }
+        else if (e.key === "Enter") {
+            e.preventDefault();
+            if (activeIndex >= 0 && filtered[activeIndex]) select(filtered[activeIndex].slug);
+        }
+        else if (e.key === "Escape") { e.preventDefault(); closePanel(true); }
+    });
+    listbox.addEventListener("click", function (e) {
+        var li = e.target.closest("li[data-slug]");
+        if (li) select(li.dataset.slug);
+    });
+    document.addEventListener("mousedown", function (e) {
+        if (!open) return;
+        if (!root.contains(e.target)) closePanel();
+    });
+})();
+</script>
+{% endif %}

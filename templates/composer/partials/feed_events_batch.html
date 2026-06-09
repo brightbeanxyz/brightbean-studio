@@ -20,7 +20,7 @@
         <div class="mt-1 flex items-center gap-1.5 text-sm text-stone-500">
             {% if event.feed_favicon_url %}
             <img src="{{ event.feed_favicon_url }}" alt="" loading="lazy" class="w-4 h-4 rounded object-contain"
-                 onerror="this.style.display='none'; this.nextElementSibling.classList.remove('hidden');">
+                 x-data @error="$el.style.display='none'; $el.nextElementSibling.classList.remove('hidden');">
             {% endif %}
             <svg class="w-4 h-4 text-stone-400 {% if event.feed_favicon_url %}hidden{% endif %}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 019 9"/><path d="M4 4a16 16 0 0116 16"/><circle cx="5" cy="19" r="1"/></svg>
             <span>{{ event.feed_name }}</span>

@@ -11,7 +11,7 @@
         <div>
             <h1 class="text-base font-semibold text-stone-900" style="letter-spacing: -0.01em;">{{ queue.name }}</h1>
             <div class="flex items-center gap-2 mt-0.5">
-                <span class="text-xs text-stone-500">{{ queue.social_account.account_name }} · {{ queue.social_account.get_platform_display }}</span>
+                <span class="text-xs text-stone-500">{{ queue.social_account.account_name|default:queue.social_account.account_handle }} · {{ queue.social_account.get_platform_display }}</span>
                 {% if queue.category %}
                 <span class="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border border-stone-200">
                     <span class="w-2 h-2 rounded-full" style="background: {{ queue.category.color }};"></span>

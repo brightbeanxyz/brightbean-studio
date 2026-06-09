@@ -28,7 +28,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.composer.models import PlatformPost
-from apps.credentials.models import PlatformCredential
+from apps.credentials.models import resolve_platform_credentials
 from providers import get_provider
 from providers.types import AuthType, PostType, PublishContent
 
@@ -38,6 +38,46 @@ logger = logging.getLogger(__name__)
 
 # Retry backoff schedule (in seconds)
 RETRY_BACKOFF = [60, 300, 1800]  # 1min, 5min, 30min
+
+
+def _resolve_publish_credentials(account):
+    """Resolve the credentials dict for publishing on behalf of `account`.
+
+    Combines org-level `PlatformCredential` (with `.env` dominant) with
+    per-account federation metadata (Mastodon `instance_url` +
+    `MastodonAppRegistration`, Bluesky `pds_url`). Returns a plain dict
+    suitable for `get_provider(platform, credentials)`.
+    """
+    platform = account.platform
+
+    # .env is dominant; admin-entered org credentials are the fallback.
+    credentials = resolve_platform_credentials(platform, account.workspace.organization_id)
+
+    if platform == "mastodon" and account.instance_url:
+        from apps.common.validators import is_safe_url
+
+        if is_safe_url(account.instance_url):
+            credentials["instance_url"] = account.instance_url
+            if not credentials.get("client_id"):
+                from apps.social_accounts.models import MastodonAppRegistration
+
+                try:
+                    reg = MastodonAppRegistration.objects.get(instance_url=account.instance_url)
+                    credentials["client_id"] = reg.client_id
+                    credentials["client_secret"] = reg.client_secret
+                except MastodonAppRegistration.DoesNotExist:
+                    pass
+        else:
+            logger.warning(
+                "Mastodon instance URL failed SSRF check for account %s",
+                account.id,
+            )
+    elif platform == "bluesky" and account.instance_url:
+        credentials["pds_url"] = account.instance_url
+
+    return credentials
+
+
 MAX_RETRIES = 3
 FIRST_COMMENT_DELAY = getattr(settings, "PUBLISHER_FIRST_COMMENT_DELAY", 120)
 MAX_CONCURRENT_PUBLISHES = getattr(settings, "PUBLISHER_MAX_CONCURRENT_PUBLISHES", 10)
@@ -135,10 +175,13 @@ class PublishEngine:
         # Schedule first comments for successful publishes (non-blocking)
         for pp in platform_posts:
             pp.refresh_from_db()
-            if pp.status == PlatformPost.Status.PUBLISHED:
-                comment_text = pp.effective_first_comment
-                if comment_text:
-                    _post_first_comment_task(str(pp.id), schedule=FIRST_COMMENT_DELAY)
+            if pp.status != PlatformPost.Status.PUBLISHED:
+                continue
+            if not pp.social_account.supports_first_comment():
+                continue
+            comment_text = pp.effective_first_comment
+            if comment_text:
+                _post_first_comment_task(str(pp.id), schedule=FIRST_COMMENT_DELAY)
 
     def _publish_platform_post(self, platform_post):
         """Publish a single PlatformPost to its target platform.
@@ -224,40 +267,7 @@ class PublishEngine:
         account = platform_post.social_account
         platform = account.platform
 
-        # Resolve app credentials (org-specific first, then env fallback)
-        try:
-            cred = PlatformCredential.objects.for_org(account.workspace.organization_id).get(
-                platform=platform, is_configured=True
-            )
-            credentials = dict(cred.credentials)
-        except PlatformCredential.DoesNotExist:
-            env_creds = getattr(settings, "PLATFORM_CREDENTIALS_FROM_ENV", {})
-            credentials = dict(env_creds.get(platform, {}))
-
-        # Inject per-account instance URL for federated providers
-        if platform == "mastodon" and account.instance_url:
-            from apps.common.validators import is_safe_url
-
-            if is_safe_url(account.instance_url):
-                credentials["instance_url"] = account.instance_url
-                # Look up per-instance OAuth app registration if no org creds
-                if not credentials.get("client_id"):
-                    from apps.social_accounts.models import MastodonAppRegistration
-
-                    try:
-                        reg = MastodonAppRegistration.objects.get(instance_url=account.instance_url)
-                        credentials["client_id"] = reg.client_id
-                        credentials["client_secret"] = reg.client_secret
-                    except MastodonAppRegistration.DoesNotExist:
-                        pass
-            else:
-                logger.warning(
-                    "Mastodon instance URL failed SSRF check for account %s",
-                    account.id,
-                )
-        elif platform == "bluesky" and account.instance_url:
-            credentials["pds_url"] = account.instance_url
-
+        credentials = _resolve_publish_credentials(account)
         provider = get_provider(platform, credentials)
 
         # Refresh token if expired or expiring soon (OAuth2 providers only)
@@ -337,6 +347,10 @@ class PublishEngine:
             # Inject page_id for Facebook from the connected account.
             if platform == "facebook" and "page_id" not in extra:
                 extra["page_id"] = account.account_platform_id
+
+            # Inject org author URN for LinkedIn Company Page.
+            if platform == "linkedin_company" and "author" not in extra:
+                extra["author"] = f"urn:li:organization:{account.account_platform_id}"
 
             # Pop link_url from extra and set on PublishContent directly
             link_url = extra.pop("link_url", None)
@@ -447,7 +461,7 @@ class PublishEngine:
         # 3. Multi-media → CAROUSEL for Instagram/Threads
         if media_count > 1 and platform in (
             "instagram",
-            "instagram_personal",
+            "instagram_login",
             "threads",
         ):
             return PostType.CAROUSEL
@@ -558,15 +572,7 @@ def _post_first_comment_task(platform_post_id):
 
     account = platform_post.social_account
     try:
-        try:
-            cred = PlatformCredential.objects.for_org(account.workspace.organization_id).get(
-                platform=account.platform, is_configured=True
-            )
-            credentials = cred.credentials
-        except PlatformCredential.DoesNotExist:
-            env_creds = getattr(settings, "PLATFORM_CREDENTIALS_FROM_ENV", {})
-            credentials = env_creds.get(account.platform, {})
-
+        credentials = _resolve_publish_credentials(account)
         provider = get_provider(account.platform, credentials)
         provider.publish_comment(
             access_token=account.oauth_access_token,

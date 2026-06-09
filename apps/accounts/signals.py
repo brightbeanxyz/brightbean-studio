@@ -94,8 +94,11 @@ def create_organization_on_signup(sender, request, user, **kwargs):
             if not invitation.is_expired:
                 invited_org_id = invitation.organization_id
 
-                # Accept the invitation (creates OrgMembership + WorkspaceMemberships)
-                accept_invitation(invitation, user)
+                # Accept the invitation (creates OrgMembership + WorkspaceMemberships).
+                # Skip the email-match check: the session token is proof of
+                # delivery, and social logins return a provider-controlled email
+                # that often differs from the invited address.
+                accept_invitation(invitation, user, require_email_match=False)
 
                 # Clean up the default org that post_save created, if it's
                 # different from the invited org.

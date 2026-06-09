@@ -1,0 +1,55 @@
+<div id="intel-panel-benchmark-channel" class="intel-panel mt-6 grid-cols-1 gap-6 lg:grid-cols-2">
+    <div class="rounded-xl border border-stone-200 bg-white shadow-sm">
+        <div class="flex items-center justify-between border-b border-stone-100 px-5 py-3.5">
+            <h2 class="text-sm font-semibold text-stone-900">Benchmark channel</h2>
+            <span class="inline-flex items-center rounded-md bg-stone-100 px-2 py-0.5 text-[11px] font-mono text-stone-600">5 credits</span>
+        </div>
+        <div class="p-5">
+            <p class="text-xs text-stone-500 mb-5 leading-relaxed">
+                Compare a YouTube channel against its niche. Pulls the last ~10 videos, classifies the niche from titles, and percentile-ranks engagement + title patterns.
+            </p>
+
+            <form class="intel-form space-y-5"
+                  hx-post="{% url 'intelligence:benchmark-channel' org_id=organization.id %}"
+                  hx-target="#benchmark-channel-result"
+                  hx-swap="innerHTML">
+                {% csrf_token %}
+                <div>
+                    <label for="bc-url" class="intel-label">Channel URL or @handle</label>
+                    <input type="text" name="url" id="bc-url" required maxlength="1024"
+                           placeholder="https://youtube.com/@theo-t3-gg"
+                           value="{% if is_preview %}{{ preview_inputs.benchmark_channel.url }}{% endif %}"
+                           class="intel-input">
+                    <p class="intel-helper">Accepts <code class="font-mono text-[11px]">@handle</code>, <code class="font-mono text-[11px]">/channel/UC…</code>, <code class="font-mono text-[11px]">/c/&lt;name&gt;</code>, or <code class="font-mono text-[11px]">/user/&lt;legacy&gt;</code>.</p>
+                </div>
+                <div>
+                    <button type="submit" class="intel-submit"{% if is_preview %} disabled aria-disabled="true"{% endif %}>
+                        <svg class="intel-submit-icon h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>
+                        <svg class="intel-submit-spinner hidden h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+                        <span class="intel-submit-label">Benchmark</span>
+                        <span class="intel-submit-loading hidden">Benchmarking…</span>
+                    </button>
+                    {% if is_preview %}
+                    <p class="intel-activate-note">
+                        {% if can_manage_billing %}<a href="{% url 'intelligence:subscribe' org_id=organization.id %}">Activate Intelligence</a> to benchmark your own channel.{% else %}Ask an admin to activate Intelligence to benchmark your own channel.{% endif %}
+                    </p>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="rounded-xl border border-stone-200 bg-white shadow-sm">
+        <div class="border-b border-stone-100 px-5 py-3.5">
+            <h2 class="text-sm font-semibold text-stone-900">Result</h2>
+        </div>
+        <div id="benchmark-channel-result" class="p-5 min-h-[220px]">
+            {% if is_preview %}
+                {% include "intelligence/_preview_badge.html" %}
+                {% include "intelligence/_benchmark_channel_result.html" with result=preview_results.benchmark_channel %}
+            {% else %}
+                {% include "intelligence/_panel_empty_state.html" with hint="Submit a channel URL to see niche percentiles." %}
+            {% endif %}
+        </div>
+    </div>
+</div>

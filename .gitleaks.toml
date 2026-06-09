@@ -1,0 +1,17 @@
+# gitleaks v8 config. Extends the default rule set and adds an allowlist
+# for known false positives in this repository.
+
+[extend]
+useDefault = true
+
+# False positive: the default `linkedin-client-secret` rule matches the
+# `LinkedInProvider` class name when imported alongside `linkedin` (the
+# 16-char identifier next to the word "linkedin" satisfies the rule's
+# regex). This is a project class name, not a credential.
+#
+# Affected lines (examples):
+#   providers/linkedin_personal.py:  from .linkedin import API_BASE, LinkedInProvider
+#   providers/linkedin_company.py:   from .linkedin import LinkedInProvider
+[allowlist]
+description = "Project allowlist: ignore LinkedInProvider class-name imports"
+regexes = ['''LinkedInProvider''']

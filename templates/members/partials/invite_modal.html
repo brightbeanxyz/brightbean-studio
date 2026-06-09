@@ -29,10 +29,8 @@
                 <div class="mb-5">
                     <label for="invite-email" class="block text-sm font-medium mb-1.5" style="color: var(--text-primary);">Email Address</label>
                     <input type="email" id="invite-email" name="email" required placeholder="colleague@example.com"
-                           class="w-full px-4 py-2.5 text-sm rounded-lg outline-none transition-all"
-                           style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-1);"
-                           onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 3px var(--primary-ring)'; this.style.background='var(--surface-0)'"
-                           onblur="this.style.borderColor='var(--border)'; this.style.boxShadow='none'; this.style.background='var(--surface-1)'">
+                           class="input-focus w-full px-4 py-2.5 text-sm rounded-lg outline-none transition-all"
+                           style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-1);">
                 </div>
 
                 <!-- Org Role -->
@@ -67,10 +65,8 @@
                                 {{ ws.name }}
                             </label>
                             <select name="ws_role_{{ ws.id }}"
-                                    class="text-xs font-semibold cursor-pointer"
-                                    style="padding: 4px 24px 4px 8px; border-radius: 8px; color: var(--text-secondary); background: var(--surface-0); border: 1px solid var(--border); appearance: none; background-image: url(&quot;data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2378716C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E&quot;); background-repeat: no-repeat; background-position: right 6px center; transition: all 150ms ease; outline: none;"
-                                    onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 2px rgba(249,115,22,0.15)'"
-                                    onblur="this.style.borderColor='var(--border)'; this.style.boxShadow='none'">
+                                    class="input-focus text-xs font-semibold cursor-pointer"
+                                    style="padding: 4px 24px 4px 8px; border-radius: 8px; color: var(--text-secondary); background: var(--surface-0); border: 1px solid var(--border); appearance: none; background-image: url(&quot;data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2378716C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E&quot;); background-repeat: no-repeat; background-position: right 6px center; transition: all 150ms ease; outline: none;">
                                 {% for value, label in workspace_role_choices %}
                                 <option value="{{ value }}" {% if value == "editor" %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
@@ -90,17 +86,13 @@
                 <!-- Submit -->
                 <div class="flex justify-end gap-3">
                     <button type="button" @click="showInviteModal = false"
-                            class="px-5 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
-                            style="background: var(--neutral-100); color: var(--text-primary);"
-                            onmouseenter="this.style.background='var(--neutral-200)'"
-                            onmouseleave="this.style.background='var(--neutral-100)'">
+                            class="btn-neutral px-5 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
+                            style="background: var(--neutral-100); color: var(--text-primary);">
                         Cancel
                     </button>
                     <button type="submit"
-                            class="px-5 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
-                            style="background: var(--primary); color: white;"
-                            onmouseenter="this.style.opacity='0.9'"
-                            onmouseleave="this.style.opacity='1'">
+                            class="btn-opacity px-5 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
+                            style="background: var(--primary); color: white;">
                         Send Invitation
                     </button>
                 </div>

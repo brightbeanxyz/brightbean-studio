@@ -41,8 +41,8 @@
                    class="w-7 h-7 flex items-center justify-center rounded-md text-stone-400 hover:text-stone-600 hover:bg-stone-100 transition-all">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                 </a>
-                <form method="post" action="{% url 'inbox:saved_reply_delete' workspace_id=workspace.id reply_id=reply.id %}"
-                      onsubmit="return confirm('Delete this saved reply?')">
+                <form x-data method="post" action="{% url 'inbox:saved_reply_delete' workspace_id=workspace.id reply_id=reply.id %}"
+                      @submit="if(!confirm('Delete this saved reply?')) $event.preventDefault()">
                     {% csrf_token %}
                     <button type="submit"
                             class="w-7 h-7 flex items-center justify-center rounded-md text-stone-400 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer">

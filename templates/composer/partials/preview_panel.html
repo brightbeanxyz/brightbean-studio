@@ -49,10 +49,10 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
                     {% if p.account.avatar_url %}
                     <img src="{{ p.account.avatar_url }}" class="w-6 h-6 rounded-full object-cover">
                     {% else %}
-                    <div class="w-6 h-6 rounded-full bg-red-600 flex items-center justify-center text-[9px] font-bold text-white">{{ p.account.account_name|make_list|first|upper }}</div>
+                    <div class="w-6 h-6 rounded-full bg-red-600 flex items-center justify-center text-[9px] font-bold text-white">{{ p.account.account_name|default:p.account.account_handle|make_list|first|upper }}</div>
                     {% endif %}
                     <div>
-                        <div class="text-[11px] font-medium text-stone-600">{{ p.account.account_name }}</div>
+                        <div class="text-[11px] font-medium text-stone-600">{{ p.account.account_name|default:p.account.account_handle }}</div>
                         <div class="text-[10px] text-stone-400">0 views · Just now</div>
                     </div>
                 </div>
@@ -60,16 +60,16 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
             </div>
         </div>
 
-        {% elif p.account.platform == "instagram" or p.account.platform == "instagram_personal" %}
+        {% elif p.account.platform == "instagram" or p.account.platform == "instagram_login" %}
         {# ─── Instagram ─── square media, account header, action icons #}
         <div class="bg-white">
             <div class="flex items-center gap-2.5 px-3 py-2.5">
                 {% if p.account.avatar_url %}
                 <img src="{{ p.account.avatar_url }}" class="w-8 h-8 rounded-full object-cover" style="border: 2px solid #E7E5E4;">
                 {% else %}
-                <div class="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold text-white" style="background: linear-gradient(135deg, #F58529, #DD2A7B, #8134AF);">{{ p.account.account_name|make_list|first|upper }}</div>
+                <div class="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold text-white" style="background: linear-gradient(135deg, #F58529, #DD2A7B, #8134AF);">{{ p.account.account_name|default:p.account.account_handle|make_list|first|upper }}</div>
                 {% endif %}
-                <span class="text-[13px] font-semibold text-stone-900">{{ p.account.account_name }}</span>
+                <span class="text-[13px] font-semibold text-stone-900">{{ p.account.account_name|default:p.account.account_handle }}</span>
                 <svg class="w-4 h-4 text-stone-400 ml-auto" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="18" r="2"/></svg>
             </div>
             {% if media_items %}
@@ -128,7 +128,7 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
             </div>
             <div class="px-3 pb-3">
                 {% if p.caption %}
-                <div class="text-[13px] text-stone-900 leading-relaxed"><span class="font-semibold">{{ p.account.account_name }}</span> <span class="whitespace-pre-wrap break-words">{{ p.truncated_caption|truncatechars:150 }}</span></div>
+                <div class="text-[13px] text-stone-900 leading-relaxed"><span class="font-semibold">{{ p.account.account_name|default:p.account.account_handle }}</span> <span class="whitespace-pre-wrap break-words">{{ p.truncated_caption|truncatechars:150 }}</span></div>
                 {% else %}
                 <div class="text-[13px] text-stone-300 italic">Write a caption…</div>
                 {% endif %}
@@ -146,10 +146,10 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
                 {% if p.account.avatar_url %}
                 <img src="{{ p.account.avatar_url }}" class="w-10 h-10 rounded-full object-cover">
                 {% else %}
-                <div class="w-10 h-10 rounded-full bg-[#1877F2] flex items-center justify-center text-xs font-bold text-white">{{ p.account.account_name|make_list|first|upper }}</div>
+                <div class="w-10 h-10 rounded-full bg-[#1877F2] flex items-center justify-center text-xs font-bold text-white">{{ p.account.account_name|default:p.account.account_handle|make_list|first|upper }}</div>
                 {% endif %}
                 <div class="flex-1">
-                    <div class="text-[13px] font-semibold text-stone-900">{{ p.account.account_name }}</div>
+                    <div class="text-[13px] font-semibold text-stone-900">{{ p.account.account_name|default:p.account.account_handle }}</div>
                     <div class="text-[11px] text-stone-400 flex items-center gap-1">Just now · <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 16 16"><path d="M8 16A8 8 0 108 0a8 8 0 000 16zM4.5 7.5a.5.5 0 01.5-.5h6a.5.5 0 010 1H5a.5.5 0 01-.5-.5z"/></svg></div>
                 </div>
                 <svg class="w-5 h-5 text-stone-400" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="18" r="2"/></svg>
@@ -225,10 +225,10 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
                 {% if p.account.avatar_url %}
                 <img src="{{ p.account.avatar_url }}" class="w-12 h-12 rounded-full object-cover">
                 {% else %}
-                <div class="w-12 h-12 rounded-full bg-[#0A66C2] flex items-center justify-center text-sm font-bold text-white">{{ p.account.account_name|make_list|first|upper }}</div>
+                <div class="w-12 h-12 rounded-full bg-[#0A66C2] flex items-center justify-center text-sm font-bold text-white">{{ p.account.account_name|default:p.account.account_handle|make_list|first|upper }}</div>
                 {% endif %}
                 <div class="flex-1 min-w-0">
-                    <div class="text-[13px] font-semibold text-stone-900">{{ p.account.account_name }}</div>
+                    <div class="text-[13px] font-semibold text-stone-900">{{ p.account.account_name|default:p.account.account_handle }}</div>
                     <div class="text-[11px] text-stone-400 leading-tight truncate">{{ p.account.account_handle|default:"Company page" }}</div>
                     <div class="text-[11px] text-stone-400 flex items-center gap-1 mt-0.5">Just now · <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 16 16"><path d="M0 8a8 8 0 1116 0A8 8 0 010 8zm5.496-3.397A.75.75 0 004.5 5.25v5.5a.75.75 0 001.052.687l4.97-2.522.063-.035a.75.75 0 000-1.34l-.063-.036-4.97-2.521-.056-.02z"/></svg></div>
                 </div>
@@ -292,7 +292,8 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
 
         {% elif p.account.platform == "tiktok" %}
         {# ─── TikTok ─── vertical phone-style preview #}
-        <div class="bg-black text-white relative overflow-hidden" style="aspect-ratio: 9/14; max-height: 380px;">
+        <div class="bg-black">
+        <div class="bg-black text-white relative overflow-hidden mx-auto" style="aspect-ratio: 9/16; max-height: 480px;">
             {% if media_items %}
             {% with m=media_items.0 %}
             {% if m.is_video %}
@@ -301,30 +302,63 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
             <img src="{{ m.url }}" class="absolute inset-0 w-full h-full object-cover" alt="">
             {% endif %}
             {% endwith %}
+            {% else %}
+            <div class="absolute inset-0 flex flex-col items-center justify-center bg-stone-900">
+                <svg class="w-10 h-10 text-stone-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z"/></svg>
+                <span class="text-[11px] text-stone-500">Upload a video</span>
+            </div>
             {% endif %}
-            <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent"></div>
-            <!-- Right sidebar icons -->
-            <div class="absolute right-2 bottom-20 flex flex-col items-center gap-4">
-                <div class="flex flex-col items-center gap-0.5">
-                    <svg class="w-7 h-7" fill="white" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
-                    <span class="text-[10px]">0</span>
+            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent"></div>
+            <!-- Right sidebar: avatar + action icons -->
+            <div class="absolute right-2.5 bottom-16 flex flex-col items-center gap-3.5">
+                <!-- Avatar with follow badge -->
+                <div class="relative mb-1">
+                    {% if p.account.avatar_url %}
+                    <img src="{{ p.account.avatar_url }}" class="w-10 h-10 rounded-full object-cover border-2 border-white">
+                    {% else %}
+                    <div class="w-10 h-10 rounded-full bg-stone-700 flex items-center justify-center text-[11px] font-bold text-white border-2 border-white">{{ p.account.account_name|default:p.account.account_handle|make_list|first|upper }}</div>
+                    {% endif %}
+                    <div class="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-4.5 h-4.5 bg-[#FE2C55] rounded-full flex items-center justify-center">
+                        <svg class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" d="M12 6v12m-6-6h12"/></svg>
+                    </div>
                 </div>
+                <!-- Heart -->
                 <div class="flex flex-col items-center gap-0.5">
-                    <svg class="w-7 h-7" fill="white" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                    <span class="text-[10px]">0</span>
+                    <svg class="w-7 h-7 drop-shadow-sm" fill="white" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                    <span class="text-[10px] font-medium drop-shadow-sm">0</span>
                 </div>
+                <!-- Comment -->
                 <div class="flex flex-col items-center gap-0.5">
-                    <svg class="w-6 h-6" fill="white" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
-                    <span class="text-[10px]">0</span>
+                    <svg class="w-7 h-7 drop-shadow-sm" fill="white" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 5.813 2 10.5c0 2.614 1.394 4.96 3.586 6.53-.16 1.404-.862 2.672-1.586 3.47a.5.5 0 00.362.84c2.026-.064 3.762-.76 5.028-1.59.853.164 1.74.25 2.61.25 5.523 0 10-3.813 10-8.5S17.523 2 12 2z"/></svg>
+                    <span class="text-[10px] font-medium drop-shadow-sm">0</span>
+                </div>
+                <!-- Bookmark -->
+                <div class="flex flex-col items-center gap-0.5">
+                    <svg class="w-6 h-6 drop-shadow-sm" fill="white" viewBox="0 0 24 24"><path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg>
+                    <span class="text-[10px] font-medium drop-shadow-sm">0</span>
+                </div>
+                <!-- Share -->
+                <div class="flex flex-col items-center gap-0.5">
+                    <svg class="w-6 h-6 drop-shadow-sm" fill="white" viewBox="0 0 24 24"><path d="M15 5l-1.41 1.41L15.17 8H11c-3.87 0-7 3.13-7 7v2h2v-2c0-2.76 2.24-5 5-5h4.17l-1.58 1.59L15 13l4-4-4-4z"/></svg>
+                </div>
+                <!-- Spinning music disc -->
+                <div class="w-8 h-8 rounded-full border-2 border-stone-500 bg-stone-800 flex items-center justify-center mt-0.5">
+                    <div class="w-3 h-3 rounded-full bg-stone-400"></div>
                 </div>
             </div>
-            <!-- Bottom text -->
-            <div class="absolute bottom-3 left-3 right-14">
-                <div class="text-[13px] font-semibold mb-1">{{ p.account.account_name }}</div>
+            <!-- Bottom text overlay -->
+            <div class="absolute bottom-3 left-3 right-16">
+                <div class="text-[13px] font-bold mb-1 drop-shadow-sm">@{{ p.account.account_name|default:p.account.account_handle }}</div>
                 {% if p.caption %}
-                <div class="text-[12px] leading-relaxed line-clamp-3 whitespace-pre-wrap">{{ p.truncated_caption|truncatechars:120 }}</div>
+                <div class="text-[12px] leading-relaxed line-clamp-2 whitespace-pre-wrap drop-shadow-sm">{{ p.truncated_caption|truncatechars:100 }}</div>
                 {% endif %}
+                <!-- Music ticker -->
+                <div class="flex items-center gap-1.5 mt-2">
+                    <svg class="w-3 h-3 flex-shrink-0" fill="white" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+                    <span class="text-[11px] truncate drop-shadow-sm">Original sound - {{ p.account.account_name|default:p.account.account_handle }}</span>
+                </div>
             </div>
+        </div>
         </div>
 
         {% elif p.account.platform == "threads" %}
@@ -334,11 +368,11 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
                 {% if p.account.avatar_url %}
                 <img src="{{ p.account.avatar_url }}" class="w-9 h-9 rounded-full object-cover flex-shrink-0">
                 {% else %}
-                <div class="w-9 h-9 rounded-full bg-black flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0">{{ p.account.account_name|make_list|first|upper }}</div>
+                <div class="w-9 h-9 rounded-full bg-black flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0">{{ p.account.account_name|default:p.account.account_handle|make_list|first|upper }}</div>
                 {% endif %}
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-1.5 mb-0.5">
-                        <span class="text-[13px] font-semibold text-stone-900">{{ p.account.account_name }}</span>
+                        <span class="text-[13px] font-semibold text-stone-900">{{ p.account.account_name|default:p.account.account_handle }}</span>
                         <span class="text-[11px] text-stone-400">just now</span>
                     </div>
                     {% if p.caption %}
@@ -404,11 +438,11 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
                 {% if p.account.avatar_url %}
                 <img src="{{ p.account.avatar_url }}" class="w-10 h-10 rounded-full object-cover flex-shrink-0">
                 {% else %}
-                <div class="w-10 h-10 rounded-full bg-[#0085FF] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{{ p.account.account_name|make_list|first|upper }}</div>
+                <div class="w-10 h-10 rounded-full bg-[#0085FF] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{{ p.account.account_name|default:p.account.account_handle|make_list|first|upper }}</div>
                 {% endif %}
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-1.5 mb-0.5">
-                        <span class="text-[13px] font-semibold text-stone-900">{{ p.account.account_name }}</span>
+                        <span class="text-[13px] font-semibold text-stone-900">{{ p.account.account_name|default:p.account.account_handle }}</span>
                         <span class="text-[12px] text-stone-400">{{ p.account.account_handle|default:"@handle" }}</span>
                         <span class="text-[11px] text-stone-400 ml-auto">now</span>
                     </div>
@@ -467,9 +501,9 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
                     {% if p.account.avatar_url %}
                     <img src="{{ p.account.avatar_url }}" class="w-6 h-6 rounded-full object-cover">
                     {% else %}
-                    <div class="w-6 h-6 rounded-full bg-[#E60023] flex items-center justify-center text-[9px] font-bold text-white">{{ p.account.account_name|make_list|first|upper }}</div>
+                    <div class="w-6 h-6 rounded-full bg-[#E60023] flex items-center justify-center text-[9px] font-bold text-white">{{ p.account.account_name|default:p.account.account_handle|make_list|first|upper }}</div>
                     {% endif %}
-                    <span class="text-[11px] font-medium text-stone-600">{{ p.account.account_name }}</span>
+                    <span class="text-[11px] font-medium text-stone-600">{{ p.account.account_name|default:p.account.account_handle }}</span>
                 </div>
             </div>
         </div>
@@ -481,10 +515,10 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
                 {% if p.account.avatar_url %}
                 <img src="{{ p.account.avatar_url }}" class="w-10 h-10 rounded-full object-cover border border-stone-100">
                 {% else %}
-                <div class="w-10 h-10 rounded-full bg-stone-500 flex items-center justify-center text-xs font-bold text-white">{{ p.account.account_name|make_list|first|upper }}</div>
+                <div class="w-10 h-10 rounded-full bg-stone-500 flex items-center justify-center text-xs font-bold text-white">{{ p.account.account_name|default:p.account.account_handle|make_list|first|upper }}</div>
                 {% endif %}
                 <div>
-                    <div class="text-[13px] font-semibold text-stone-800 leading-tight">{{ p.account.account_name }}</div>
+                    <div class="text-[13px] font-semibold text-stone-800 leading-tight">{{ p.account.account_name|default:p.account.account_handle }}</div>
                     {% if p.account.account_handle %}<div class="text-[11px] text-stone-400 leading-tight">{{ p.account.account_handle }}</div>{% endif %}
                     <div class="text-[10px] text-stone-400">Just now</div>
                 </div>

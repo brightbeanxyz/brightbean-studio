@@ -129,7 +129,9 @@
             {% if value == 'bluesky' %}
             <!-- Bluesky: inline form (no OAuth) -->
             <div x-data="{ showForm: false }" style="flex-shrink: 0;">
-                <button @click="showForm = !showForm" style="
+                <button @click="showForm = !showForm"
+                        class="btn-primary-hover"
+                        style="
                     display: inline-flex; align-items: center; gap: 6px;
                     padding: 7px 16px;
                     font-size: 0.75rem; font-weight: 600;
@@ -138,7 +140,7 @@
                     cursor: pointer;
                     box-shadow: var(--shadow-primary);
                     transition: all 200ms ease;
-                " onmouseover="this.style.background='var(--primary-hover)'" onmouseout="this.style.background='var(--primary)'">
+                ">
                     Connect
                     <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
                 </button>
@@ -201,7 +203,9 @@
             {% elif value == 'mastodon' %}
             <!-- Mastodon: instance URL form -->
             <div x-data="{ showForm: false }" style="flex-shrink: 0;">
-                <button @click="showForm = !showForm" style="
+                <button @click="showForm = !showForm"
+                        class="btn-primary-hover"
+                        style="
                     display: inline-flex; align-items: center; gap: 6px;
                     padding: 7px 16px;
                     font-size: 0.75rem; font-weight: 600;
@@ -210,7 +214,7 @@
                     cursor: pointer;
                     box-shadow: var(--shadow-primary);
                     transition: all 200ms ease;
-                " onmouseover="this.style.background='var(--primary-hover)'" onmouseout="this.style.background='var(--primary)'">
+                ">
                     Connect
                     <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
                 </button>
@@ -262,7 +266,9 @@
             <form method="post" action="{% url 'onboarding:connection_oauth_start' token=link.token %}" style="flex-shrink: 0;">
                 {% csrf_token %}
                 <input type="hidden" name="platform" value="{{ value }}">
-                <button type="submit" style="
+                <button type="submit"
+                        class="btn-primary-hover"
+                        style="
                     display: inline-flex; align-items: center; gap: 6px;
                     padding: 7px 16px;
                     font-size: 0.75rem; font-weight: 600;
@@ -271,7 +277,7 @@
                     cursor: pointer;
                     box-shadow: var(--shadow-primary);
                     transition: all 200ms ease;
-                " onmouseover="this.style.background='var(--primary-hover)'" onmouseout="this.style.background='var(--primary)'">
+                ">
                     Connect
                     <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
                 </button>
@@ -301,7 +307,9 @@
 
     <form method="post" action="{% url 'onboarding:connection_done' token=link.token %}">
         {% csrf_token %}
-        <button type="submit" style="
+        <button type="submit"
+                class="btn-primary-lift"
+                style="
             width: 100%;
             display: inline-flex; align-items: center; justify-content: center; gap: 8px;
             padding: 14px 28px;
@@ -311,8 +319,7 @@
             cursor: pointer;
             box-shadow: var(--shadow-primary);
             transition: all 200ms ease;
-        " onmouseover="this.style.background='var(--primary-hover)';this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 20px rgba(249,115,22,0.35)'"
-           onmouseout="this.style.background='var(--primary)';this.style.transform='translateY(0)';this.style.boxShadow='var(--shadow-primary)'">
+        ">
             Done &mdash; Notify {{ org.name }}
             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
         </button>

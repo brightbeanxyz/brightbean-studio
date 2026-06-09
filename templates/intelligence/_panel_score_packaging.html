@@ -1,0 +1,215 @@
+<div id="intel-panel-packaging" class="intel-panel intel-panel-active mt-6 grid-cols-1 gap-6 lg:grid-cols-2">
+    {% comment %}
+      Request card. The thumbnail input was changed from a URL field to
+      a multipart file upload because:
+
+      - URL-based ingestion forced the server to fetch arbitrary URLs
+        for content scoring, which is an SSRF surface unless every
+        downstream consumer (Intelligence) sandboxes its fetches
+        perfectly. Removing the URL field eliminates the class.
+
+      - Server-side validation of an uploaded file is straightforward
+        (size cap + Pillow magic-byte verification) and lets us
+        guarantee Intelligence only ever sees real JPEG/PNG/WebP bytes
+        with bounded size, neither true for an arbitrary URL.
+
+      The form posts as multipart/form-data; the view base64-encodes
+      the validated bytes server-side before forwarding to Intelligence.
+    {% endcomment %}
+    <div class="rounded-xl border border-stone-200 bg-white shadow-sm">
+        <div class="flex items-center justify-between border-b border-stone-100 px-5 py-3.5">
+            <h2 class="text-sm font-semibold text-stone-900">Score packaging</h2>
+            <span class="inline-flex items-center rounded-md bg-stone-100 px-2 py-0.5 text-[11px] font-mono text-stone-600">1-3 credit</span>
+        </div>
+        <div class="p-5">
+            <p class="text-xs text-stone-500 mb-5 leading-relaxed">
+                Score a YouTube packaging (title + thumbnail) for click-through potential. Provide one or both, combined is most accurate. Title-only is 1 credit, thumbnail-only is 2, combined is 3
+            </p>
+
+            <form class="intel-form space-y-5"
+                  hx-post="{% url 'intelligence:score-packaging' org_id=organization.id %}"
+                  hx-target="#packaging-result"
+                  hx-swap="innerHTML"
+                  hx-encoding="multipart/form-data">
+                {% csrf_token %}
+                <div>
+                    <label for="pkg-title" class="intel-label">Video title <span class="intel-label-hint">(optional)</span></label>
+                    <input type="text" name="title" id="pkg-title" maxlength="250"
+                           placeholder="How I Built a $1M SaaS in 6 Months"
+                           value="{% if is_preview %}{{ preview_inputs.score_packaging.title }}{% endif %}"
+                           class="intel-input">
+                </div>
+                <div>
+                    <label for="pkg-thumb" class="intel-label">Thumbnail <span class="intel-label-hint">(optional)</span></label>
+                    <div id="pkg-thumb-zone"
+                         class="relative rounded-lg border-2 border-dashed border-stone-200 bg-stone-50 transition hover:border-orange-300 hover:bg-orange-50/40">
+                        <label for="pkg-thumb-input" id="pkg-thumb-empty"
+                               class="flex flex-col items-center justify-center px-4 py-8 text-center cursor-pointer">
+                            <svg class="h-9 w-9 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 7.5m0 0L7.5 12M12 7.5v9"/>
+                            </svg>
+                            <p class="mt-3 text-sm font-medium text-stone-700">
+                                <span style="color: var(--primary);">Click to upload</span> or drag and drop
+                            </p>
+                            <p class="mt-1 text-xs text-stone-500">JPEG, PNG or WebP · up to 5&nbsp;MB</p>
+                        </label>
+                        <div id="pkg-thumb-preview" class="hidden items-center gap-3 p-3">
+                            <img id="pkg-thumb-img" alt=""
+                                 class="h-16 w-28 flex-shrink-0 rounded-md object-cover ring-1 ring-stone-200">
+                            <div class="flex-1 min-w-0">
+                                <p id="pkg-thumb-name" class="text-sm font-medium text-stone-700 truncate"></p>
+                                <p id="pkg-thumb-size" class="mt-0.5 text-xs text-stone-500"></p>
+                            </div>
+                            <button type="button" id="pkg-thumb-clear"
+                                    class="flex-shrink-0 rounded-md p-1.5 text-stone-400 hover:bg-white hover:text-red-500 transition cursor-pointer"
+                                    aria-label="Remove thumbnail">
+                                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        {# accept= is UX only, server still revalidates with Pillow. #}
+                        <input type="file" name="thumbnail" id="pkg-thumb-input"
+                               accept="image/jpeg,image/png,image/webp" class="sr-only">
+                    </div>
+                    <p id="pkg-thumb-error" class="hidden mt-1.5 text-xs text-red-600"></p>
+                    <p id="pkg-thumb-helper" class="intel-helper">Accepts JPEG/PNG/WebP under 5&nbsp;MB.</p>
+                </div>
+                <div>
+                    <button type="submit" class="intel-submit"{% if is_preview %} disabled aria-disabled="true"{% endif %}>
+                        <svg class="intel-submit-icon h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"/></svg>
+                        <svg class="intel-submit-spinner hidden h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+                        <span class="intel-submit-label">Score</span>
+                        <span class="intel-submit-loading hidden">Scoring…</span>
+                    </button>
+                    {% if is_preview %}
+                    <p class="intel-activate-note">
+                        {% if can_manage_billing %}<a href="{% url 'intelligence:subscribe' org_id=organization.id %}">Activate Intelligence</a> to score your own packaging.{% else %}Ask an admin to activate Intelligence to score your own packaging.{% endif %}
+                    </p>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {# Response card #}
+    <div class="rounded-xl border border-stone-200 bg-white shadow-sm">
+        <div class="border-b border-stone-100 px-5 py-3.5">
+            <h2 class="text-sm font-semibold text-stone-900">Result</h2>
+        </div>
+        <div id="packaging-result" class="p-5 min-h-[220px]">
+            {% if is_preview %}
+                {% include "intelligence/_preview_badge.html" %}
+                {% include "intelligence/_score_packaging_result.html" with result=preview_results.score_packaging %}
+            {% else %}
+                {% include "intelligence/_panel_empty_state.html" with hint="Submit the form to see the predicted CTR + percentile." %}
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script nonce="{{ request.csp_nonce }}">
+(function () {
+    // Score-packaging file-upload widget. All UX-only; the server
+    // re-runs the same checks (size, MIME, Pillow magic-byte) before
+    // forwarding to Intelligence, see _validate_thumbnail_upload in
+    // apps/intelligence/views.py. Browser-side checks are convenience
+    // for the user, not a security boundary.
+    var MAX_BYTES = 5 * 1024 * 1024;
+    var ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+    var zone = document.getElementById("pkg-thumb-zone");
+    if (!zone) return;
+    var input = document.getElementById("pkg-thumb-input");
+    var empty = document.getElementById("pkg-thumb-empty");
+    var preview = document.getElementById("pkg-thumb-preview");
+    var img = document.getElementById("pkg-thumb-img");
+    var nameEl = document.getElementById("pkg-thumb-name");
+    var sizeEl = document.getElementById("pkg-thumb-size");
+    var clearBtn = document.getElementById("pkg-thumb-clear");
+    var errEl = document.getElementById("pkg-thumb-error");
+
+    function formatSize(b) {
+        if (b < 1024) return b + " B";
+        if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB";
+        return (b / (1024 * 1024)).toFixed(2) + " MB";
+    }
+    function showError(msg) {
+        errEl.textContent = msg;
+        errEl.classList.remove("hidden");
+    }
+    function clearError() {
+        errEl.textContent = "";
+        errEl.classList.add("hidden");
+    }
+    function clearFile() {
+        input.value = "";
+        if (img.src && img.src.indexOf("blob:") === 0) URL.revokeObjectURL(img.src);
+        img.removeAttribute("src");
+        preview.classList.add("hidden");
+        preview.classList.remove("flex");
+        empty.classList.remove("hidden");
+        clearError();
+    }
+    function showFile(file) {
+        // Browser-side validation: friendly errors before the submit.
+        // Server WILL re-validate; do not rely on this for security.
+        if (ALLOWED_TYPES.indexOf(file.type) === -1) {
+            showError("File must be JPEG, PNG, or WebP.");
+            clearFile();
+            return;
+        }
+        if (file.size > MAX_BYTES) {
+            showError("File is too large (" + formatSize(file.size) + "). Max 5 MB.");
+            clearFile();
+            return;
+        }
+        clearError();
+        if (img.src && img.src.indexOf("blob:") === 0) URL.revokeObjectURL(img.src);
+        img.src = URL.createObjectURL(file);
+        nameEl.textContent = file.name;
+        sizeEl.textContent = formatSize(file.size);
+        empty.classList.add("hidden");
+        preview.classList.remove("hidden");
+        preview.classList.add("flex");
+    }
+
+    input.addEventListener("change", function () {
+        if (input.files && input.files[0]) showFile(input.files[0]);
+    });
+    clearBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        clearFile();
+    });
+
+    ["dragenter", "dragover"].forEach(function (evt) {
+        zone.addEventListener(evt, function (e) {
+            e.preventDefault();
+            zone.classList.add("border-orange-400", "bg-orange-50/60");
+        });
+    });
+    ["dragleave", "drop"].forEach(function (evt) {
+        zone.addEventListener(evt, function (e) {
+            e.preventDefault();
+            zone.classList.remove("border-orange-400", "bg-orange-50/60");
+        });
+    });
+    zone.addEventListener("drop", function (e) {
+        var file = e.dataTransfer.files && e.dataTransfer.files[0];
+        if (!file) return;
+        // Stuff the file into the real <input> so htmx picks it up
+        // automatically as part of the multipart form payload.
+        var dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+        showFile(file);
+    });
+
+    // NOTE: the previous version cleared the picker after a successful
+    // HTMX submit. We deliberately do NOT, the user often wants to
+    // iterate on title text against the same thumbnail and re-Score,
+    // so keeping the file visible (and re-submitted on next click) is
+    // the friendlier default. The × button still clears explicitly.
+})();
+</script>

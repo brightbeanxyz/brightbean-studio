@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block page_title %}Not authorized{% endblock %}
+{% block content %}
+<div class="max-w-xl mx-auto py-16 px-4 text-center">
+  <h1 class="text-xl font-semibold text-stone-900 mb-2">This deployment isn't authorized</h1>
+  <p class="text-sm text-stone-600 mb-6">
+    This Studio deployment is not registered for the hosted Intelligence
+    integration. If you're a fork operator running your own Stripe and
+    Intelligence stack, you need to register your deployment first.
+  </p>
+  <p class="text-sm text-stone-600">
+    Contact <a href="mailto:support@brightbean.xyz" class="text-orange-600 hover:text-orange-700">support@brightbean.xyz</a>
+    for details.
+  </p>
+</div>
+{% endblock %}

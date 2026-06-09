@@ -21,7 +21,7 @@
                     <div class="flex items-center gap-2 mt-0.5">
                         <div class="flex items-center gap-1">
                             {% include "partials/_platform_icon.html" with platform=message.social_account.platform size="sm" %}
-                            <span class="text-[11px] text-stone-500">{{ message.social_account.account_name }}</span>
+                            <span class="text-[11px] text-stone-500">{{ message.social_account.account_name|default:message.social_account.account_handle }}</span>
                         </div>
                         <span class="text-[11px] text-stone-400">{{ message.received_at|date:"N j, Y g:i A" }}</span>
                     </div>

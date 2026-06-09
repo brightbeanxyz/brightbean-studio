@@ -28,6 +28,14 @@
     font-size: 9px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.06em; padding: 2px 6px; border-radius: var(--radius-sm);
   }
+  .ml-search-input {
+    border-color: var(--border);
+    transition: border-color 150ms, box-shadow 150ms;
+  }
+  .ml-search-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-ring);
+  }
 </style>
 {% endblock %}
 
@@ -44,8 +52,7 @@
     <label class="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-orange-600 bg-orange-50 border border-orange-200 rounded-full hover:bg-orange-100 hover:border-orange-300 active:bg-orange-100 transition-all duration-150 cursor-pointer">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
       Upload to Shared
-      <input type="file" multiple accept="{{ accepted_file_types }}"
-             onchange="uploadShared(this.files)" class="hidden">
+      <input id="shared-upload-input" type="file" multiple accept="{{ accepted_file_types }}" class="hidden">
     </label>
     {% endif %}
   </div>
@@ -55,10 +62,7 @@
     <div class="relative flex-1 max-w-sm">
       <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style="color: var(--text-ghost);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
       <input type="search" name="q" value="{{ query }}" placeholder="Search shared assets..."
-             class="w-full pl-9 pr-4 py-2 text-sm border rounded-lg outline-none"
-             style="border-color: var(--border);"
-             onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 3px var(--primary-ring)'"
-             onblur="this.style.borderColor='var(--border)'; this.style.boxShadow='none'"
+             class="ml-search-input w-full pl-9 pr-4 py-2 text-sm border rounded-lg outline-none"
              hx-get="{% url 'media_library_org:shared_index' %}"
              hx-trigger="keyup changed delay:400ms"
              hx-target="#shared-grid"
@@ -79,7 +83,7 @@
 </div>
 
 {% if is_admin %}
-<script>
+<script nonce="{{ request.csp_nonce }}">
 function uploadShared(files) {
   if (!files || files.length === 0) return;
   const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
@@ -94,6 +98,9 @@ function uploadShared(files) {
     htmx.trigger('#shared-grid', 'uploadsComplete');
   });
 }
+
+document.getElementById('shared-upload-input')
+  .addEventListener('change', e => uploadShared(e.target.files));
 </script>
 {% endif %}
 {% endblock %}

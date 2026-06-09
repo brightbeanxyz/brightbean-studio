@@ -1,0 +1,37 @@
+{% comment %}
+  Inline banner for admins (closed-tab recovery): Stripe webhook fired
+  and Intelligence persisted a PendingStudioActivation, but Studio
+  never saw the activate redirect (user closed the tab mid-payment or
+  the success_url didn't fire). Single click runs the recovery flow —
+  Studio's /recover/ endpoint pulls the session_id from Intelligence
+  and walks the two-phase activation. The playground below stays
+  faded but interactive (preview mode) until the recovery completes.
+{% endcomment %}
+<div class="mb-6 rounded-2xl border overflow-hidden"
+     style="border-color: var(--primary-muted, #fed7aa); background: linear-gradient(135deg, var(--primary-soft, #fff7ed) 0%, white 60%);">
+    <div class="p-5 sm:p-6">
+        <div class="flex flex-wrap items-start justify-between gap-4">
+            <div class="min-w-0 max-w-xl">
+                <div class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide mb-2.5"
+                     style="background: white; color: var(--primary); border: 1px solid var(--primary-muted, #fed7aa);">
+                    <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    Payment received
+                </div>
+                <h2 class="text-lg sm:text-xl font-bold text-stone-900" style="letter-spacing: -0.01em;">
+                    Finish setting up Intelligence
+                </h2>
+                <p class="mt-1.5 text-sm text-stone-600 leading-relaxed">
+                    Stripe confirmed your payment for <strong>{{ organization.name }}</strong>. One click finishes provisioning your API access, you'll be back on the playground in a few seconds.
+                </p>
+            </div>
+
+            <form method="post" action="{% url 'intelligence:recover' org_id=organization.id %}" class="flex-shrink-0">
+                {% csrf_token %}
+                <button type="submit" class="intel-cta-primary">
+                    Complete activation
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                </button>
+            </form>
+        </div>
+    </div>
+</div>

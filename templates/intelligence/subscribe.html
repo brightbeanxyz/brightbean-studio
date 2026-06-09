@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% load intelligence_extras humanize %}
+
+{% block title %}Activate Intelligence - {{ organization.name }} - Brightbean{% endblock %}
+
+{% block page_header %}
+<div class="flex items-start justify-between gap-4 mb-4 lg:mb-[25px]">
+    <div>
+        <h1 class="text-xl sm:text-2xl font-semibold text-stone-900" style="letter-spacing: -0.01em;">
+            Activate Intelligence
+        </h1>
+        <p class="text-sm text-stone-500 mt-1">
+            YouTube packaging scoring, channel benchmarks, and content-gap research for <strong>{{ organization.name }}</strong>.
+        </p>
+    </div>
+    <a href="{% url 'intelligence:playground' org_id=organization.id %}"
+       class="intel-cta-text-link flex-shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        Cancel
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl">
+
+    {% if resumable_attempt %}
+    {% comment %} Resume CTA, a teammate started checkout already. {% endcomment %}
+    <div class="mb-6 p-4 rounded-xl border-l-4 flex items-start gap-3"
+         style="border-color: var(--primary); background: var(--primary-soft, #fff7ed);">
+        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <div class="flex-1 min-w-0">
+            <h2 class="text-sm font-semibold" style="color: var(--primary);">Resume your checkout</h2>
+            <p class="text-sm mt-1 text-stone-700">
+                Someone in your org already started a checkout for this organization.
+            </p>
+            <div class="mt-3 flex items-center gap-2 flex-wrap">
+                <a href="{{ resumable_attempt.checkout_url }}"
+                   class="intel-cta-primary">
+                    Continue to Stripe
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                </a>
+                <form method="post"
+                      action="{% url 'intelligence:discard-checkout' org_id=organization.id %}"
+                      class="inline-block">
+                    {% csrf_token %}
+                    <button type="submit"
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-600 bg-white border border-stone-300 rounded-full hover:bg-stone-50 cursor-pointer">
+                        Discard Checkout Session
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% elif in_flight_attempt %}
+    <div class="mb-6 p-4 rounded-xl border border-stone-200 bg-stone-50 flex items-start gap-3">
+        <svg class="w-5 h-5 flex-shrink-0 mt-0.5 animate-spin text-stone-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+        <div class="flex-1">
+            <h2 class="text-sm font-semibold text-stone-900">Setting up your checkout…</h2>
+            <p class="text-sm text-stone-700 mt-1">
+                We're talking to the billing service. This usually finishes in a few seconds.
+            </p>
+        </div>
+    </div>
+    {% else %}
+
+    <form method="post" action="{% url 'intelligence:checkout' org_id=organization.id %}" class="space-y-8">
+        {% csrf_token %}
+
+        {% comment %} ===== PLANS ===== {% endcomment %}
+        {% if not plans %}
+        <div class="rounded-xl border border-stone-200 bg-stone-50 p-6 text-center">
+            <p class="text-sm text-stone-600">No plans are available for this deployment.</p>
+            <p class="text-xs text-stone-400 mt-1">Contact support if you think this is a mistake.</p>
+        </div>
+        {% else %}
+        <div>
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h2 class="text-base font-semibold text-stone-900">Choose a plan</h2>
+                    <p class="text-xs text-stone-500 mt-0.5">Per-org subscription, billed monthly. Cancel anytime.</p>
+                </div>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-4">
+                {% for plan in plans %}
+                {% comment %}
+                  We tag the middle plan as "Most popular" purely by position
+                  (forloop.counter == 2 in a 3-plan layout = middle). If a
+                  deployment ever ships more or fewer plans this still
+                  highlights one consistent option.
+                {% endcomment %}
+                <label class="relative block rounded-xl border-2 p-5 cursor-pointer transition-all bg-white plan-card"
+                       data-popular="{% if forloop.counter == 2 %}1{% endif %}"
+                       style="border-color: #e7e5e4;">
+                    {% comment %}
+                      Middle plan is checked by default (forloop.counter == 2
+                      in a 3-plan layout = the "Most popular" Standard plan).
+                      Keeps the radio "checked" state in lockstep with the
+                      "Most popular" badge above, so picking the recommended
+                      option is one-click instead of two.
+                    {% endcomment %}
+                    <input type="radio" name="plan" value="{{ plan.slug }}"
+                           class="sr-only" required{% if forloop.counter == 2 %} checked{% endif %}>
+                    {% if forloop.counter == 2 %}
+                    <span class="absolute -top-2.5 right-4 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide"
+                          style="background: var(--primary); color: white; box-shadow: 0 2px 6px rgba(249, 115, 22, 0.3);">
+                        Most popular
+                    </span>
+                    {% endif %}
+
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="text-base font-semibold text-stone-900">{{ plan.name }}</div>
+                        <span class="plan-card-check w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0"
+                              style="border-color: #d6d3d1;">
+                            <svg class="plan-card-check-icon w-3 h-3 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: white;"><polyline points="20 6 9 17 4 12"/></svg>
+                        </span>
+                    </div>
+
+                    <div class="mt-3 flex items-baseline gap-1">
+                        <span class="text-3xl font-bold text-stone-900 tabular-nums">${{ plan.price_cents|from_cents }}</span>
+                        <span class="text-sm text-stone-500">/ month</span>
+                    </div>
+
+                    <ul class="mt-4 space-y-2 text-xs text-stone-600">
+                        <li class="flex items-start gap-2">
+                            <svg class="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                            <span><span class="font-semibold text-stone-900 tabular-nums">{{ plan.monthly_credits|intcomma }}</span> credits / month</span>
+                        </li>
+                    </ul>
+
+                    {% comment %}
+                      Explicit tool list, every plan ships every tool, the
+                      plans only differ on credits / month. Showing the tool
+                      names removes the "what am I actually buying?" question
+                      and makes the value concrete instead of abstract.
+                    {% endcomment %}
+                    <div class="mt-4 pt-4 border-t border-stone-100">
+                        <div class="text-[10px] uppercase tracking-wide text-stone-500 font-semibold mb-2">All six tools included</div>
+                        <ul class="space-y-1.5 text-xs text-stone-600">
+                            <li class="flex items-start gap-2">
+                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                                <span>Score packaging</span>
+                            </li>
+                            <li class="flex items-start gap-2">
+                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                                <span>Score video hook</span>
+                            </li>
+                            <li class="flex items-start gap-2">
+                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                                <span>Benchmark channel</span>
+                            </li>
+                            <li class="flex items-start gap-2">
+                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                                <span>Benchmark video</span>
+                            </li>
+                            <li class="flex items-start gap-2">
+                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                                <span>Research content gaps</span>
+                            </li>
+                            <li class="flex items-start gap-2">
+                                <svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><polyline points="20 6 9 17 4 12"/></svg>
+                                <span>List niches</span>
+                            </li>
+                        </ul>
+                    </div>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% comment %} ===== BILLING CONTACT ===== {% endcomment %}
+        <div class="rounded-xl border border-stone-200 bg-white p-6">
+            <h2 class="text-base font-semibold text-stone-900 mb-1">Billing contact</h2>
+            <p class="text-xs text-stone-500 mb-4">
+                Invoices and payment-failure notices go here. This belongs to the organization, not to whoever clicks "Continue" below.
+            </p>
+            <div>
+                <label for="billing_email" class="block text-sm font-medium text-stone-700 mb-1.5">
+                    Email
+                </label>
+                <input type="email" name="billing_email" id="billing_email"
+                       value="{{ billing_email }}"
+                       class="w-full max-w-md px-3 py-2 text-sm rounded-lg outline-none transition-colors"
+                       style="border: 1px solid var(--border, #e7e5e4); background: var(--surface-0, white);">
+            </div>
+        </div>
+
+        {% comment %} ===== SUBMIT ===== {% endcomment %}
+        <div class="flex items-center justify-between gap-4 flex-wrap pt-2">
+            <div class="text-xs text-stone-500">
+                You'll be redirected to Stripe to complete payment securely. We never see your card details.
+            </div>
+            <button type="submit"
+                    class="intel-cta-primary"
+                    {% if not plans %}disabled{% endif %}>
+                Continue to Stripe
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+            </button>
+        </div>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_head %}
+{% include "intelligence/_cta_styles.html" %}
+<style>
+    /* Selected-plan styling. We don't depend on Tailwind's
+       ``has-checked:`` variants because the pre-built bundle may
+       not include the specific combinations used here.
+    */
+    .plan-card:hover {
+        border-color: var(--primary-muted, #fed7aa) !important;
+    }
+    label.plan-card:has(> input[type="radio"]:checked) {
+        border-color: var(--primary) !important;
+        background: var(--primary-soft, #fff7ed);
+    }
+    label.plan-card:has(> input[type="radio"]:checked) .plan-card-check {
+        border-color: var(--primary);
+        background: var(--primary);
+    }
+    label.plan-card:has(> input[type="radio"]:checked) .plan-card-check-icon {
+        display: block !important;
+    }
+    label.plan-card[data-popular="1"] {
+        box-shadow: 0 4px 16px rgba(249, 115, 22, 0.10);
+    }
+</style>
+{% endblock %}

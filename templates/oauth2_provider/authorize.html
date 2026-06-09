@@ -1,0 +1,50 @@
+{% extends "oauth2_provider/base.html" %}
+{% load i18n static %}
+
+{% block title %}Authorize {{ application.name|default:"an app" }} · BrightBean Studio{% endblock title %}
+
+{% block content %}
+    <div class="bb-head">
+        <img src="{% static 'img/brightbean-studio-logo.webp' %}" alt="BrightBean Studio" class="bb-logo">
+        <span class="bb-eyebrow">BrightBean · Studio</span>
+    </div>
+
+    <div class="bb-card">
+        {% if not error %}
+            <h1>{% blocktrans with name=application.name|default:"This application" %}Authorize {{ name }}?{% endblocktrans %}</h1>
+            <p>{% blocktrans with name=application.name|default:"This application" %}{{ name }} wants to connect to your BrightBean Studio workspace with the following permissions:{% endblocktrans %}</p>
+
+            <form id="authorizationForm" method="post">
+                {% csrf_token %}
+
+                {# Hidden fields carry redirect_uri, state, scope, response_type,
+                   code_challenge, etc. — must be rendered or the OAuth flow breaks. #}
+                {% for field in form %}
+                    {% if field.is_hidden %}{{ field }}{% endif %}
+                {% endfor %}
+
+                <ul class="bb-scopes">
+                    {% for scope in scopes_descriptions %}
+                        <li>{{ scope }}</li>
+                    {% endfor %}
+                </ul>
+
+                {% if form.errors %}<div class="bb-error">{{ form.errors }}</div>{% endif %}
+                {% if form.non_field_errors %}<div class="bb-error">{{ form.non_field_errors }}</div>{% endif %}
+
+                <div class="bb-actions">
+                    {# Cancel must NOT carry name="allow" — its absence signals denial to DOT. #}
+                    <input type="submit" class="bb-btn bb-btn-ghost" value="{% trans 'Cancel' %}"/>
+                    {# Authorize MUST keep name="allow" — DOT checks for it to detect approval. #}
+                    <input type="submit" class="bb-btn bb-btn-primary" name="allow" value="{% trans 'Authorize' %}"/>
+                </div>
+            </form>
+
+            <p class="bb-foot">{% trans "You can revoke this access at any time from BrightBean Studio." %}</p>
+        {% else %}
+            <h1>{% trans "Something went wrong" %}</h1>
+            <p>{{ error.error }}</p>
+            <p>{{ error.description }}</p>
+        {% endif %}
+    </div>
+{% endblock content %}

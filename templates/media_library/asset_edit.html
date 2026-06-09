@@ -49,14 +49,16 @@
 
 {% block page_header %}
 <div class="flex items-center gap-3">
-  <a href="{% url 'media_library:index' workspace_id=workspace.id %}"
-     class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
-     style="color: var(--text-tertiary, #78716C);"
-     onmouseenter="this.style.background='var(--surface-2)'"
-     onmouseleave="this.style.background='transparent'">
+  <a href="{% if is_shared_library %}{% url 'media_library_org:shared_asset_detail' asset_id=asset.id %}{% else %}{% url 'media_library:index' workspace_id=workspace.id %}{% endif %}"
+     class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors btn-surface-2"
+     style="color: var(--text-tertiary, #78716C);">
     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
   </a>
   <h1 class="text-lg font-semibold" style="color: var(--text-primary, #1C1917);">Edit - {{ asset.original_filename }}</h1>
+  {% if is_shared_library %}
+  <span class="text-xs font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider"
+        style="background: rgba(20,184,166,0.15); color: #0F766E;">Shared</span>
+  {% endif %}
 </div>
 {% endblock %}
 
@@ -98,17 +100,13 @@
 
       <div class="flex-1"></div>
 
-      <a href="{% url 'media_library:asset_detail' workspace_id=workspace.id asset_id=asset.id %}"
-         class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-full border transition-colors"
-         style="border-color: var(--border); color: var(--text-secondary);"
-         onmouseenter="this.style.background='var(--surface-1)'"
-         onmouseleave="this.style.background='transparent'">
+      <a href="{% if is_shared_library %}{% url 'media_library_org:shared_asset_detail' asset_id=asset.id %}{% else %}{% url 'media_library:asset_detail' workspace_id=workspace.id asset_id=asset.id %}{% endif %}"
+         class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-full border transition-colors btn-surface-1"
+         style="border-color: var(--border); color: var(--text-secondary);">
         Cancel
       </a>
-      <button @click="save()" class="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold text-white rounded-full transition-all"
-              style="background: var(--primary, #F97316); box-shadow: var(--shadow-primary);"
-              onmouseenter="this.style.background='var(--primary-hover)'"
-              onmouseleave="this.style.background='var(--primary)'">
+      <button @click="save()" class="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-semibold text-white rounded-full transition-all btn-primary-hover"
+              style="background: var(--primary, #F97316); box-shadow: var(--shadow-primary);">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
         Save as new version
       </button>
@@ -116,7 +114,7 @@
   </div>
 
   <!-- Hidden form -->
-  <form x-ref="editForm" method="POST" action="{% url 'media_library:asset_edit' workspace_id=workspace.id asset_id=asset.id %}">
+  <form x-ref="editForm" method="POST" action="{% if is_shared_library %}{% url 'media_library_org:shared_asset_edit' asset_id=asset.id %}{% else %}{% url 'media_library:asset_edit' workspace_id=workspace.id asset_id=asset.id %}{% endif %}">
     {% csrf_token %}
     <input type="hidden" name="crop_x" x-model="cropData.x">
     <input type="hidden" name="crop_y" x-model="cropData.y">
@@ -145,19 +143,15 @@
       <div class="flex items-center gap-2">
         <label class="text-xs font-semibold" style="color: var(--text-tertiary);">Start</label>
         <input type="number" x-model.number="trimStart" step="0.1" min="0" :max="trimEnd"
-               class="w-24 text-xs px-2.5 py-1.5 border rounded-lg text-center outline-none"
-               style="border-color: var(--border); font-variant-numeric: tabular-nums;"
-               onfocus="this.style.borderColor='var(--primary)'"
-               onblur="this.style.borderColor='var(--border)'">
+               class="input-focus w-24 text-xs px-2.5 py-1.5 border rounded-lg text-center outline-none"
+               style="font-variant-numeric: tabular-nums;">
         <span class="text-xs" style="color: var(--text-ghost);">sec</span>
       </div>
       <div class="flex items-center gap-2">
         <label class="text-xs font-semibold" style="color: var(--text-tertiary);">End</label>
         <input type="number" x-model.number="trimEnd" step="0.1" :min="trimStart" :max="duration"
-               class="w-24 text-xs px-2.5 py-1.5 border rounded-lg text-center outline-none"
-               style="border-color: var(--border); font-variant-numeric: tabular-nums;"
-               onfocus="this.style.borderColor='var(--primary)'"
-               onblur="this.style.borderColor='var(--border)'">
+               class="input-focus w-24 text-xs px-2.5 py-1.5 border rounded-lg text-center outline-none"
+               style="font-variant-numeric: tabular-nums;">
         <span class="text-xs" style="color: var(--text-ghost);">sec</span>
       </div>
       <span class="text-xs font-semibold px-2.5 py-1 rounded-full"
@@ -181,12 +175,12 @@
       </button>
 
       <div class="flex items-center gap-2">
-        <a href="{% url 'media_library:asset_detail' workspace_id=workspace.id asset_id=asset.id %}"
+        <a href="{% if is_shared_library %}{% url 'media_library_org:shared_asset_detail' asset_id=asset.id %}{% else %}{% url 'media_library:asset_detail' workspace_id=workspace.id asset_id=asset.id %}{% endif %}"
            class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-full border transition-colors"
            style="border-color: var(--border); color: var(--text-secondary);">
           Cancel
         </a>
-        <form method="POST" action="{% url 'media_library:asset_edit' workspace_id=workspace.id asset_id=asset.id %}">
+        <form method="POST" action="{% if is_shared_library %}{% url 'media_library_org:shared_asset_edit' asset_id=asset.id %}{% else %}{% url 'media_library:asset_edit' workspace_id=workspace.id asset_id=asset.id %}{% endif %}">
           {% csrf_token %}
           <input type="hidden" name="trim_start" :value="trimStart">
           <input type="hidden" name="trim_end" :value="trimEnd">
@@ -205,7 +199,7 @@
 {% else %}
 <div class="text-center py-20">
   <p class="text-sm" style="color: var(--text-secondary);">Editing is not available for this file type.</p>
-  <a href="{% url 'media_library:index' workspace_id=workspace.id %}"
+  <a href="{% if is_shared_library %}{% url 'media_library_org:shared_index' %}{% else %}{% url 'media_library:index' workspace_id=workspace.id %}{% endif %}"
      class="inline-flex items-center gap-1.5 mt-4 px-4 py-2 text-sm font-semibold rounded-full border"
      style="border-color: var(--border); color: var(--text-secondary);">
     Back to library
@@ -217,7 +211,7 @@
 {% block extra_js %}
 {% if asset.file_type == 'image' or asset.file_type == 'gif' %}
 <script src="{% static 'js/vendor/cropper.min.js' %}"></script>
-<script>
+<script nonce="{{ request.csp_nonce }}">
 function imageCropper() {
   return {
     cropper: null,
@@ -284,7 +278,7 @@ function imageCropper() {
 }
 </script>
 {% elif asset.file_type == 'video' %}
-<script>
+<script nonce="{{ request.csp_nonce }}">
 function videoTrimmer() {
   return {
     duration: {{ asset.duration_seconds|default:"0" }},

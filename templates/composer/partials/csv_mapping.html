@@ -1,3 +1,4 @@
+{% load common_extras %}
 <!-- Step 2: Column Mapping (loaded via HTMX after upload) -->
 <div class="space-y-6">
     <div class="bg-white rounded-xl border border-stone-200 p-6">
@@ -37,7 +38,7 @@
 
             <!-- Map by field: one select per post field -->
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-3"
-                 x-data="{ autoMapping: {{ auto_mapping_json|default:'{}' }} }"
+                 x-data="{ autoMapping: {{ auto_mapping|json_attr }} }"
                  x-init="$nextTick(() => {
                      Object.entries(autoMapping).forEach(([field, colIdx]) => {
                          const sel = $el.querySelector(`[name='map_${field}']`);

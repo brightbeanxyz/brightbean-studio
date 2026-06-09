@@ -1,0 +1,107 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Authorize · BrightBean Studio{% endblock title %}</title>
+    <link rel="icon" href="{% static 'favicon/favicon.ico' %}" sizes="any">
+    <link rel="icon" type="image/svg+xml" href="{% static 'favicon/favicon.svg' %}">
+
+    {# Self-contained styling only — no external CDN. Inline <style> is permitted by
+       the site CSP (style-src 'unsafe-inline'); the logo/favicon are served from 'self'. #}
+    <style>
+        :root {
+            /* Brand olive is hardcoded on purpose: this page is self-contained and
+               can't extend the app shell (which needs workspace context the OAuth
+               view doesn't supply), so it can't read the app's brand token. Mirrors
+               login.html's inline override — keep in sync if the brand palette changes. */
+            --bb-primary: #93a240;
+            --bb-primary-hover: #849139;
+            --bb-text: #1f2421;
+            --bb-text-muted: #6b7280;
+            --bb-border: #e5e7eb;
+            --bb-bg: #f7f7f4;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 16px;
+            background-color: var(--bb-bg);
+            color: var(--bb-text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+        }
+        .bb-wrap { width: 100%; max-width: 420px; }
+        .bb-head { text-align: center; margin-bottom: 28px; }
+        .bb-logo { width: 48px; height: 48px; object-fit: contain; }
+        .bb-eyebrow {
+            display: block;
+            margin-top: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--bb-primary);
+        }
+        .bb-card {
+            background: #fff;
+            border: 1px solid var(--bb-border);
+            border-radius: 14px;
+            padding: 28px 28px 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.05);
+        }
+        .bb-card h1 { font-size: 19px; font-weight: 700; margin: 0 0 6px; }
+        .bb-card p { margin: 0 0 14px; color: var(--bb-text-muted); font-size: 14px; }
+        .bb-scopes {
+            list-style: none;
+            margin: 0 0 22px;
+            padding: 14px 16px;
+            background: #fafaf7;
+            border: 1px solid var(--bb-border);
+            border-radius: 10px;
+            font-size: 14px;
+        }
+        .bb-scopes li { display: flex; gap: 10px; align-items: flex-start; }
+        .bb-scopes li + li { margin-top: 8px; }
+        .bb-scopes li::before { content: "✓"; color: var(--bb-primary); font-weight: 700; }
+        .bb-actions { display: flex; gap: 12px; margin-top: 4px; }
+        .bb-btn {
+            flex: 1;
+            appearance: none;
+            border: 1px solid transparent;
+            border-radius: 10px;
+            padding: 11px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color .15s ease, box-shadow .15s ease;
+        }
+        .bb-btn-primary {
+            background-color: var(--bb-primary);
+            color: #fff;
+            box-shadow: 0 4px 14px rgba(147,162,64,.28);
+        }
+        .bb-btn-primary:hover { background-color: var(--bb-primary-hover); box-shadow: 0 6px 20px rgba(147,162,64,.35); }
+        .bb-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(147,162,64,.4); }
+        .bb-btn-ghost {
+            background: #fff;
+            color: var(--bb-text);
+            border-color: var(--bb-border);
+        }
+        .bb-btn-ghost:hover { background: #f3f4f1; }
+        .bb-error { color: #b91c1c; font-size: 13px; margin: 10px 0 0; }
+        .bb-foot { text-align: center; margin-top: 18px; font-size: 12px; color: var(--bb-text-muted); }
+    </style>
+</head>
+<body>
+    <div class="bb-wrap">
+        {% block content %}{% endblock content %}
+    </div>
+</body>
+</html>

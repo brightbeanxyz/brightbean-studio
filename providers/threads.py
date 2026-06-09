@@ -22,7 +22,7 @@ from .types import (
 
 logger = logging.getLogger(__name__)
 
-AUTH_URL = "https://threads.net/oauth/authorize"
+AUTH_URL = "https://www.threads.com/oauth/authorize"
 TOKEN_URL = "https://graph.threads.net/oauth/access_token"
 API_BASE = "https://graph.threads.net/v1.0"
 

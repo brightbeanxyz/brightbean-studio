@@ -1,6 +1,8 @@
-{% comment %}Asset card for shared org library. Uses org-scoped URLs only. Expects: asset{% endcomment %}
+{% comment %}Asset card for shared org library. Uses org-scoped URLs only. Expects: asset, is_admin{% endcomment %}
 
-<div class="ml-asset-card group cursor-pointer overflow-hidden"
+<div class="ml-asset-card group cursor-pointer relative"
+     x-data="{ menuOpen: false }"
+     data-asset-card="{{ asset.id }}"
      @click="window.location.href='{% url 'media_library_org:shared_asset_detail' asset_id=asset.id %}'">
 
   <!-- Thumbnail -->
@@ -36,4 +38,45 @@
     <p class="text-xs font-medium truncate" style="color: var(--text-primary, #1C1917);">{{ asset.filename }}</p>
     <p class="text-xs mt-0.5" style="color: var(--text-ghost, #A8A29E);">{{ asset.file_size_display }}{% if asset.width and asset.height %} &middot; {{ asset.width }}&times;{{ asset.height }}{% endif %}</p>
   </div>
+
+  {% if is_admin %}
+  <!-- Admin kebab menu (sibling of thumbnail to avoid overflow-hidden clipping the dropdown) -->
+  <div class="absolute z-30 opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+       style="bottom: 52px; right: 8px;"
+       :class="menuOpen ? 'opacity-100' : ''"
+       @click.stop>
+    <button type="button"
+            @click="menuOpen = !menuOpen"
+            @click.outside="menuOpen = false"
+            class="w-7 h-7 rounded-full flex items-center justify-center cursor-pointer shadow-sm"
+            style="background: rgba(255,255,255,0.95); color: var(--text-secondary, #57534E);"
+            aria-label="Asset actions">
+      <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+        <path d="M10 6a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 5.5a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 5.5a1.5 1.5 0 110-3 1.5 1.5 0 010 3z"/>
+      </svg>
+    </button>
+    <div x-show="menuOpen" x-cloak x-transition.opacity.duration.100ms
+         class="absolute right-0 bottom-9 w-36 rounded-lg overflow-hidden z-30"
+         style="background: var(--surface-0, #FFF); border: 1px solid var(--border, #E7E5E4); box-shadow: var(--shadow-lg);">
+      <a href="{% url 'media_library_org:shared_asset_edit' asset_id=asset.id %}"
+         class="flex items-center gap-2 px-3 py-2 text-xs font-medium transition-colors btn-surface-1"
+         style="color: var(--text-primary, #1C1917);">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+        Edit
+      </a>
+      <button type="button"
+              hx-post="{% url 'media_library_org:shared_asset_delete' asset_id=asset.id %}"
+              hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+              hx-confirm="Delete this shared asset? It will be removed for all workspaces."
+              hx-target="closest [data-asset-card]"
+              hx-swap="outerHTML"
+              @click="menuOpen = false"
+              class="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium transition-colors cursor-pointer btn-danger-soft-bg"
+              style="color: var(--error-500, #EF4444);">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+        Delete
+      </button>
+    </div>
+  </div>
+  {% endif %}
 </div>

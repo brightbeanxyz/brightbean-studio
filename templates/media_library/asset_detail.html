@@ -4,11 +4,9 @@
 
 {% block page_header %}
 <div class="flex items-center gap-3">
-  <a href="{% url 'media_library:index' workspace_id=workspace.id %}"
-     class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
-     style="color: var(--text-tertiary, #78716C);"
-     onmouseenter="this.style.background='var(--surface-2)'"
-     onmouseleave="this.style.background='transparent'">
+  <a href="{% if is_shared_library %}{% url 'media_library_org:shared_index' %}{% else %}{% url 'media_library:index' workspace_id=workspace.id %}{% endif %}"
+     class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors btn-surface-2"
+     style="color: var(--text-tertiary, #78716C);">
     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
   </a>
   <h1 class="text-lg font-semibold" style="color: var(--text-primary, #1C1917);">{{ asset.original_filename }}</h1>

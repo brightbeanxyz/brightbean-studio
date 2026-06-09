@@ -2,6 +2,7 @@
 
 import functools
 
+from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 
 
@@ -83,5 +84,49 @@ def require_permission(permission_key):
             return view_func(request, *args, **kwargs)
 
         return _wrapped
+
+    return decorator
+
+
+def require_org_permission(permission_key):
+    """Decorator that gates a view on an org-level permission key.
+
+    Unlike ``require_workspace_role`` / ``require_permission`` (workspace-
+    scoped via the RBAC middleware), this decorator resolves the
+    ``OrgMembership`` for ``(request.user, URL <org_id>)`` directly — no
+    middleware fallback to ``last_workspace_id``. The view must accept
+    ``org_id`` as a URL kwarg (typed ``<uuid:org_id>``).
+
+    Composes ``@login_required`` internally so the view file doesn't
+    need to remember to stack it. Anonymous → login redirect; non-member
+    of the URL org → 403; member but lacking the permission → 403.
+
+    On success, attaches ``request.org_membership`` and ``request.org``
+    so the wrapped view can use them without re-querying.
+    """
+    from apps.members.models import OrgMembership, has_org_permission
+
+    def decorator(view_func):
+        @functools.wraps(view_func)
+        def _wrapped(request, *args, **kwargs):
+            org_id = kwargs.get("org_id")
+            if org_id is None:
+                raise PermissionDenied("URL is missing required org_id.")
+            try:
+                membership = OrgMembership.objects.select_related("organization").get(
+                    user=request.user, organization_id=org_id
+                )
+            except OrgMembership.DoesNotExist as exc:
+                raise PermissionDenied("Not a member of this organization.") from exc
+
+            if not has_org_permission(membership, permission_key):
+                raise PermissionDenied(f"Missing org permission: {permission_key}")
+
+            # Make resolved context available to the view body.
+            request.org_membership = membership
+            request.org = membership.organization
+            return view_func(request, *args, **kwargs)
+
+        return login_required(_wrapped)
 
     return decorator

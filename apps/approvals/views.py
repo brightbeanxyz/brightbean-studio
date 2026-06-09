@@ -315,18 +315,21 @@ def add_comment(request, workspace_id, post_id):
 @require_POST
 def edit_comment(request, workspace_id, post_id, comment_id):
     """Edit a comment."""
-    _get_workspace(request, workspace_id)
+    workspace = _get_workspace(request, workspace_id)
     body = request.POST.get("body", "").strip()
 
     if not body:
         return HttpResponse("Comment body is required.", status=400)
 
+    # Scope the post + comment lookup to the request workspace so a viewer
+    # cannot edit / surface comments belonging to a different workspace.
+    post = get_object_or_404(Post, id=post_id, workspace=workspace)
+
     try:
-        comment_service.update_comment(comment_id, request.user, body)
+        comment_service.update_comment(comment_id, request.user, body, workspace=workspace)
     except (ValueError, PermissionError) as e:
         return HttpResponse(str(e), status=400 if isinstance(e, ValueError) else 403)
 
-    post = get_object_or_404(Post, id=post_id)
     comments = comment_service.get_comments_for_post(post, request.user)
     return render(
         request,
@@ -334,7 +337,7 @@ def edit_comment(request, workspace_id, post_id, comment_id):
         {
             "comments": comments,
             "post": post,
-            "workspace": post.workspace,
+            "workspace": workspace,
         },
     )
 

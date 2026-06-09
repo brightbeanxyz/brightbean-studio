@@ -8,7 +8,7 @@ Usage: {% include "social_accounts/partials/_account_card.html" with account=acc
         <!-- Avatar -->
         <div class="flex-shrink-0">
             {% if account.avatar_url %}
-            <img src="{{ account.avatar_url }}" alt="{{ account.account_name }}" class="w-11 h-11 rounded-full object-cover ring-2 ring-stone-100">
+            <img src="{{ account.avatar_url }}" alt="{{ account.account_name|default:account.account_handle }}" class="w-11 h-11 rounded-full object-cover ring-2 ring-stone-100">
             {% else %}
             <div class="w-11 h-11 rounded-full bg-stone-100 flex items-center justify-center text-stone-400">
                 {% include "social_accounts/partials/_platform_icon.html" with platform=account.platform size="5" %}
@@ -19,7 +19,7 @@ Usage: {% include "social_accounts/partials/_account_card.html" with account=acc
         <!-- Info -->
         <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2 mb-1">
-                <h3 class="text-sm font-semibold text-stone-900 truncate">{{ account.account_name }}</h3>
+                <h3 class="text-sm font-semibold text-stone-900 truncate">{{ account.account_name|default:account.account_handle }}</h3>
                 <span class="flex-shrink-0 text-stone-400">
                     {% include "social_accounts/partials/_platform_icon.html" with platform=account.platform size="4" %}
                 </span>
@@ -54,7 +54,7 @@ Usage: {% include "social_accounts/partials/_account_card.html" with account=acc
             <!-- Disconnect confirmation -->
             <div x-show="confirmDisconnect" x-cloak @click.away="confirmDisconnect = false"
                  class="absolute right-4 top-12 z-10 w-64 bg-white rounded-xl shadow-xl border border-stone-200 p-4">
-                <p class="text-sm text-stone-700 mb-3">Disconnect <strong>{{ account.account_name }}</strong>? Historical data will be preserved.</p>
+                <p class="text-sm text-stone-700 mb-3">Disconnect <strong>{{ account.account_name|default:account.account_handle }}</strong>? Historical data will be preserved.</p>
                 <div class="flex gap-2 justify-end">
                     <button @click="confirmDisconnect = false" class="px-3 py-1.5 text-xs font-semibold text-stone-600 bg-stone-100 rounded-full hover:bg-stone-200 transition-colors cursor-pointer">Cancel</button>
                     <form method="post"

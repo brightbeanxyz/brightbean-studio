@@ -7,10 +7,8 @@
         <h2 class="text-xl font-semibold" style="color: var(--text-primary);">Team Members</h2>
         {% if is_admin %}
         <button @click="showInviteModal = true"
-                class="px-5 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
-                style="background: var(--primary); color: white;"
-                onmouseenter="this.style.opacity='0.9'"
-                onmouseleave="this.style.opacity='1'">
+                class="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-orange-600 bg-orange-50 border border-orange-200 rounded-full hover:bg-orange-100 hover:border-orange-300 active:bg-orange-100 transition-all duration-150 cursor-pointer whitespace-nowrap">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
             Invite Team Member
         </button>
         {% endif %}

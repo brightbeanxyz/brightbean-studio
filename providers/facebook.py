@@ -69,7 +69,7 @@ class FacebookProvider(SocialProvider):
 
     @property
     def required_scopes(self) -> list[str]:
-        return [
+        scopes = [
             "business_management",
             "pages_show_list",
             "pages_manage_posts",
@@ -78,6 +78,16 @@ class FacebookProvider(SocialProvider):
             "pages_manage_metadata",
             "pages_messaging",
         ]
+        if self.include_analytics_scopes:
+            scopes.extend(self.analytics_only_scopes)
+        return scopes
+
+    @property
+    def analytics_only_scopes(self) -> list[str]:
+        # ``read_insights`` is required for page-level account insights
+        # (page_impressions_unique, page_daily_follows). Only requested in
+        # OAuth when this platform's analytics is enabled.
+        return ["read_insights"]
 
     @property
     def rate_limits(self) -> RateLimitConfig:

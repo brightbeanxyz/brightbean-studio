@@ -3,7 +3,7 @@ Drafts tab partial for the Publish page.
 Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
 {% endcomment %}
 
-<div style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both">
+<div x-data{% if is_htmx %} class="tab-slide-in"{% endif %}>
     {% if platform_posts %}
     <table class="w-full">
         <thead>
@@ -18,7 +18,7 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
         <tbody>
             {% for pp in platform_posts %}
             <tr class="border-b border-stone-100 hover:bg-stone-50 transition-colors duration-100 cursor-pointer"
-                onclick="window.location='{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}'">
+                @click="window.location='{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}'">
                 <td class="px-4 py-3">
                     {% with first_att=pp.post.media_attachments.all.0 %}
                     {% if first_att %}
@@ -58,7 +58,7 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
                         <span class="w-5 h-5 rounded-[5px] flex items-center justify-center">
                             {% include "partials/_platform_icon.html" with platform=pp.social_account.platform size="sm" %}
                         </span>
-                        <span class="text-xs text-stone-500">{{ pp.social_account.account_name }}</span>
+                        <span class="text-xs text-stone-500">{{ pp.social_account.account_name|default:pp.social_account.account_handle }}</span>
                     </div>
                 </td>
                 <td class="px-4 py-3 text-xs text-stone-500">

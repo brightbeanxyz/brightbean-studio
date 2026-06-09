@@ -81,7 +81,7 @@ Toolbar: nav arrows + period + Today + view dropdown | right: filter dropdowns.
                 <select class="cal-filter-select has-icon" name="channel" x-model="calendarFilters.channel" @change="reloadCalendar()">
                     <option value="">Channels</option>
                     {% for acc in social_accounts %}
-                    <option value="{{ acc.id }}">{{ acc.account_name }}</option>
+                    <option value="{{ acc.id }}">{{ acc.account_name|default:acc.account_handle }}</option>
                     {% endfor %}
                 </select>
             </div>

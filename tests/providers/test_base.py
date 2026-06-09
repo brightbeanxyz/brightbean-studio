@@ -14,7 +14,7 @@ class TestProviderRegistry:
         expected = {
             "facebook",
             "instagram",
-            "instagram_personal",
+            "instagram_login",
             "linkedin_personal",
             "linkedin_company",
             "tiktok",

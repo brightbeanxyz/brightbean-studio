@@ -1,0 +1,8 @@
+{
+  "name": "brightbean-studio",
+  "private": true,
+  "scripts": {
+    "heroku-postbuild": "cd theme/static_src && npm ci && npm run build"
+  },
+  "cacheDirectories": ["theme/static_src/node_modules"]
+}

@@ -166,7 +166,6 @@ class Invitation(models.Model):
 # Built-in workspace role permission mappings
 PERMISSION_KEYS = [
     "create_posts",
-    "edit_own_posts",
     "edit_others_posts",
     "approve_posts",
     "publish_directly",
@@ -185,7 +184,6 @@ BUILTIN_ROLE_PERMISSIONS = {
     "owner": {k: True for k in PERMISSION_KEYS},
     "manager": {
         "create_posts": True,
-        "edit_own_posts": True,
         "edit_others_posts": True,
         "approve_posts": True,
         "publish_directly": True,
@@ -201,7 +199,6 @@ BUILTIN_ROLE_PERMISSIONS = {
     },
     "editor": {
         "create_posts": True,
-        "edit_own_posts": True,
         "edit_others_posts": True,
         "approve_posts": False,
         "publish_directly": False,
@@ -217,7 +214,6 @@ BUILTIN_ROLE_PERMISSIONS = {
     },
     "contributor": {
         "create_posts": True,
-        "edit_own_posts": True,
         "edit_others_posts": False,
         "approve_posts": False,
         "publish_directly": False,
@@ -233,7 +229,6 @@ BUILTIN_ROLE_PERMISSIONS = {
     },
     "client": {
         "create_posts": False,
-        "edit_own_posts": False,
         "edit_others_posts": False,
         "approve_posts": True,
         "publish_directly": False,
@@ -249,7 +244,6 @@ BUILTIN_ROLE_PERMISSIONS = {
     },
     "viewer": {
         "create_posts": False,
-        "edit_own_posts": False,
         "edit_others_posts": False,
         "approve_posts": False,
         "publish_directly": False,
@@ -264,3 +258,50 @@ BUILTIN_ROLE_PERMISSIONS = {
         "manage_media": False,
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Org-level permission model
+# ---------------------------------------------------------------------------
+# The workspace permission system above is workspace-scoped via
+# ``WorkspaceMembership.effective_permissions``. The Intelligence integration
+# needs ORG-scoped permission checks (subscriptions and Stripe billing are
+# tied to the Organization, not any one workspace). Rather than expand the
+# workspace system to do double duty, we introduce a parallel, narrower
+# org-permission table keyed on ``OrgMembership.org_role``.
+#
+# Add new keys here as future features need org-scoped gating.
+
+ORG_PERMISSION_KEYS = (
+    ("manage_intelligence_billing", "Manage Intelligence subscription + billing"),
+    ("use_intelligence", "Use Intelligence tools"),
+    ("manage_api_keys", "Issue and revoke Agent API keys for any workspace in the org"),
+)
+
+
+BUILTIN_ORG_PERMISSIONS = {
+    OrgMembership.OrgRole.OWNER: {
+        "manage_intelligence_billing",
+        "use_intelligence",
+        "manage_api_keys",
+    },
+    OrgMembership.OrgRole.ADMIN: {
+        "manage_intelligence_billing",
+        "use_intelligence",
+        "manage_api_keys",
+    },
+    OrgMembership.OrgRole.MEMBER: {
+        "use_intelligence",
+    },
+}
+
+
+def has_org_permission(membership, key):
+    """Return True if ``membership`` grants the given org-permission key.
+
+    ``membership`` is an ``OrgMembership`` or None (e.g., the user has no
+    membership in the org being checked). None always returns False.
+    """
+    if membership is None:
+        return False
+    return key in BUILTIN_ORG_PERMISSIONS.get(membership.org_role, set())

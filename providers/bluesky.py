@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import re
+import time
 from datetime import UTC, datetime
 
 from .base import SocialProvider
@@ -22,6 +25,24 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_PDS_URL = "https://bsky.social"
+
+
+def _access_jwt_expires_in(access_jwt: str) -> int | None:
+    """Return seconds until an AT Protocol access JWT expires, or None if unknown.
+
+    The createSession / refreshSession responses don't include an expiry field;
+    the only source of truth is the JWT's own `exp` claim. We decode the payload
+    without verifying the signature — we're reading metadata from a token the
+    server just minted over TLS, not making an authorization decision.
+    """
+    try:
+        _, payload_b64, _ = access_jwt.split(".")
+        padding = "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + padding))
+        exp = int(payload["exp"])
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return None
+    return max(0, exp - int(time.time()))
 
 
 class BlueskyProvider(SocialProvider):
@@ -118,6 +139,7 @@ class BlueskyProvider(SocialProvider):
         return OAuthTokens(
             access_token=data["accessJwt"],
             refresh_token=data["refreshJwt"],
+            expires_in=_access_jwt_expires_in(data["accessJwt"]),
             raw_response=data,
         )
 
@@ -132,6 +154,7 @@ class BlueskyProvider(SocialProvider):
         return OAuthTokens(
             access_token=data["accessJwt"],
             refresh_token=data["refreshJwt"],
+            expires_in=_access_jwt_expires_in(data["accessJwt"]),
             raw_response=data,
         )
 
@@ -176,10 +199,11 @@ class BlueskyProvider(SocialProvider):
             access_token=access_token,
         )
         data = resp.json()
+        handle = data.get("handle") or ""
         return AccountProfile(
             platform_id=data.get("did", did),
-            name=data.get("displayName", data.get("handle", "")),
-            handle=data.get("handle"),
+            name=data.get("displayName") or handle,
+            handle=handle,
             avatar_url=data.get("avatar"),
             follower_count=data.get("followersCount", 0),
         )

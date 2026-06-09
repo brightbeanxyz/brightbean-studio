@@ -11,6 +11,7 @@ SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_REDIRECT_EXEMPT = [r"^health/$"]
 
 # Logging
 LOGGING = {
@@ -39,6 +40,11 @@ LOGGING = {
             "propagate": False,
         },
         "apps": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "gunicorn.error": {
             "handlers": ["console"],
             "level": "INFO",
             "propagate": False,

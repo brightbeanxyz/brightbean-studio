@@ -1,4 +1,5 @@
 import datetime
+from unittest.mock import Mock, patch
 
 import pytest
 from django.utils import timezone
@@ -232,3 +233,72 @@ class TestNotificationViews:
             channel=Channel.IN_APP,
         )
         assert pref.is_enabled is True
+
+
+@pytest.mark.django_db
+class TestWebhookDispatchSSRFGuard:
+    """The webhook dispatcher must reject private / loopback URLs.
+
+    Regression: pre-fix the code POSTed via urllib.request.urlopen with no URL
+    validation, so a notification stored with webhook_url=http://127.0.0.1:6379/
+    would hit local services.
+    """
+
+    def _build_delivery(self, user, webhook_url):
+        notification = Notification.objects.create(
+            user=user,
+            event_type=EventType.POST_APPROVED,
+            title="t",
+            body="b",
+            data={"webhook_url": webhook_url},
+        )
+        return NotificationDelivery.objects.create(
+            notification=notification,
+            channel=Channel.WEBHOOK,
+            status=DeliveryStatus.PENDING,
+        )
+
+    def test_rejects_loopback_url(self, user):
+        from apps.notifications.engine import _dispatch_webhook
+
+        with (
+            patch("httpx.post") as httpx_post,
+            patch("socket.getaddrinfo", return_value=[(0, 0, 0, "", ("127.0.0.1", 0))]),
+        ):
+            delivery = self._build_delivery(user, "http://localhost/")
+            with pytest.raises(RuntimeError, match="rejected"):
+                _dispatch_webhook(delivery)
+            httpx_post.assert_not_called()
+
+    def test_rejects_private_ip(self, user):
+        from apps.notifications.engine import _dispatch_webhook
+
+        with (
+            patch("httpx.post") as httpx_post,
+            patch("socket.getaddrinfo", return_value=[(0, 0, 0, "", ("10.0.0.5", 0))]),
+        ):
+            delivery = self._build_delivery(user, "http://internal-svc.example.com/")
+            with pytest.raises(RuntimeError, match="rejected"):
+                _dispatch_webhook(delivery)
+            httpx_post.assert_not_called()
+
+    def test_rejects_file_scheme(self, user):
+        from apps.notifications.engine import _dispatch_webhook
+
+        with patch("httpx.post") as httpx_post:
+            delivery = self._build_delivery(user, "file:///etc/passwd")
+            with pytest.raises(RuntimeError, match="rejected"):
+                _dispatch_webhook(delivery)
+            httpx_post.assert_not_called()
+
+    def test_accepts_public_url(self, user):
+        from apps.notifications.engine import _dispatch_webhook
+
+        mock_response = Mock(status_code=200)
+        with (
+            patch("socket.getaddrinfo", return_value=[(0, 0, 0, "", ("8.8.8.8", 0))]),
+            patch("httpx.post", return_value=mock_response) as httpx_post,
+        ):
+            delivery = self._build_delivery(user, "https://hooks.example.com/abc")
+            _dispatch_webhook(delivery)
+            httpx_post.assert_called_once()

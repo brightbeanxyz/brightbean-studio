@@ -16,8 +16,46 @@ logger = logging.getLogger(__name__)
 
 INVITE_EXPIRY_DAYS = 7
 
+# Role hierarchies (must match decorators.py).
+ORG_ROLE_LEVEL = {
+    OrgMembership.OrgRole.OWNER: 3,
+    OrgMembership.OrgRole.ADMIN: 2,
+    OrgMembership.OrgRole.MEMBER: 1,
+}
+WS_ROLE_LEVEL = {
+    WorkspaceMembership.WorkspaceRole.OWNER: 6,
+    WorkspaceMembership.WorkspaceRole.MANAGER: 5,
+    WorkspaceMembership.WorkspaceRole.EDITOR: 4,
+    WorkspaceMembership.WorkspaceRole.CONTRIBUTOR: 3,
+    WorkspaceMembership.WorkspaceRole.CLIENT: 2,
+    WorkspaceMembership.WorkspaceRole.VIEWER: 1,
+}
 
-def create_invitation(org, email, org_role, workspace_assignments, invited_by):
+
+def _inviter_org_level(inviter, org):
+    membership = OrgMembership.objects.filter(user=inviter, organization=org).first()
+    if not membership:
+        return 0
+    return ORG_ROLE_LEVEL.get(membership.org_role, 0)
+
+
+def _inviter_workspace_level(inviter, org, workspace_id):
+    """Return inviter's effective workspace role level in *workspace_id*.
+
+    Org owners are treated as workspace owners across every workspace in their
+    org (matches the spirit of `@require_org_role("owner")` gating org-wide
+    actions). Org admins are bounded by their actual workspace membership; if
+    they aren't a member, they have zero authority on that workspace.
+    """
+    if _inviter_org_level(inviter, org) >= ORG_ROLE_LEVEL[OrgMembership.OrgRole.OWNER]:
+        return WS_ROLE_LEVEL[WorkspaceMembership.WorkspaceRole.OWNER]
+    ws_membership = WorkspaceMembership.objects.filter(user=inviter, workspace_id=workspace_id).first()
+    if not ws_membership:
+        return 0
+    return WS_ROLE_LEVEL.get(ws_membership.workspace_role, 0)
+
+
+def create_invitation(org, email, org_role, workspace_assignments, invited_by, *, inviter=None):
     """Create an invitation and send the invite email.
 
     Args:
@@ -49,7 +87,29 @@ def create_invitation(org, email, org_role, workspace_assignments, invited_by):
     if pending:
         raise ValueError("An invitation is already pending for this email. You can resend it instead.")
 
-    # Validate workspace assignments belong to org
+    # Don't allow inviting as owner (use ownership transfer instead).
+    if org_role == OrgMembership.OrgRole.OWNER:
+        raise ValueError("Cannot invite someone as an organization owner.")
+
+    # Enforce org-role hierarchy: inviter cannot grant a role above their own.
+    # Default `inviter` to `invited_by` so legacy callers without the kwarg
+    # still get an enforced check (no silent bypass).
+    effective_inviter = inviter or invited_by
+    inviter_org_level = _inviter_org_level(effective_inviter, org)
+    requested_org_level = ORG_ROLE_LEVEL.get(org_role, 0)
+    if requested_org_level == 0:
+        raise ValueError(f"Unknown org role: {org_role!r}.")
+    # Strict inequality on org-role, but ONLY for the admin/owner tier:
+    # blocks lateral admin grants (a compromised admin shouldn't be able to
+    # clone their privileges) while still permitting member-tier invites —
+    # which the workspace-manager → client-invite flow relies on, since
+    # those managers are themselves only org-role=member.
+    admin_level = ORG_ROLE_LEVEL[OrgMembership.OrgRole.ADMIN]
+    if requested_org_level >= admin_level and requested_org_level >= inviter_org_level:
+        raise ValueError("Only organization owners can invite someone as an admin.")
+
+    # Validate workspace assignments belong to org AND don't exceed inviter's
+    # workspace role in that specific workspace.
     org_workspace_ids = set(Workspace.objects.filter(organization=org, is_archived=False).values_list("id", flat=True))
     for assignment in workspace_assignments:
         import uuid as uuid_mod
@@ -58,9 +118,13 @@ def create_invitation(org, email, org_role, workspace_assignments, invited_by):
         if ws_id not in org_workspace_ids:
             raise ValueError(f"Workspace {ws_id} does not belong to this organization.")
 
-    # Don't allow inviting as owner
-    if org_role == OrgMembership.OrgRole.OWNER:
-        raise ValueError("Cannot invite someone as an organization owner.")
+        requested_ws_role = assignment.get("role", WorkspaceMembership.WorkspaceRole.VIEWER)
+        requested_ws_level = WS_ROLE_LEVEL.get(requested_ws_role, 0)
+        if requested_ws_level == 0:
+            raise ValueError(f"Unknown workspace role: {requested_ws_role!r}.")
+        inviter_ws_level = _inviter_workspace_level(effective_inviter, org, ws_id)
+        if requested_ws_level > inviter_ws_level:
+            raise ValueError("You cannot grant a workspace role higher than your own in that workspace.")
 
     invitation = Invitation.objects.create(
         organization=org,
@@ -75,23 +139,28 @@ def create_invitation(org, email, org_role, workspace_assignments, invited_by):
     return invitation
 
 
-def accept_invitation(invitation, user):
+def accept_invitation(invitation, user, *, require_email_match=True):
     """Accept an invitation: create org + workspace memberships.
 
     Args:
         invitation: The Invitation to accept.
         user: The User accepting.
+        require_email_match: When True (default), reject if the user's email
+            differs from the invitation's. The signup signal path passes
+            False because the session-bound token is itself proof of email
+            delivery (and social logins return whatever email the provider
+            owns, which often differs from the invited address).
 
     Raises:
-        ValueError: If the invitation is expired or already accepted.
+        ValueError: If the invitation is expired, already accepted, or the
+            user's email does not match (when require_email_match is True).
     """
     if invitation.is_expired:
         raise ValueError("This invitation has expired.")
     if invitation.is_accepted:
         raise ValueError("This invitation has already been accepted.")
 
-    # Verify the accepting user's email matches the invitation
-    if user.email.lower() != invitation.email.lower():
+    if require_email_match and user.email.lower() != invitation.email.lower():
         raise ValueError("This invitation was sent to a different email address.")
 
     # Create org membership (skip if exists, e.g. user was already added)
@@ -183,14 +252,31 @@ def remove_member(org, membership, removed_by):
     membership.delete()
 
 
-def update_member_org_role(org, membership, new_role):
+def update_member_org_role(org, membership, new_role, *, caller=None):
     """Update a member's organization role.
 
     Raises:
-        ValueError: If demoting the last owner.
+        ValueError: If demoting the last owner, or if `caller` lacks authority
+            to either remove the existing role or set the requested one.
     """
     if new_role == OrgMembership.OrgRole.OWNER:
         raise ValueError("Cannot promote to owner. Transfer ownership instead.")
+
+    new_level = ORG_ROLE_LEVEL.get(new_role, 0)
+    if new_level == 0:
+        raise ValueError(f"Unknown org role: {new_role!r}.")
+
+    # Caller hierarchy: must be at least as senior as both the existing role
+    # and the requested role. Blocks an admin demoting an owner (existing
+    # role outranks them) or escalating someone above their own tier.
+    if caller is not None:
+        caller_level = _inviter_org_level(caller, org)
+        existing_level = ORG_ROLE_LEVEL.get(membership.org_role, 0)
+        if caller_level < existing_level:
+            raise ValueError("You cannot change a member whose role is higher than your own.")
+        admin_level = ORG_ROLE_LEVEL[OrgMembership.OrgRole.ADMIN]
+        if new_level >= admin_level and new_level >= caller_level:
+            raise ValueError("Only organization owners can promote someone to admin.")
 
     if membership.org_role == OrgMembership.OrgRole.OWNER:
         owner_count = OrgMembership.objects.filter(organization=org, org_role=OrgMembership.OrgRole.OWNER).count()
@@ -202,13 +288,16 @@ def update_member_org_role(org, membership, new_role):
     return membership
 
 
-def update_workspace_assignments(org, user, assignments):
+def update_workspace_assignments(org, user, assignments, *, inviter=None):
     """Update workspace assignments for a member.
 
     Args:
         org: Organization.
         user: The user whose assignments to update.
         assignments: list of {"workspace_id": "...", "role": "..."}.
+        inviter: The user performing the change (for role-hierarchy enforcement).
+            When None, no caller-level check is applied (used only by tests or
+            internal admin scripts).
     """
     import uuid as uuid_mod
 
@@ -219,7 +308,15 @@ def update_workspace_assignments(org, user, assignments):
         ws_id = uuid_mod.UUID(str(a["workspace_id"]))
         if ws_id not in org_workspace_ids:
             raise ValueError(f"Workspace {ws_id} does not belong to this organization.")
-        desired[ws_id] = a.get("role", WorkspaceMembership.WorkspaceRole.VIEWER)
+        requested_role = a.get("role", WorkspaceMembership.WorkspaceRole.VIEWER)
+        requested_level = WS_ROLE_LEVEL.get(requested_role, 0)
+        if requested_level == 0:
+            raise ValueError(f"Unknown workspace role: {requested_role!r}.")
+        if inviter is not None:
+            inviter_level = _inviter_workspace_level(inviter, org, ws_id)
+            if requested_level > inviter_level:
+                raise ValueError("You cannot grant a workspace role higher than your own in that workspace.")
+        desired[ws_id] = requested_role
 
     # Current assignments in this org
     current = WorkspaceMembership.objects.filter(
@@ -227,6 +324,25 @@ def update_workspace_assignments(org, user, assignments):
         workspace_id__in=org_workspace_ids,
     )
     current_map = {m.workspace_id: m for m in current}
+
+    # The inviter must also have authority over the *existing* role. Without
+    # this check, a viewer-level admin could silently downgrade an owner by
+    # submitting the form with role="viewer" (request_level <= inviter_level
+    # passes the earlier check; the actual demotion of the owner row is the
+    # privilege violation). Apply to both removal and role-change paths.
+    if inviter is not None:
+        for ws_id, m in current_map.items():
+            existing_level = WS_ROLE_LEVEL.get(m.workspace_role, 0)
+            inviter_level = _inviter_workspace_level(inviter, org, ws_id)
+            if ws_id not in desired:
+                # About to delete this membership entirely.
+                if existing_level > inviter_level:
+                    raise ValueError(
+                        "You cannot remove a workspace membership whose current role is higher than your own."
+                    )
+            elif desired[ws_id] != m.workspace_role and existing_level > inviter_level:
+                # About to change this membership's role.
+                raise ValueError("You cannot modify a workspace membership whose current role is higher than your own.")
 
     # Remove memberships not in desired
     for ws_id, m in current_map.items():

@@ -1,0 +1,15 @@
+{% comment %}
+  Small label rendered above each preview-mode result panel so users
+  understand the output below is a canned example, not a live response
+  for inputs they just typed. Removed automatically once they
+  subscribe, the empty state takes its place until the first real
+  submit.
+{% endcomment %}
+<div class="flex items-center gap-2 mb-4 pb-3 border-b border-stone-100">
+    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide"
+          style="background: var(--primary-soft, #fff7ed); color: var(--primary); border: 1px solid var(--primary-muted, #fed7aa);">
+        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        Example
+    </span>
+    <span class="text-[11px] text-stone-500">Sample output. Activate to run with your own inputs.</span>
+</div>

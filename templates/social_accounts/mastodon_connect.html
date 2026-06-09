@@ -14,20 +14,20 @@
             </div>
             <h2 class="text-xl font-semibold text-stone-900">Connect Mastodon</h2>
         </div>
-        <p class="text-sm text-stone-500">Mastodon is federated &mdash; enter your instance URL to begin the connection process.</p>
+        <p class="text-sm text-stone-500">Mastodon is federated, enter your profile URL to begin the connection process.</p>
     </div>
 
     <form method="post" action="{% url 'social_accounts:connect_mastodon' workspace_id=workspace_id %}" class="space-y-5">
         {% csrf_token %}
 
         <div>
-            <label for="instance_url" class="block text-sm font-semibold text-stone-700 mb-1.5">Instance URL</label>
+            <label for="instance_url" class="block text-sm font-semibold text-stone-700 mb-1.5">Profile URL</label>
             <div class="relative">
                 <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                     <span class="text-sm text-stone-400">https://</span>
                 </div>
-                <input type="text" id="instance_url" name="instance_url" placeholder="mastodon.social" required
-                       class="w-full pl-[4.5rem] pr-4 py-2.5 text-sm border-2 border-stone-200 rounded-xl bg-white text-stone-900 placeholder-stone-400 focus:border-orange-500 focus:ring-0 focus:outline-none transition-colors">
+                <input type="text" id="instance_url" name="instance_url" placeholder="mastodon.social@yourusername" required
+                       class="w-full pl-[4rem] pr-4 py-2.5 text-sm border-2 border-stone-200 rounded-xl bg-white text-stone-900 placeholder-stone-400 focus:border-orange-500 focus:ring-0 focus:outline-none transition-colors">
             </div>
             <p class="text-xs text-stone-400 mt-1.5">The Mastodon instance where your account lives</p>
         </div>
@@ -40,7 +40,7 @@
         </div>
 
         <div class="flex items-center gap-3 pt-2">
-            <button type="submit" class="inline-flex items-center gap-2 px-6 py-2.5 text-sm font-semibold text-white bg-orange-500 rounded-full shadow-[0_4px_14px_rgba(249,115,22,0.28)] hover:bg-orange-600 transition-all duration-200">
+            <button type="submit" class="inline-flex items-center gap-2 px-6 py-2.5 text-sm font-semibold text-white bg-orange-500 rounded-full shadow-[0_4px_14px_rgba(249,115,22,0.28)] hover:bg-orange-600 transition-all duration-200 cursor-pointer">
                 Continue to Mastodon
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
             </button>

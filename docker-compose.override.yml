@@ -1,0 +1,29 @@
+services:
+  app:
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/brightbean
+
+  worker:
+    volumes:
+      - .:/app
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/brightbean
+
+  tailwind:
+    image: node:20-slim
+    working_dir: /app/theme/static_src
+    command: sh -c "npm ci && npm run start"
+    volumes:
+      - .:/app
+      - tailwind_node_modules:/app/theme/static_src/node_modules
+    init: true
+    tty: true
+    restart: unless-stopped
+
+volumes:
+  tailwind_node_modules:

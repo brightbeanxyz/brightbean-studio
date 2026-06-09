@@ -2,23 +2,25 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
-from datetime import UTC, datetime
+import os
+from datetime import datetime
 from urllib.parse import urlencode
 
 from .base import SocialProvider
 from .exceptions import OAuthError, PublishError
 from .types import (
+    AccountMetrics,
     AccountProfile,
     AuthType,
-    InboxMessage,
     MediaType,
     OAuthTokens,
+    PostMetrics,
     PostType,
     PublishContent,
     PublishResult,
     RateLimitConfig,
-    ReplyResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,15 @@ VALID_PRIVACY_LEVELS = frozenset(
         "SELF_ONLY",
     }
 )
+
+# TikTok FILE_UPLOAD's per-chunk limit is 64 MB decimal (not 64 MiB).
+# Anything larger requires multi-chunk upload, which we don't implement yet.
+MAX_SINGLE_CHUNK_SIZE = 64_000_000
+
+CONTENT_TYPE_BY_EXT = {
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+}
 
 
 class TikTokProvider(SocialProvider):
@@ -65,9 +76,30 @@ class TikTokProvider(SocialProvider):
     def supported_media_types(self) -> list[MediaType]:
         return [MediaType.MP4, MediaType.MOV]
 
+    # /v2/user/info/ returns lifetime cumulative counters with no date filter.
+    # See ``get_account_metrics`` below — the sync layer uses this flag to
+    # skip backfilling identical values into historical date rows.
+    account_metrics_supports_date_range: bool = False
+
     @property
     def required_scopes(self) -> list[str]:
-        return ["user.info.basic", "video.publish", "video.upload", "comment.list", "comment.list.manage"]
+        scopes = [
+            "user.info.basic",
+            "video.publish",
+            "video.upload",
+        ]
+        if self.include_analytics_scopes:
+            scopes.extend(self.analytics_only_scopes)
+        return scopes
+
+    @property
+    def analytics_only_scopes(self) -> list[str]:
+        # ``video.list`` lets us read per-video stats; ``user.info.profile`` +
+        # ``user.info.stats`` enable account-level totals via /v2/user/info/.
+        # All three are gated behind the analytics platform toggle so a
+        # publish-only TikTok app (whose review hasn't approved them yet)
+        # can still connect accounts.
+        return ["user.info.profile", "user.info.stats", "video.list"]
 
     @property
     def rate_limits(self) -> RateLimitConfig:
@@ -154,7 +186,7 @@ class TikTokProvider(SocialProvider):
             f"{API_BASE}/user/info/",
             access_token=access_token,
             params={
-                "fields": "open_id,union_id,avatar_url,display_name,follower_count",
+                "fields": "open_id,union_id,avatar_url,display_name",
             },
         )
         body = resp.json()
@@ -163,7 +195,7 @@ class TikTokProvider(SocialProvider):
             platform_id=user.get("open_id", ""),
             name=user.get("display_name", ""),
             avatar_url=user.get("avatar_url"),
-            follower_count=user.get("follower_count", 0),
+            follower_count=0,
             extra={"union_id": user.get("union_id")},
         )
 
@@ -185,13 +217,14 @@ class TikTokProvider(SocialProvider):
                 platform=self.platform_name,
             )
 
-        # Determine upload source strategy
-        if content.media_urls:
-            return self._publish_pull_from_url(access_token, content, privacy_level)
+        # Prefer FILE_UPLOAD: PULL_FROM_URL requires the source domain to be
+        # verified with TikTok, which presigned S3/R2 URLs can't satisfy.
         if content.media_files:
             return self._publish_file_upload(access_token, content, privacy_level)
+        if content.media_urls:
+            return self._publish_pull_from_url(access_token, content, privacy_level)
         raise PublishError(
-            "No video source provided (media_urls or media_files required)",
+            "No video source provided (media_files or media_urls required)",
             platform=self.platform_name,
         )
 
@@ -232,7 +265,20 @@ class TikTokProvider(SocialProvider):
         privacy_level: str,
     ) -> PublishResult:
         """Publish using FILE_UPLOAD source (two-step)."""
-        # Step 1: Initialize upload
+        video_path = content.media_files[0]
+        video_size = os.path.getsize(video_path)
+        if video_size > MAX_SINGLE_CHUNK_SIZE:
+            raise PublishError(
+                f"Video file is {video_size} bytes; TikTok single-chunk upload "
+                f"supports up to {MAX_SINGLE_CHUNK_SIZE} bytes. Multi-chunk upload "
+                "is not yet implemented.",
+                platform=self.platform_name,
+            )
+
+        ext = os.path.splitext(video_path)[1].lower()
+        content_type = CONTENT_TYPE_BY_EXT.get(ext, "video/mp4")
+
+        # Step 1: initialize upload with size metadata TikTok requires
         payload = {
             "post_info": {
                 "title": (content.title or content.text or "")[: self.max_caption_length],
@@ -240,6 +286,9 @@ class TikTokProvider(SocialProvider):
             },
             "source_info": {
                 "source": "FILE_UPLOAD",
+                "video_size": video_size,
+                "chunk_size": video_size,
+                "total_chunk_count": 1,
             },
         }
         init_resp = self._request(
@@ -259,19 +308,18 @@ class TikTokProvider(SocialProvider):
                 raw_response=init_body,
             )
 
-        # Step 2: Upload video binary
-        video_path = content.media_files[0]
+        # Step 2: stream the video binary to TikTok's presigned URL
         with open(video_path, "rb") as f:
-            video_data = f.read()
-
+            video_bytes = f.read()
         self._request(
             "PUT",
             upload_url,
             headers={
-                "Content-Type": "video/mp4",
-                "Content-Length": str(len(video_data)),
+                "Content-Type": content_type,
+                "Content-Length": str(video_size),
+                "Content-Range": f"bytes 0-{video_size - 1}/{video_size}",
             },
-            data=video_data,
+            data=video_bytes,
             timeout=120.0,
         )
 
@@ -281,93 +329,148 @@ class TikTokProvider(SocialProvider):
         )
 
     # ------------------------------------------------------------------
-    # Inbox
+    # Analytics
     # ------------------------------------------------------------------
 
-    def get_messages(self, access_token: str, since: datetime | None = None) -> list[InboxMessage]:
-        # Fetch recent videos
+    def _fetch_publish_status(self, access_token: str, publish_id: str) -> dict:
+        """Fetch the publish status payload for an in-flight publish job.
+
+        Returns the ``data`` block of ``/v2/post/publish/status/fetch/``.
+        Once ``status == 'PUBLISH_COMPLETE'``, the payload contains
+        ``publicaly_available_post_id`` — TikTok's official video ID list
+        (the typo in the field name is part of TikTok's API contract).
+        """
         resp = self._request(
             "POST",
-            f"{API_BASE}/video/list/",
+            f"{API_BASE}/post/publish/status/fetch/",
             access_token=access_token,
-            json={"max_count": 20},
+            json={"publish_id": publish_id},
         )
-        videos = resp.json().get("data", {}).get("videos", [])
+        return resp.json().get("data", {}) or {}
 
-        messages: list[InboxMessage] = []
+    def _resolve_video_id(self, access_token: str, post_id: str) -> str | None:
+        """Resolve a stored ``platform_post_id`` to a TikTok video ID.
 
-        for video in videos:
-            video_id = video.get("id", "")
-            if not video_id:
-                continue
+        :meth:`publish_post` stores the Content Posting API ``publish_id``
+        (``v_pub_url~…``, ``v_pub_file~…``, or — if the direct-post audit
+        downgrades the request — ``v_inbox_url~…`` / ``v_inbox_file~…``)
+        as ``platform_post_id``. The analytics endpoint
+        ``/v2/video/query/`` only accepts the final 19-digit numeric video
+        ID, so anything that isn't already a bare numeric is treated as a
+        publish handle and resolved via the publish status endpoint.
 
-            cursor = 0
-            while True:
-                c_resp = self._request(
-                    "POST",
-                    f"{API_BASE}/comment/list/",
-                    access_token=access_token,
-                    json={"video_id": video_id, "max_count": 50, "cursor": cursor},
-                )
-                c_data = c_resp.json().get("data", {})
-                comments = c_data.get("comments", [])
-                if not comments:
-                    break
+        Returns the original input if it's already a numeric video ID,
+        the resolved video ID once the publish finalises, or ``None``
+        when the publish is still in flight or terminally failed (caller
+        treats ``None`` as "no data yet").
+        """
+        # Defensive: a stored NULL would AttributeError on the call below;
+        # the outer except would misclassify via ``_is_insufficient_scope``
+        # and silently break analytics for the post. Bail explicitly.
+        if not post_id:
+            return None
 
-                for comment in comments:
-                    created = datetime.fromtimestamp(comment.get("create_time", 0), tz=UTC)
-                    if since and created < since:
-                        continue
+        # Positive identification: TikTok video IDs are 19-digit numerics.
+        # Anything else (any ``v_…`` publish-handle prefix that exists today
+        # or that TikTok adds tomorrow) goes through status resolution.
+        if post_id.isdigit():
+            return post_id
 
-                    user = comment.get("user", {})
-                    comment_id = comment.get("id", "")
+        status_data = self._fetch_publish_status(access_token, post_id)
+        if status_data.get("status") != "PUBLISH_COMPLETE":
+            # PROCESSING_UPLOAD / SEND_TO_USER_INBOX / FAILED / EXPIRED —
+            # no video ID to query (yet, or ever). The sync layer will keep
+            # polling until the post falls out of the 90-day cadence window.
+            return None
+        video_ids = status_data.get("publicaly_available_post_id") or []
+        if isinstance(video_ids, str):
+            # Defensive: some TikTok response variants return a bare string.
+            return video_ids or None
+        return video_ids[0] if video_ids else None
 
-                    messages.append(
-                        InboxMessage(
-                            platform_message_id=comment_id,
-                            sender_id=user.get("open_id", user.get("unique_id", "")),
-                            sender_name=user.get("display_name", ""),
-                            text=comment.get("text", ""),
-                            timestamp=created,
-                            message_type="comment",
-                            extra={
-                                "video_id": video_id,
-                                "comment_id": comment_id,
-                                "sender_avatar_url": user.get("avatar_url", ""),
-                            },
-                        )
-                    )
+    def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
+        """Per-video stats from the ``/v2/video/query/`` endpoint.
 
-                if not c_data.get("has_more", False):
-                    break
-                cursor = c_data.get("cursor", 0)
+        Requires the ``video.list`` scope. TikTok returns lifetime totals
+        (view/like/comment/share counts) — the sync layer snapshots them
+        per day, so the chart series is built from successive captures.
 
-        return messages
+        ``post_id`` may be either a TikTok video ID or a Content Posting
+        API publish handle (what :meth:`publish_post` returns); publish
+        handles are resolved to the underlying video ID via the publish
+        status endpoint before the analytics call.
 
-    def reply_to_message(self, access_token: str, message_id: str, text: str, extra: dict | None = None) -> ReplyResult:
-        extra = extra or {}
-        video_id = extra.get("video_id", "")
+        Returns an empty :class:`PostMetrics` if TikTok has no record of
+        the video (deleted, publish not yet complete, or not yet visible
+        to the API).
+        """
+        video_id = self._resolve_video_id(access_token, post_id)
         if not video_id:
-            raise PublishError(
-                "video_id required in extra for TikTok reply",
-                platform=self.platform_name,
-            )
+            # Publish still processing or failed — nothing to snapshot yet.
+            return PostMetrics()
 
         resp = self._request(
             "POST",
-            f"{API_BASE}/comment/reply/create/",
+            f"{API_BASE}/video/query/",
             access_token=access_token,
-            json={
-                "video_id": video_id,
-                "comment_id": message_id,
-                "text": text,
-            },
+            params={"fields": "id,view_count,like_count,comment_count,share_count"},
+            json={"filters": {"video_ids": [video_id]}},
         )
-        data = resp.json().get("data", {})
-        return ReplyResult(
-            platform_message_id=data.get("comment_id", ""),
-            extra=data,
+        body = resp.json()
+        videos = body.get("data", {}).get("videos", []) or []
+        if not videos:
+            return PostMetrics()
+
+        video = videos[0]
+        # ``engagements`` is intentionally omitted: the catalog's
+        # ``"engagement"`` metric is a derived rate computed by
+        # :func:`apps.analytics.derive.engagement_rate` from the raw parts
+        # (likes/comments/shares + a denom), so populating the dataclass
+        # field would be dead computation — the snapshot mapper has no
+        # mapping for it.
+        return PostMetrics(
+            video_views=int(video.get("view_count", 0) or 0),
+            likes=int(video.get("like_count", 0) or 0),
+            comments=int(video.get("comment_count", 0) or 0),
+            shares=int(video.get("share_count", 0) or 0),
         )
+
+    def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
+        """Account-level totals from ``/v2/user/info/``.
+
+        Requires ``user.info.profile`` + ``user.info.stats``. TikTok exposes
+        only lifetime cumulative counters here (no daily delta), so the
+        ``date_range`` argument is accepted for signature parity with other
+        providers but not sent to the API; the sync layer keys snapshots by
+        the calling date.
+
+        Only ``follower_count`` is propagated — into
+        :attr:`AccountMetrics.followers`, which
+        :func:`apps.analytics.tasks._account_metrics_to_dict` writes as the
+        ``"followers"`` snapshot key for platforms whose
+        ``PLATFORM_METRICS`` lists it. The other ``/v2/user/info/`` fields
+        (``likes_count``, ``video_count``, ``following_count``) are
+        intentionally NOT mapped to ``extra``: their semantics are LIFETIME
+        TOTALS but the analytics catalog mapper's recognised extras
+        (``likes``, ``comments``, ``shares``, …) are DAILY values that
+        :func:`apps.analytics.derive.engagement_rate` sums across the
+        window — feeding a cumulative total in would inflate the rate by N
+        days. If TikTok exposes a daily-delta endpoint in the future, those
+        fields can land here under the correct keys.
+        """
+        del date_range  # /v2/user/info/ returns lifetime totals, no range filter.
+        resp = self._request(
+            "GET",
+            f"{API_BASE}/user/info/",
+            access_token=access_token,
+            params={"fields": "follower_count"},
+        )
+        body = resp.json()
+        user = body.get("data", {}).get("user", {}) or {}
+        followers = 0
+        with contextlib.suppress(TypeError, ValueError):
+            followers = int(user.get("follower_count", 0) or 0)
+        return AccountMetrics(followers=followers)
 
     # ------------------------------------------------------------------
     # Token management

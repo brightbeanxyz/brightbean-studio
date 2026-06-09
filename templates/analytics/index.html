@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% load analytics_extras %}
+
+{% block title %}Analytics — {{ active_account.account_name }} — Brightbean{% endblock %}
+
+{% block extra_head %}
+<style>
+    .analytics-shell { display: flex; flex-direction: column; flex: 1; }
+    .a-card { background: #fff; border: 1px solid var(--border); border-radius: var(--radius-xl); }
+    .a-card-hover { transition: box-shadow var(--dur-base) ease, border-color var(--dur-base) ease, transform var(--dur-base) ease; }
+    .a-card-hover:hover { box-shadow: var(--shadow-md); border-color: var(--border-hover); transform: translateY(-2px); }
+    .a-mono { font-family: var(--font-mono); }
+
+    .a-pill-group { display: inline-flex; align-items: center; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-full); padding: 3px; }
+    .a-pill-group > a, .a-pill-group > button { padding: 5px 14px; font-size: 0.8125rem; font-weight: 600; border-radius: var(--radius-full); border: none; cursor: pointer; background: transparent; color: var(--text-tertiary); text-decoration: none; }
+    .a-pill-group > a.active, .a-pill-group > button.active { background: #fff; color: var(--neutral-900); box-shadow: var(--shadow-xs); }
+
+    .a-delta { display: inline-flex; align-items: center; gap: 3px; border-radius: var(--radius-full); font-family: var(--font-mono); font-weight: 700; font-size: 11.5px; padding: 2px 7px; }
+    .a-delta.good { color: var(--success-700); background: var(--success-50); }
+    .a-delta.bad { color: var(--error-700); background: var(--error-50); }
+    .a-delta.neutral { color: var(--text-tertiary); background: var(--neutral-100); }
+
+    .a-hero-row { display: flex; flex-wrap: wrap; gap: 16px; align-items: stretch; }
+    .a-kpi { flex: 1 1 175px; min-width: 165px; }
+    .a-eng-card { flex: 4 1 460px; min-width: 300px; }
+
+    /* All posts table */
+    .a-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+    .a-table th { padding: 10px 12px; text-align: right; font-weight: 600; color: var(--text-tertiary); font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; cursor: pointer; user-select: none; }
+    .a-table th.first { text-align: left; cursor: default; }
+    .a-table td { padding: 10px 12px; text-align: right; font-family: var(--font-mono); white-space: nowrap; color: var(--text-secondary); }
+    .a-table td.first { text-align: left; font-family: inherit; color: var(--text-primary); max-width: 280px; }
+    .a-table td.sort-col { color: var(--text-primary); font-weight: 700; }
+    .a-table tbody tr { border-bottom: 1px solid var(--neutral-100); cursor: pointer; }
+    .a-table tbody tr:hover { background: var(--surface-1); }
+
+    /* Drawer */
+    .a-drawer-backdrop { position: fixed; inset: 0; background: rgba(23,20,18,0.32); z-index: 120; opacity: 0; pointer-events: none; transition: opacity var(--dur-base) var(--ease-out); }
+    .a-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+    .a-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 92vw); z-index: 121; background: #fff; box-shadow: var(--shadow-xl); display: flex; flex-direction: column; transform: translateX(100%); transition: transform var(--dur-base) var(--ease-out); }
+    .a-drawer.open { transform: translateX(0); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="analytics-shell" x-data="{ drawerOpen: false, drawerContent: '' }">
+    {% include "analytics/_page.html" %}
+
+    <!-- Post detail drawer (slides from right) -->
+    <div class="a-drawer-backdrop" :class="drawerOpen ? 'open' : ''" @click="drawerOpen = false"></div>
+    <div class="a-drawer" :class="drawerOpen ? 'open' : ''" @keydown.escape.window="drawerOpen = false">
+        <div x-html="drawerContent" id="drawer-host" style="display: flex; flex-direction: column; height: 100%;"></div>
+    </div>
+
+    <script nonce="{{ request.csp_nonce }}">
+        function openPost(url) {
+            const root = document.querySelector('.analytics-shell');
+            const drawer = window.Alpine ? window.Alpine.$data(root) : null;
+            if (!drawer) return;
+            fetch(url, { headers: { 'HX-Request': 'true' } })
+                .then(r => r.text())
+                .then(html => {
+                    drawer.drawerContent = html;
+                    drawer.drawerOpen = true;
+                });
+        }
+        window.openPost = openPost;
+
+        const shell = document.querySelector('.analytics-shell');
+        shell.addEventListener('click', (e) => {
+            const row = e.target.closest('tr[data-post-url]');
+            if (row) { openPost(row.dataset.postUrl); return; }
+
+            if (e.target.closest('[data-action="close-drawer"]')) {
+                if (window.Alpine) window.Alpine.$data(shell).drawerOpen = false;
+            }
+        });
+    </script>
+</div>
+{% endblock %}

@@ -1,0 +1,6 @@
+<div class="text-sm text-green-700">
+  Activation complete!
+  <a href="{% url 'intelligence:playground' org_id=org_id %}"
+     class="text-orange-600 hover:text-orange-700 ml-1">Open Intelligence →</a>
+</div>
+<script>window.location.href = "{% url 'intelligence:playground' org_id=org_id %}";</script>

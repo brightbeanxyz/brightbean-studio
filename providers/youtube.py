@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 from .base import SocialProvider
 from .exceptions import OAuthError, PublishError
 from .types import (
+    AccountMetrics,
     AccountProfile,
     AuthType,
     CommentResult,
@@ -30,6 +31,12 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 API_BASE = "https://www.googleapis.com/youtube/v3"
 UPLOAD_BASE = "https://www.googleapis.com/upload/youtube/v3"
+ANALYTICS_BASE = "https://youtubeanalytics.googleapis.com/v2"
+
+# YouTube Analytics caps a ``filters=video==<id>,<id>,...`` list at 500 IDs
+# per request. Larger inputs to :meth:`YouTubeProvider.get_post_analytics`
+# are split into multiple requests transparently.
+_ANALYTICS_VIDEO_FILTER_CHUNK = 500
 
 
 class YouTubeProvider(SocialProvider):
@@ -61,11 +68,21 @@ class YouTubeProvider(SocialProvider):
 
     @property
     def required_scopes(self) -> list[str]:
-        return [
+        scopes = [
             "https://www.googleapis.com/auth/youtube.upload",
             "https://www.googleapis.com/auth/youtube.readonly",
             "https://www.googleapis.com/auth/youtube.force-ssl",
         ]
+        if self.include_analytics_scopes:
+            scopes.extend(self.analytics_only_scopes)
+        return scopes
+
+    @property
+    def analytics_only_scopes(self) -> list[str]:
+        # Required for the YouTube Analytics API (watch time, retention,
+        # demographics). Only requested when analytics is enabled so the
+        # Google OAuth consent screen doesn't list it when not needed.
+        return ["https://www.googleapis.com/auth/yt-analytics.readonly"]
 
     @property
     def rate_limits(self) -> RateLimitConfig:
@@ -425,6 +442,13 @@ class YouTubeProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
+        """Per-video counts from the YouTube Data API ``videos.list?part=statistics``.
+
+        Only the counts the Data API exposes: views, likes, comments. Watch
+        time, average view percentage, and shares are intentionally absent
+        — those live on the Analytics API and are batched per channel by
+        :meth:`get_post_analytics`.
+        """
         resp = self._request(
             "GET",
             f"{API_BASE}/videos",
@@ -449,6 +473,174 @@ class YouTubeProvider(SocialProvider):
                 "favorite_count": int(stats.get("favoriteCount", 0)),
             },
         )
+
+    def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
+        """Channel-level metrics from the YouTube Analytics API.
+
+        Fetches the metrics the YouTube Data API can't provide per-video:
+        watch time, average view %, subscribers gained, and shares.
+        Views/likes/comments come from per-post snapshots so the main page
+        stays consistent with the per-post drawer; shares is the exception
+        because ``videos.list?part=statistics`` exposes no shareCount field.
+
+        Per-video equivalents of the channel-level watch-time / avg-view-% /
+        shares triple come from :meth:`get_post_analytics`, which calls the
+        same ``/reports`` endpoint with ``dimensions=video`` and the video
+        IDs as a filter.
+
+        Callers must pass a single-day ``date_range`` — Analytics returns one
+        aggregated row across [startDate, endDate], and the sync layer writes
+        it as a single day's snapshot. Larger ranges would silently collapse
+        into one cell.
+
+        Requires the ``yt-analytics.readonly`` scope. The YouTube Analytics
+        API typically lags 1–2 days behind real-time.
+        """
+        start_date = date_range[0].date().isoformat()
+        end_date = date_range[1].date().isoformat()
+        resp = self._request(
+            "GET",
+            f"{ANALYTICS_BASE}/reports",
+            access_token=access_token,
+            params={
+                "ids": "channel==MINE",
+                "startDate": start_date,
+                "endDate": end_date,
+                "metrics": "estimatedMinutesWatched,averageViewPercentage,subscribersGained,shares",
+            },
+        )
+        body = resp.json()
+        headers = body.get("columnHeaders", [])
+        rows = body.get("rows", [])
+        if not rows or not rows[0]:
+            return AccountMetrics()
+
+        index = {col.get("name", ""): i for i, col in enumerate(headers)}
+        row = rows[0]
+
+        def _value_or_none(name: str) -> float | None:
+            """Return float value if Analytics returned the column (even 0), else None.
+
+            Distinguishes "metric not in the response" (None) from "metric
+            returned 0" (0.0). Falsy-zero guards downstream incorrectly drop
+            real 0-value days otherwise.
+            """
+            i = index.get(name)
+            if i is None or i >= len(row) or row[i] is None:
+                return None
+            try:
+                return float(row[i])
+            except (TypeError, ValueError):
+                return None
+
+        extra: dict = {}
+        for api_key, catalog_key in (
+            ("estimatedMinutesWatched", "watch_time"),
+            ("averageViewPercentage", "avg_view_pct"),
+            ("subscribersGained", "subscribers"),
+            ("shares", "shares"),
+        ):
+            v = _value_or_none(api_key)
+            if v is not None:
+                extra[catalog_key] = v
+        return AccountMetrics(extra=extra)
+
+    def get_post_analytics(
+        self,
+        access_token: str,
+        post_ids: list[str],
+        date_range: tuple[datetime, datetime],
+    ) -> dict[str, PostMetrics]:
+        """Per-video metrics from the YouTube Analytics API, batched.
+
+        Returns ``{video_id: PostMetrics}`` populated with ``extra``:
+        ``watch_time`` (estimatedMinutesWatched), ``avg_view_pct``
+        (averageViewPercentage), and ``shares``. These are the per-video
+        metrics the Data API v3 ``statistics`` part can't provide — the
+        catalog keys match the ones :func:`apps.analytics.tasks._post_metrics_to_dict`
+        reads from ``PostMetrics.extra`` via ``_GENERIC_POST_EXTRA_KEYS``.
+
+        One ``/reports`` request covers every video in ``post_ids`` via
+        ``dimensions=video`` and ``filters=video==<id>,<id>,...``. The
+        endpoint caps the filter at 500 IDs per request, so longer inputs
+        are split into multiple calls and merged.
+
+        Videos that have no activity in the window are omitted from the
+        Analytics response and will be absent from the returned dict —
+        callers should treat that as "no data" rather than "all zeros".
+
+        Requires the ``yt-analytics.readonly`` scope (same as
+        :meth:`get_account_metrics`). The Analytics API typically lags
+        1–2 days behind real-time.
+        """
+        if not post_ids:
+            return {}
+
+        start_date = date_range[0].date().isoformat()
+        end_date = date_range[1].date().isoformat()
+        result: dict[str, PostMetrics] = {}
+
+        for offset in range(0, len(post_ids), _ANALYTICS_VIDEO_FILTER_CHUNK):
+            chunk = post_ids[offset : offset + _ANALYTICS_VIDEO_FILTER_CHUNK]
+            resp = self._request(
+                "GET",
+                f"{ANALYTICS_BASE}/reports",
+                access_token=access_token,
+                params={
+                    "ids": "channel==MINE",
+                    "startDate": start_date,
+                    "endDate": end_date,
+                    "metrics": "estimatedMinutesWatched,averageViewPercentage,shares",
+                    "dimensions": "video",
+                    "filters": f"video=={','.join(chunk)}",
+                },
+            )
+            body = resp.json()
+            headers = body.get("columnHeaders", []) or []
+            rows = body.get("rows", []) or []
+            index = {col.get("name", ""): i for i, col in enumerate(headers)}
+            video_idx = index.get("video")
+            if video_idx is None:
+                continue
+
+            # API column → indexes used below. Pre-computed once per chunk so
+            # the inner row loop is a flat lookup. Same semantics as the
+            # closure in ``get_account_metrics``: missing column → key
+            # omitted; present column with a 0 → 0 is preserved (not dropped
+            # as falsy).
+            watch_idx = index.get("estimatedMinutesWatched")
+            avp_idx = index.get("averageViewPercentage")
+            shares_idx = index.get("shares")
+
+            for row in rows:
+                if video_idx >= len(row):
+                    continue
+                video_id = row[video_idx]
+                if not video_id:
+                    continue
+
+                extra: dict = {}
+                for catalog_key, i in (("watch_time", watch_idx), ("avg_view_pct", avp_idx)):
+                    if i is None or i >= len(row) or row[i] is None:
+                        continue
+                    try:
+                        extra[catalog_key] = float(row[i])
+                    except (TypeError, ValueError):
+                        continue
+
+                # ``shares`` has a dedicated ``PostMetrics`` field; the catalog
+                # mapper (``_post_metrics_to_dict``) reads it from there, not
+                # from ``extra``. Cast to int to match the field type.
+                shares_value: int | None = None
+                if shares_idx is not None and shares_idx < len(row) and row[shares_idx] is not None:
+                    try:
+                        shares_value = int(float(row[shares_idx]))
+                    except (TypeError, ValueError):
+                        shares_value = None
+
+                if extra or shares_value is not None:
+                    result[video_id] = PostMetrics(shares=shares_value or 0, extra=extra)
+        return result
 
     # ------------------------------------------------------------------
     # Token management

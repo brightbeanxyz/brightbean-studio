@@ -17,9 +17,7 @@ services:
           name: brightbean-db
           property: connectionString
       - key: ALLOWED_HOSTS
-        sync: false
-      - key: APP_URL
-        sync: false
+        value: "*"
       - key: STORAGE_BACKEND
         value: s3
 
@@ -50,4 +48,4 @@ services:
 
 databases:
   - name: brightbean-db
-    plan: starter
+    plan: free

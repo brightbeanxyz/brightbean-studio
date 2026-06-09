@@ -1,0 +1,30 @@
+{% load analytics_extras %}
+<div id="analytics-hero-chart">
+    <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 14px;">
+        <div style="flex-shrink: 0;">
+            <div style="display: flex; align-items: center; gap: 8px; color: var(--text-secondary); margin-bottom: 6px; white-space: nowrap;">
+                <span style="font-size: 0.8125rem; font-weight: 600;">{{ chart.label }} · last {{ days }} days</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <span style="font-size: 2.25rem; font-weight: 700; letter-spacing: -0.02em; color: var(--text-primary); line-height: 1;">{{ chart.derived.value|fmt_metric:chart.derived.kind }}</span>
+                <span class="a-delta {{ chart.derived.delta|delta_color }}" style="font-size: 12.5px; padding: 3px 9px;">{{ chart.derived.delta|fmt_signed }}</span>
+            </div>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            {% for chip in chart.chips %}
+                <a href="?range={{ days }}&chart_metric={{ chip.key }}"
+                   hx-get="?range={{ days }}&chart_metric={{ chip.key }}&partial=chart"
+                   hx-target="#analytics-hero-chart"
+                   hx-swap="outerHTML"
+                   style="padding: 6px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); border: 1px solid; text-decoration: none; cursor: pointer; border-color: {% if chip.key == chart.metric %}transparent{% else %}var(--border){% endif %}; background: {% if chip.key == chart.metric %}{{ primary_color }}{% else %}#fff{% endif %}; color: {% if chip.key == chart.metric %}#fff{% else %}var(--text-secondary){% endif %};">{{ chip.label }}</a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div style="position: relative; width: 100%; height: 260px; overflow: hidden;">
+        <canvas id="analytics-area-chart"
+                data-series="{{ chart_series_json }}"
+                data-labels="{{ chart_labels_json }}"
+                style="position: absolute; inset: 0;"></canvas>
+    </div>
+</div>

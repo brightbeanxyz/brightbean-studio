@@ -176,10 +176,8 @@
                name="q"
                value="{{ query }}"
                placeholder="Search media..."
-               class="w-full pl-9 pr-4 py-2 text-sm border rounded-lg outline-none"
+               class="input-focus w-full pl-9 pr-4 py-2 text-sm border rounded-lg outline-none"
                style="border-color: var(--border, #E7E5E4); background: var(--surface-0, #FFF);"
-               onfocus="this.style.borderColor='var(--primary, #F97316)'; this.style.boxShadow='0 0 0 3px var(--primary-ring, #FED7AA)'"
-               onblur="this.style.borderColor='var(--border, #E7E5E4)'; this.style.boxShadow='none'"
                hx-get="{% url 'media_library:index' workspace_id=workspace.id %}{% if current_folder %}?folder={{ current_folder }}{% endif %}"
                hx-trigger="keyup changed delay:400ms"
                hx-target="#asset-grid"
@@ -323,7 +321,7 @@
 
 {% block extra_js %}
 <script src="{% static 'js/media-library.js' %}"></script>
-<script>
+<script nonce="{{ request.csp_nonce }}">
 function mediaLibrary() {
   return {
     viewMode: 'grid',

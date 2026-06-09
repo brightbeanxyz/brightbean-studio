@@ -9,6 +9,7 @@
     <link rel="icon" type="image/svg+xml" href="{% static 'favicon/favicon.svg' %}">
     <link rel="icon" type="image/png" sizes="96x96" href="{% static 'favicon/favicon-96x96.png' %}">
     <link rel="apple-touch-icon" sizes="180x180" href="{% static 'favicon/apple-touch-icon.png' %}">
+    <link rel="manifest" href="{% static 'favicon/site.webmanifest' %}">
     <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
 </head>
 <body>
@@ -17,7 +18,7 @@
         <!-- Logo & Header -->
         <div class="text-center mb-8">
             <div class="inline-flex items-center justify-center w-12 h-12 mb-4">
-                <img src="{% static 'img/brightbean-logo.webp' %}" alt="Brightbean logo" class="w-12 h-12 object-contain">
+                <img src="{% static 'img/brightbean-studio-logo.webp' %}" alt="Brightbean logo" class="w-12 h-12 object-contain">
             </div>
             <h1 class="text-2xl font-bold tracking-tight" style="color: var(--text-primary);">
                 Almost there
@@ -46,7 +47,7 @@
             <form method="post">
                 {% csrf_token %}
 
-                <label for="id_agree" class="flex items-start gap-3 cursor-pointer mb-6 p-3 rounded-lg transition-colors" style="border: 1.5px solid var(--border);" onmouseover="this.style.background='var(--surface-1)'" onmouseout="this.style.background='transparent'">
+                <label for="id_agree" class="btn-surface-1 flex items-start gap-3 cursor-pointer mb-6 p-3 rounded-lg transition-colors" style="border: 1.5px solid var(--border);">
                     <input type="checkbox"
                            name="agree"
                            id="id_agree"

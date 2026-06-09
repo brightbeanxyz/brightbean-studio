@@ -8,6 +8,24 @@ ignore = [
     "E501",  # line too long (handled by ruff format)
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Intelligence client exceptions deliberately mirror Stripe / HTTP
+# status names ("BadRequest", "NotFound", "Conflict", "RateLimited",
+# "ServiceUnavailable", etc.) so the call sites read naturally:
+#     except RateLimited as exc: ...
+# An "Error" suffix would just be noise on names that already encode
+# the failure mode. The flow-control sentinel ``_DeferredToWorker`` in
+# views.py is also intentionally suffixless — it's not an error, it's
+# a "this branch deferred to the worker" signal.
+"apps/intelligence/services/exceptions.py" = ["N818"]
+"apps/intelligence/views.py" = ["N818"]
+# Ninja's ``File(...)`` / ``Form(...)`` / ``Query(...)`` are intentionally
+# called in argument defaults — that's how Ninja registers field
+# metadata for OpenAPI generation and request parsing. The B008 check
+# doesn't apply.
+"apps/api/routers/media.py" = ["B008"]
+"apps/api/routers/analytics.py" = ["B008"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["apps", "config"]
 

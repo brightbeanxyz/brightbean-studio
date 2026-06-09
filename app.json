@@ -30,15 +30,15 @@
     },
     "ALLOWED_HOSTS": {
       "description": "Comma-separated list of allowed hostnames",
-      "required": true
+      "value": "*"
     },
     "APP_URL": {
-      "description": "Public URL of the application (e.g., https://your-app.herokuapp.com)",
-      "required": true
+      "description": "Public URL of the application (e.g., https://your-app.herokuapp.com). Can be set after first deploy.",
+      "required": false
     },
     "STORAGE_BACKEND": {
       "description": "Storage backend: 'local' or 's3'",
-      "value": "s3"
+      "value": "local"
     },
     "S3_ENDPOINT_URL": {
       "description": "S3-compatible endpoint URL",

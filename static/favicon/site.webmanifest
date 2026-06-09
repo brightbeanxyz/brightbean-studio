@@ -1,5 +1,5 @@
 {
-  "name": "BrightBean",
+  "name": "BrightBean Studio",
   "short_name": "Bean",
   "icons": [
     {
@@ -15,7 +15,7 @@
       "purpose": "maskable"
     }
   ],
-  "theme_color": "#ffffff",
+  "theme_color": "#ffda99",
   "background_color": "#ffffff",
   "display": "standalone"
 }

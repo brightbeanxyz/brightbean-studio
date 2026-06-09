@@ -2,6 +2,8 @@
 
 from django import forms
 
+from apps.common.validators import normalize_tags, parse_and_truncate_tag_string
+
 from .models import ContentCategory, Idea, Post, PostTemplate
 
 
@@ -15,8 +17,11 @@ class IdeaForm(forms.ModelForm):
     def clean_tags(self):
         tags = self.cleaned_data.get("tags") or []
         if isinstance(tags, str):
-            tags = [t.strip() for t in tags.split(",") if t.strip()]
-        return tags
+            return parse_and_truncate_tag_string(tags)
+        try:
+            return normalize_tags(tags)
+        except ValueError as e:
+            raise forms.ValidationError(str(e)) from e
 
 
 class PostForm(forms.ModelForm):
@@ -74,8 +79,11 @@ class PostForm(forms.ModelForm):
     def clean_tags(self):
         tags = self.cleaned_data.get("tags") or []
         if isinstance(tags, str):
-            tags = [t.strip() for t in tags.split(",") if t.strip()]
-        return tags
+            return parse_and_truncate_tag_string(tags)
+        try:
+            return normalize_tags(tags)
+        except ValueError as e:
+            raise forms.ValidationError(str(e)) from e
 
 
 class ContentCategoryForm(forms.ModelForm):

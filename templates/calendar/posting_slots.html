@@ -17,7 +17,7 @@
                 {{ account.platform_icon|upper }}
             </span>
             <div>
-                <div class="text-sm font-semibold text-stone-800">{{ account.account_name }}</div>
+                <div class="text-sm font-semibold text-stone-800">{{ account.account_name|default:account.account_handle }}</div>
                 <div class="text-xs text-stone-400">{{ account.get_platform_display }}</div>
             </div>
         </div>

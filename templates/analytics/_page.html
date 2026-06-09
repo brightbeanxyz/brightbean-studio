@@ -1,0 +1,56 @@
+{% load analytics_extras %}
+{# Full-page swap target. The drawer + AlpineJS scope is in index.html. #}
+
+{% include "analytics/_page_header.html" %}
+
+{% if analytics_needs_reconnect %}
+<div class="a-card" style="padding: 18px 22px; margin-bottom: 16px; background: var(--warning-50); border-color: var(--warning-500); display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+    <div>
+        <div style="font-weight: 700; color: var(--warning-700);">Reconnect for analytics</div>
+        <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 2px;">The platform rejected our analytics call as insufficient-scope. Reconnect to grant the new permissions.</div>
+    </div>
+    <form method="post" action="{% url 'social_accounts:reconnect' workspace_id=workspace.id account_id=active_account.id %}">
+        {% csrf_token %}
+        <button type="submit" class="btn-brand" style="width: auto; padding: 8px 18px;">Reconnect</button>
+    </form>
+</div>
+{% endif %}
+
+{% if analytics_unavailable %}
+    {% include "analytics/_no_analytics_state.html" %}
+    {% if table.total %}
+        <div class="a-card" style="margin-top: 20px;">
+            <div style="padding: 16px 20px; border-bottom: 1px solid var(--neutral-100);">
+                <h3 style="font-size: 0.9375rem; font-weight: 600; color: var(--text-primary);">All posts</h3>
+            </div>
+            {% include "analytics/_post_table.html" %}
+        </div>
+    {% endif %}
+{% elif is_fresh %}
+    {% include "analytics/_empty_state.html" %}
+{% else %}
+    <div style="display: flex; flex-direction: column; gap: 20px;">
+        {# Hero row: KPI cards + engagement card #}
+        <div class="a-hero-row">
+            {% for c in hero_cards %}
+                <div class="a-kpi">{% include "analytics/_stat_card.html" with metric_key=c.metric label=c.label derived=c.derived %}</div>
+            {% endfor %}
+            {% if engagement %}
+                <div class="a-eng-card">{% include "analytics/_engagement_card.html" with engagement=engagement %}</div>
+            {% endif %}
+        </div>
+
+        {# Hero trend chart #}
+        <div class="a-card" style="padding: 20px;">
+            {% include "analytics/_hero_chart.html" %}
+        </div>
+
+        {# All posts table #}
+        <div class="a-card">
+            <div style="padding: 16px 20px; border-bottom: 1px solid var(--neutral-100);">
+                <h3 style="font-size: 0.9375rem; font-weight: 600; color: var(--text-primary);">All posts</h3>
+            </div>
+            {% include "analytics/_post_table.html" %}
+        </div>
+    </div>
+{% endif %}

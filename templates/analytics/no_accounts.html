@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics — {{ workspace.name }} — Brightbean{% endblock %}
+
+{% block content %}
+<div style="padding: 22px 24px 40px; display: flex; flex-direction: column; flex: 1;">
+    <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 22px; padding-bottom: 16px; border-bottom: 1px solid var(--neutral-100);">
+        <div>
+            <h1 style="font-size: 1.5rem; font-weight: 600; color: var(--neutral-900); letter-spacing: -0.01em;">Analytics</h1>
+            <p style="font-size: 0.8125rem; color: var(--text-tertiary); margin-top: 2px;">Performance across your connected channels.</p>
+        </div>
+    </div>
+
+    <div style="flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px;">
+        <div style="text-align: center; max-width: 420px;">
+            <div style="width: 72px; height: 72px; border-radius: var(--radius-2xl); background: var(--primary-soft); margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
+                <svg width="32" height="32" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 12l4-4 4 4 6-6"/></svg>
+            </div>
+            <h2 style="font-family: var(--font-display); font-size: 1.5rem; font-weight: 700; color: var(--text-primary); margin-bottom: 8px;">Connect an account to see analytics</h2>
+            <p style="font-size: 0.9375rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 20px;">
+                No analytics-enabled accounts are connected to this workspace yet. Connect one to start tracking per-post performance.
+            </p>
+            <a href="{% url 'social_accounts:connect' workspace_id=workspace.id %}" class="btn-brand" style="width: auto; padding: 9px 20px;">Connect a channel</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

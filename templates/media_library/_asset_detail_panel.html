@@ -5,10 +5,8 @@
   <div class="flex items-center justify-between px-5 py-4 border-b" style="border-color: var(--border, #E7E5E4);">
     <h2 class="text-sm font-bold truncate pr-4" style="color: var(--text-primary, #1C1917);">{{ asset.original_filename }}</h2>
     <button @click="detailOpen = false"
-            class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors"
-            style="color: var(--text-tertiary, #78716C);"
-            onmouseenter="this.style.background='var(--surface-2)'"
-            onmouseleave="this.style.background='transparent'">
+            class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors btn-surface-2"
+            style="color: var(--text-tertiary, #78716C);">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
     </button>
   </div>
@@ -36,29 +34,39 @@
 
   <!-- Actions -->
   <div class="px-5 pb-3 flex items-center gap-2">
-    {% if not asset.is_shared %}
+    {% if is_shared_library and is_admin %}
+    <a href="{% url 'media_library_org:shared_asset_edit' asset_id=asset.id %}"
+       class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white rounded-full transition-all btn-primary-hover"
+       style="background: var(--primary, #F97316); box-shadow: var(--shadow-primary);">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+      Edit
+    </a>
+    {% elif not asset.is_shared %}
     <a href="{% url 'media_library:asset_edit' workspace_id=workspace.id asset_id=asset.id %}"
-       class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white rounded-full transition-all"
-       style="background: var(--primary, #F97316); box-shadow: var(--shadow-primary);"
-       onmouseenter="this.style.background='var(--primary-hover)'"
-       onmouseleave="this.style.background='var(--primary)'">
+       class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white rounded-full transition-all btn-primary-hover"
+       style="background: var(--primary, #F97316); box-shadow: var(--shadow-primary);">
       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
       Edit
     </a>
     {% endif %}
-    <a href="{% url 'media_library:asset_download' workspace_id=workspace.id asset_id=asset.id %}"
-       class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-full border transition-all"
-       style="border-color: var(--border, #E7E5E4); color: var(--text-secondary, #57534E);"
-       onmouseenter="this.style.background='var(--surface-1)'"
-       onmouseleave="this.style.background='transparent'">
+    {% if is_shared_library %}
+    <a href="{% url 'media_library_org:shared_asset_download' asset_id=asset.id %}"
+       class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-full border transition-all btn-surface-1"
+       style="border-color: var(--border, #E7E5E4); color: var(--text-secondary, #57534E);">
       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
       Download
     </a>
-    {% if not asset.is_shared %}
-    <button class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-full transition-all ml-auto cursor-pointer"
+    {% else %}
+    <a href="{% url 'media_library:asset_download' workspace_id=workspace.id asset_id=asset.id %}"
+       class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-full border transition-all btn-surface-1"
+       style="border-color: var(--border, #E7E5E4); color: var(--text-secondary, #57534E);">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+      Download
+    </a>
+    {% endif %}
+    {% if is_shared_library and is_admin or not asset.is_shared %}
+    <button class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-full transition-all ml-auto cursor-pointer btn-danger-soft-bg"
             style="color: var(--error-500, #EF4444);"
-            onmouseenter="this.style.background='var(--error-50)'"
-            onmouseleave="this.style.background='transparent'"
             @click="showDeleteConfirm = true">
       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
       Delete
@@ -75,24 +83,27 @@
           <svg class="w-5 h-5" style="color: var(--error-500, #EF4444);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
         </div>
         <h3 class="text-base font-semibold text-center mb-1" style="color: var(--text-primary, #1C1917);">Delete asset?</h3>
-        <p class="text-sm text-center mb-5" style="color: var(--text-secondary, #57534E);">This cannot be undone. The file will be permanently removed.</p>
+        <p class="text-sm text-center mb-5" style="color: var(--text-secondary, #57534E);">{% if is_shared_library %}This shared asset will be removed for all workspaces. This cannot be undone.{% else %}This cannot be undone. The file will be permanently removed.{% endif %}</p>
         <div class="flex gap-2">
           <button type="button" @click="showDeleteConfirm = false"
-                  class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer"
-                  style="color: var(--text-secondary, #57534E); border: 1px solid var(--border, #E7E5E4);"
-                  onmouseenter="this.style.background='var(--surface-2, #F5F5F4)'"
-                  onmouseleave="this.style.background='transparent'">
+                  class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer btn-surface-2"
+                  style="color: var(--text-secondary, #57534E); border: 1px solid var(--border, #E7E5E4);">
             Cancel
           </button>
           <button type="button"
-                  class="flex-1 px-4 py-2 text-sm font-semibold text-white rounded-lg transition-colors cursor-pointer"
+                  class="flex-1 px-4 py-2 text-sm font-semibold text-white rounded-lg transition-colors cursor-pointer btn-error-darker"
                   style="background: var(--error-500, #EF4444);"
-                  onmouseenter="this.style.background='var(--error-600, #DC2626)'"
-                  onmouseleave="this.style.background='var(--error-500, #EF4444)'"
+                  {% if is_shared_library %}
+                  hx-post="{% url 'media_library_org:shared_asset_delete' asset_id=asset.id %}"
+                  hx-target="#detail-panel"
+                  hx-swap="innerHTML"
+                  @htmx:after-request.camel="if ($event.detail.successful) { window.location.href='{% url 'media_library_org:shared_index' %}'; }"
+                  {% else %}
                   hx-post="{% url 'media_library:asset_delete' workspace_id=workspace.id asset_id=asset.id %}"
                   hx-target="#detail-panel"
                   hx-swap="innerHTML"
-                  @htmx:after-request.camel="if ($event.detail.successful) { detailOpen = false; htmx.ajax('GET', window.location.href, {target: '#asset-grid', swap: 'innerHTML'}); }">
+                  @htmx:after-request.camel="if ($event.detail.successful) { detailOpen = false; htmx.ajax('GET', window.location.href, {target: '#asset-grid', swap: 'innerHTML'}); }"
+                  {% endif %}>
             Delete
           </button>
         </div>
@@ -158,7 +169,7 @@
         {% endif %}
       </div>
       <div id="version-list-{{ asset.id }}"
-           hx-get="{% url 'media_library:version_list' workspace_id=workspace.id asset_id=asset.id %}"
+           hx-get="{% if is_shared_library %}{% url 'media_library_org:shared_version_list' asset_id=asset.id %}{% else %}{% url 'media_library:version_list' workspace_id=workspace.id asset_id=asset.id %}{% endif %}"
            hx-trigger="load"
            hx-target="#version-list-{{ asset.id }}">
         {% include "media_library/_version_list.html" %}

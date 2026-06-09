@@ -4,7 +4,7 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
 {% endcomment %}
 {% load tz %}
 
-<div style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both">
+<div{% if is_htmx %} class="tab-slide-in"{% endif %}>
     {% if platform_posts %}
     {% regroup platform_posts by effective_at.date as date_groups %}
     {% for group in date_groups %}
@@ -29,15 +29,15 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
                 </div>
 
                 <!-- Right: post card -->
-                <div class="flex-1 bg-white rounded-xl border border-stone-200 hover:border-stone-300 transition-colors group">
-                    <div class="p-4 cursor-pointer" onclick="window.location='{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}'">
+                <div x-data class="flex-1 bg-white rounded-xl border border-stone-200 hover:border-stone-300 transition-colors group">
+                    <div class="p-4 cursor-pointer" @click="window.location='{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}'">
                         <!-- Channel info -->
                         <div class="flex items-center gap-2 mb-2">
                             <span class="w-6 h-6 rounded-md flex items-center justify-center">
                                 {% include "partials/_platform_icon.html" with platform=pp.social_account.platform size="sm" %}
                             </span>
                             <span class="text-sm font-semibold text-stone-800">
-                                {{ pp.social_account.account_name }}
+                                {{ pp.social_account.account_name|default:pp.social_account.account_handle }}
                             </span>
                         </div>
 

@@ -1,0 +1,113 @@
+{# Single row in the API keys list. Receives ``row`` (see ``_row_context``). #}
+<div class="flex items-center justify-between gap-6">
+    <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-3 mb-1">
+            <h3 class="text-sm font-semibold truncate" style="color: var(--text-primary);">{{ row.name }}</h3>
+            {# Status chip. #}
+            {% if row.status == "active" %}
+            <span class="px-2 py-0.5 text-xs rounded-full"
+                  style="background: var(--success-soft, #D1FAE5); color: var(--success-700, #047857);">Active</span>
+            {% elif row.status == "revoked" %}
+            <span class="px-2 py-0.5 text-xs rounded-full"
+                  style="background: var(--neutral-100); color: var(--text-tertiary);">Revoked</span>
+            {% else %}
+            <span class="px-2 py-0.5 text-xs rounded-full"
+                  style="background: var(--warning-soft, #FEF3C7); color: var(--warning-700, #B45309);">Expired</span>
+            {% endif %}
+        </div>
+        <div class="text-xs flex flex-wrap items-center gap-x-3 gap-y-1" style="color: var(--text-tertiary);">
+            <span>Workspace: <strong style="color: var(--text-secondary);">{{ row.workspace_name }}</strong></span>
+            {% if row.last_used_at %}
+                <span>Last used {{ row.last_used_at|timesince }} ago</span>
+            {% else %}
+                <span>Never used</span>
+            {% endif %}
+            {% if row.issued_by %}
+                <span>Issued by {{ row.issued_by.name|default:row.issued_by.email }}</span>
+            {% endif %}
+        </div>
+        {% if row.accounts %}
+        <div class="mt-2 flex flex-wrap gap-1.5">
+            {% for sa in row.accounts %}
+            <span class="px-2 py-0.5 text-xs rounded-md"
+                  style="background: var(--surface-1, #F3F4F6); color: var(--text-secondary); border: 1px solid var(--border);">
+                {{ sa.platform }} · {{ sa.account_name }}
+            </span>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% if row.permissions %}
+        <div class="mt-1.5 flex flex-wrap gap-1">
+            {% for perm in row.permissions %}
+            <span class="px-1.5 py-0.5 text-[10px] rounded font-mono"
+                  style="background: transparent; color: var(--text-tertiary); border: 1px solid var(--border);">
+                {{ perm }}
+            </span>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% if row.status == "active" %}
+    {% comment %}
+    Revoke flow. The trigger opens an Alpine-driven confirmation modal
+    instead of the native confirm() dialog — same look as the issuance
+    modal, and CSP-safe: only Alpine directives and simple state toggles,
+    no inline on* handlers and no eval-heavy expressions.
+
+    Must be a comment/endcomment block (not a hash-style template comment):
+    the hash form is single-line only, so a multi-line one leaks as literal
+    text — and as a stray flex child here it squeezed the content column,
+    forcing the account/permission chips to wrap one per line.
+    {% endcomment %}
+    <div x-data="{ showRevokeModal: false }">
+        <button type="button"
+                @click="showRevokeModal = true"
+                class="btn-neutral px-4 py-1.5 text-xs font-medium rounded-full cursor-pointer whitespace-nowrap"
+                style="background: var(--error-soft, #FEE2E2); color: var(--error-700, #B91C1C);">
+            Revoke
+        </button>
+
+        <template x-teleport="body">
+            <div x-show="showRevokeModal" x-transition.opacity
+                 @keydown.escape.window="showRevokeModal = false"
+                 class="fixed inset-0 z-50 flex items-center justify-center"
+                 style="background: rgba(0,0,0,0.4);">
+                <div @click.outside="showRevokeModal = false"
+                     x-show="showRevokeModal" x-transition
+                     class="w-full max-w-md mx-4 rounded-xl flex flex-col"
+                     style="background: var(--surface-0); border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0,0,0,0.18);">
+                    <div class="flex items-start justify-between px-6 pt-6 pb-4">
+                        <div>
+                            <h3 class="text-lg font-semibold" style="color: var(--text-primary);">Revoke API key</h3>
+                            <p class="text-xs mt-1" style="color: var(--text-tertiary);">This can't be undone.</p>
+                        </div>
+                        <button type="button" @click="showRevokeModal = false"
+                                class="text-xl leading-none px-2 cursor-pointer"
+                                style="color: var(--text-tertiary);">&times;</button>
+                    </div>
+
+                    <p class="px-6 pb-2 text-sm" style="color: var(--text-secondary);">
+                        Revoke <strong style="color: var(--text-primary);">{{ row.name }}</strong>?
+                        Agents using it will immediately start receiving <code>401 Unauthorized</code>.
+                    </p>
+
+                    <form method="POST" action="{% url 'api_keys:revoke' row.id %}"
+                          class="flex items-center justify-end gap-3 px-6 pt-5 pb-6">
+                        {% csrf_token %}
+                        <button type="button" @click="showRevokeModal = false"
+                                class="btn-neutral px-4 py-2 text-sm font-medium rounded-full cursor-pointer"
+                                style="background: var(--neutral-100); color: var(--text-primary);">
+                            Cancel
+                        </button>
+                        <button type="submit"
+                                class="px-5 py-2 text-sm font-medium rounded-full cursor-pointer"
+                                style="background: var(--error-700, #B91C1C); color: white;">
+                            Revoke key
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </template>
+    </div>
+    {% endif %}
+</div>

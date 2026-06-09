@@ -41,10 +41,8 @@
                 </div>
             </div>
 
-            <label class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
-                   style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);"
-                   onmouseenter="this.style.background='var(--neutral-50)'"
-                   onmouseleave="this.style.background='var(--surface-0)'">
+            <label class="btn-neutral-surface inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
+                   style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
                 <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 Upload Photo
                 <input type="file" name="avatar" accept="image/jpeg,image/png,image/webp,image/gif" class="hidden" x-ref="avatarInput"
@@ -61,16 +59,12 @@
             <div class="flex-1">
                 <label for="name" class="block text-sm font-semibold mb-2" style="color: var(--text-primary);">Name</label>
                 <input type="text" id="name" name="name" value="{{ user.name }}" required maxlength="255"
-                       class="w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
-                       style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);"
-                       onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 3px var(--primary-ring)'"
-                       onblur="this.style.borderColor='var(--border)'; this.style.boxShadow='none'">
+                       class="input-focus w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
+                       style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
             </div>
             <button type="submit"
-                    class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer whitespace-nowrap"
-                    style="background: var(--neutral-100); color: var(--text-primary);"
-                    onmouseenter="this.style.background='var(--neutral-200)'"
-                    onmouseleave="this.style.background='var(--neutral-100)'">
+                    class="btn-neutral px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer whitespace-nowrap"
+                    style="background: var(--neutral-100); color: var(--text-primary);">
                 Save Changes
             </button>
         </div>
@@ -90,33 +84,25 @@
             <div>
                 <label for="current_password" class="block text-sm font-semibold mb-2" style="color: var(--text-primary);">Current password</label>
                 <input type="password" id="current_password" name="current_password" placeholder="Current password" required
-                       class="w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
-                       style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);"
-                       onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 3px var(--primary-ring)'"
-                       onblur="this.style.borderColor='var(--border)'; this.style.boxShadow='none'">
+                       class="input-focus w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
+                       style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
             </div>
             <div>
                 <label for="password" class="block text-sm font-semibold mb-2" style="color: var(--text-primary);">New password</label>
                 <input type="password" id="password" name="password" placeholder="New password" minlength="8" required
-                       class="w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
-                       style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);"
-                       onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 3px var(--primary-ring)'"
-                       onblur="this.style.borderColor='var(--border)'; this.style.boxShadow='none'">
+                       class="input-focus w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
+                       style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
             </div>
             <div>
                 <label for="password_confirm" class="block text-sm font-semibold mb-2" style="color: var(--text-primary);">Confirm new password</label>
                 <input type="password" id="password_confirm" name="password_confirm" placeholder="Confirm new password" minlength="8" required
-                       class="w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
-                       style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);"
-                       onfocus="this.style.borderColor='var(--primary)'; this.style.boxShadow='0 0 0 3px var(--primary-ring)'"
-                       onblur="this.style.borderColor='var(--border)'; this.style.boxShadow='none'">
+                       class="input-focus w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
+                       style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
             </div>
             <div>
                 <button type="submit"
-                        class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer whitespace-nowrap"
-                        style="background: var(--neutral-100); color: var(--text-primary);"
-                        onmouseenter="this.style.background='var(--neutral-200)'"
-                        onmouseleave="this.style.background='var(--neutral-100)'">
+                        class="btn-neutral px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer whitespace-nowrap"
+                        style="background: var(--neutral-100); color: var(--text-primary);">
                     Change Password
                 </button>
             </div>
@@ -155,15 +141,13 @@
             <div>
                 <h3 class="text-base font-semibold mb-1" style="color: var(--text-primary);">Delete your account</h3>
                 <p class="text-sm" style="color: var(--text-secondary); max-width: 480px;">
-                    When you delete your account, you lose access to Brightbean account services, and we permanently delete your personal data.
+                    When you delete your account, you lose access to Brightbean Studio account services, and we permanently delete your personal data.
                 </p>
             </div>
 
             <button type="button" @click="showDeleteModal = true"
-                    class="px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                    style="background: var(--error-soft, #FEE2E2); color: var(--error-500, #EF4444);"
-                    onmouseenter="this.style.background='var(--error-500, #EF4444)'; this.style.color='white'"
-                    onmouseleave="this.style.background='var(--error-soft, #FEE2E2)'; this.style.color='var(--error-500, #EF4444)'">
+                    class="btn-danger-soft px-5 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                    style="background: var(--error-soft, #FEE2E2); color: var(--error-500, #EF4444);">
                 Delete Account
             </button>
         </div>
@@ -191,27 +175,23 @@
                     <!-- Body -->
                     <div class="px-6 py-5">
                         <p class="text-sm" style="color: var(--text-secondary);">
-                            Are you sure you want to delete your account? This action is permanent and cannot be undone. You will lose access to all Brightbean services, and your personal data will be permanently deleted.
+                            Are you sure you want to delete your account? This action is permanent and cannot be undone. You will lose access to all Brightbean Studio services, and your personal data will be permanently deleted.
                         </p>
                     </div>
 
                     <!-- Footer -->
                     <div class="flex justify-end gap-3 px-6 py-4" style="border-top: 1px solid var(--border);">
                         <button type="button" @click="showDeleteModal = false"
-                                class="px-5 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
-                                style="background: var(--neutral-100); color: var(--text-primary);"
-                                onmouseenter="this.style.background='var(--neutral-200)'"
-                                onmouseleave="this.style.background='var(--neutral-100)'">
+                                class="btn-neutral px-5 py-2 text-sm font-medium rounded-full cursor-pointer transition-colors"
+                                style="background: var(--neutral-100); color: var(--text-primary);">
                             Cancel
                         </button>
                         <form method="POST">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="delete_account">
                             <button type="submit"
-                                    class="px-5 py-2 text-sm font-semibold rounded-full cursor-pointer transition-colors whitespace-nowrap"
-                                    style="background: var(--error-500, #EF4444); color: white;"
-                                    onmouseenter="this.style.opacity='0.9'"
-                                    onmouseleave="this.style.opacity='1'">
+                                    class="btn-opacity px-5 py-2 text-sm font-semibold rounded-full cursor-pointer transition-colors whitespace-nowrap"
+                                    style="background: var(--error-500, #EF4444); color: white;">
                                 Yes, delete my account
                             </button>
                         </form>

@@ -4,7 +4,7 @@
 <div class="max-w-2xl">
     <!-- Header -->
     <div class="mb-8">
-        <div class="mx-auto w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center mb-4">
+        <div class="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center mb-4">
             {% include "social_accounts/partials/_platform_icon.html" with platform=platform size="6" %}
         </div>
         <h2 class="text-xl font-semibold text-stone-900">Select Account{{ pages|length|pluralize }}</h2>
@@ -56,7 +56,7 @@
     </form>
 </div>
 
-<script>
+<script nonce="{{ request.csp_nonce }}">
     document.getElementById('connect-btn').closest('form').addEventListener('submit', function(e) {
         const btn = document.getElementById('connect-btn');
         if (btn.disabled) {

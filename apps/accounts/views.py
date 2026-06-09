@@ -19,8 +19,19 @@ def dashboard(request):
     from apps.members.models import WorkspaceMembership
 
     user = request.user
+
+    # Only trust last_workspace_id if the user still has an active membership
+    # in that workspace. Otherwise the org may have been deleted out from under
+    # them and we'd redirect into a 403.
     if user.last_workspace_id:
-        return redirect("calendar:calendar", workspace_id=user.last_workspace_id)
+        if WorkspaceMembership.objects.filter(
+            user=user,
+            workspace_id=user.last_workspace_id,
+            workspace__is_archived=False,
+        ).exists():
+            return redirect("calendar:calendar", workspace_id=user.last_workspace_id)
+        user.last_workspace_id = None
+        user.save(update_fields=["last_workspace_id"])
 
     # Fallback: try to find any workspace the user belongs to
     membership = (

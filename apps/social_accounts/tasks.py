@@ -18,6 +18,7 @@ def check_social_account_health(account_id: str):
     """
     from providers import get_provider
 
+    from .error_messages import friendly_health_check_error
     from .models import SocialAccount
 
     try:
@@ -26,19 +27,10 @@ def check_social_account_health(account_id: str):
         logger.warning("Health check: account %s not found, skipping", account_id)
         return
 
-    # Load app credentials from the workspace's org or env fallback
-    from django.conf import settings
+    # Load app credentials (.env dominant, admin-entered org creds as fallback).
+    from apps.credentials.models import PlatformCredential, resolve_platform_credentials
 
-    from apps.credentials.models import PlatformCredential
-
-    credentials: dict = {}
-    try:
-        org_id = account.workspace.organization_id
-        cred = PlatformCredential.objects.for_org(org_id).get(platform=account.platform, is_configured=True)
-        credentials = cred.credentials
-    except PlatformCredential.DoesNotExist:
-        env_creds = getattr(settings, "PLATFORM_CREDENTIALS_FROM_ENV", {})
-        credentials = env_creds.get(account.platform, {})
+    credentials = resolve_platform_credentials(account.platform, account.workspace.organization_id)
 
     # For Mastodon, inject instance-specific client credentials
     if account.platform == PlatformCredential.Platform.MASTODON and account.instance_url:
@@ -61,8 +53,11 @@ def check_social_account_health(account_id: str):
         logger.error("Health check: no provider for platform %s", account.platform)
         return
 
-    # Attempt token refresh if expiring soon
-    if account.is_token_expiring_soon and account.oauth_refresh_token:
+    # Bluesky accounts connected before we recorded token_expires_at need a
+    # one-shot refresh to populate it; without this, is_token_expiring_soon
+    # stays False forever and the short-lived accessJwt is never rotated.
+    needs_bluesky_bootstrap = account.platform == "bluesky" and account.token_expires_at is None
+    if (account.is_token_expiring_soon or needs_bluesky_bootstrap) and account.oauth_refresh_token:
         try:
             new_tokens = provider.refresh_token(account.oauth_refresh_token)
             account.oauth_access_token = new_tokens.access_token
@@ -76,19 +71,29 @@ def check_social_account_health(account_id: str):
         except Exception as e:
             logger.warning("Health check: token refresh failed for %s: %s", account, e)
             account.connection_status = SocialAccount.ConnectionStatus.TOKEN_EXPIRING
-            account.last_error = f"Token refresh failed: {e}"
+            account.last_error = friendly_health_check_error(e)
 
     # Validate token by fetching profile
     try:
         profile = provider.get_profile(account.oauth_access_token)
         account.follower_count = profile.follower_count
+        # Provider CDNs (TikTok, Meta) return signed avatar URLs that
+        # expire; display names and handles can also change on-platform.
+        # Guard each write so a transient empty response doesn't wipe
+        # previously-good values.
+        if profile.avatar_url:
+            account.avatar_url = profile.avatar_url
+        if profile.name:
+            account.account_name = profile.name
+        if profile.handle:
+            account.account_handle = profile.handle
         if account.connection_status != SocialAccount.ConnectionStatus.TOKEN_EXPIRING:
             account.connection_status = SocialAccount.ConnectionStatus.CONNECTED
         account.last_error = ""
     except Exception as e:
         logger.warning("Health check: profile fetch failed for %s: %s", account, e)
         account.connection_status = SocialAccount.ConnectionStatus.ERROR
-        account.last_error = f"Health check failed: {e}"
+        account.last_error = friendly_health_check_error(e)
 
     account.last_health_check_at = timezone.now()
     account.save(
@@ -97,6 +102,9 @@ def check_social_account_health(account_id: str):
             "oauth_refresh_token",
             "token_expires_at",
             "follower_count",
+            "avatar_url",
+            "account_name",
+            "account_handle",
             "connection_status",
             "last_error",
             "last_health_check_at",

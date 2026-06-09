@@ -1,0 +1,53 @@
+{% load analytics_extras %}
+{# Loaded into the slide-over drawer by openPost(url) in index.html. #}
+<div style="display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--neutral-100); flex-shrink: 0;">
+    {% if account.avatar_url %}
+        <img src="{{ account.avatar_url }}" alt="" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover;">
+    {% else %}
+        <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--neutral-200); display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--text-secondary);">{{ account.account_name|make_list|first|upper }}</div>
+    {% endif %}
+    <div style="flex: 1; min-width: 0;">
+        <div style="font-size: 0.875rem; font-weight: 600; color: var(--neutral-900); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ account.account_name }}</div>
+        <div style="font-size: 0.6875rem; color: var(--text-tertiary);">@{{ account.account_handle|strip_leading_at }}</div>
+    </div>
+    <button type="button" data-action="close-drawer"
+            style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-md); border: none; background: none; cursor: pointer; color: var(--text-tertiary);">✕</button>
+</div>
+
+<div style="flex: 1; overflow-y: auto; padding: 20px;">
+    <div style="position: relative; margin-bottom: 16px;">
+        {% if media_preview.kind == 'video' %}
+        <video src="{{ media_preview.url }}" controls muted preload="metadata"
+               style="width: 100%; height: 260px; border-radius: 12px; object-fit: cover; background: var(--surface-2);"></video>
+        {% elif media_preview %}
+        <img src="{{ media_preview.url }}" alt=""
+             style="width: 100%; height: 260px; border-radius: 12px; object-fit: cover; background: var(--surface-2);">
+        {% else %}
+        <div style="width: 100%; height: 260px; border-radius: 12px; background: var(--surface-2);"></div>
+        {% endif %}
+        <span style="position: absolute; top: 12px; left: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: rgba(23,20,18,0.7); color: #fff; border-radius: var(--radius-full); font-size: 0.6875rem; font-weight: 600;">{{ media_kind }}</span>
+    </div>
+
+    <div style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-ghost); margin-bottom: 6px;">Post copy</div>
+    <p style="font-size: 0.9375rem; color: var(--text-primary); line-height: 1.65; margin-bottom: 14px; white-space: pre-wrap;">{{ caption|default:"(no caption)" }}</p>
+    <div class="a-mono" style="display: flex; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--text-tertiary); padding-bottom: 18px; border-bottom: 1px solid var(--neutral-100);">
+        Published {{ date }}{% if days_ago is not None %} · {{ days_ago }}d ago{% endif %}
+    </div>
+
+    <div style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-ghost); margin: 18px 0 10px;">Performance</div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        {% for tile in metric_tiles %}
+        <div style="padding: 12px 14px; border-radius: var(--radius-lg); border: 1px solid {% if tile.is_primary %}transparent{% else %}var(--border){% endif %}; background: {% if tile.is_primary %}var(--primary-soft){% else %}#fff{% endif %};">
+            <div style="font-size: 0.6875rem; font-weight: 600; color: {% if tile.is_primary %}var(--primary){% else %}var(--text-secondary){% endif %}; margin-bottom: 6px;">{{ tile.label }}</div>
+            <div style="font-size: 1.4rem; font-weight: 700; letter-spacing: -0.01em; color: var(--text-primary);">{{ tile.value|fmt_metric:tile.kind }}</div>
+            {% if tile.sparkline %}
+            <div style="margin-top: 6px;">{% sparkline tile.sparkline "var(--primary)" 160 24 %}</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<div style="padding: 14px 20px; border-top: 1px solid var(--neutral-100); display: flex; gap: 10px; flex-shrink: 0;">
+    <a href="#" target="_blank" class="btn-outline" style="padding: 9px 16px; width: auto;">View on {{ account.get_platform_display }}</a>
+</div>

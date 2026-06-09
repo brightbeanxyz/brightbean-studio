@@ -86,12 +86,30 @@ def generate_magic_link(workspace, client_user, created_by):
     return token
 
 
-def verify_magic_link(token_string):
-    """Verify a magic link token.
+def peek_magic_link(token_string):
+    """Validate a magic link token *without* consuming it.
+
+    Used to render the confirmation page on GET so that email link scanners
+    that prefetch the URL cannot burn the one-time token. Returns the
+    MagicLinkToken when it is valid and unused, otherwise None.
+    """
+    try:
+        token = MagicLinkToken.objects.select_related("user", "workspace").get(token=token_string)
+    except MagicLinkToken.DoesNotExist:
+        return None
+
+    if token.is_expired or token.is_consumed:
+        return None
+
+    return token
+
+
+def consume_magic_link(token_string):
+    """Validate and atomically consume a magic link token (single-use).
 
     Returns:
         (user, workspace, is_valid) tuple.
-        If invalid/expired: (None, None, False).
+        If missing/expired/already consumed: (None, None, False).
     """
     try:
         token = MagicLinkToken.objects.select_related("user", "workspace").get(token=token_string)
@@ -101,15 +119,13 @@ def verify_magic_link(token_string):
     if token.is_expired:
         return None, None, False
 
-    # Mark as consumed on first use
-    if not token.is_consumed:
-        token.is_consumed = True
-        token.last_used_at = timezone.now()
-        token.save(update_fields=["is_consumed", "last_used_at"])
-    else:
-        # Already consumed - update last_used_at
-        token.last_used_at = timezone.now()
-        token.save(update_fields=["last_used_at"])
+    # Atomic single-use: only the request that flips is_consumed False->True wins.
+    consumed = MagicLinkToken.objects.filter(pk=token.pk, is_consumed=False).update(
+        is_consumed=True,
+        last_used_at=timezone.now(),
+    )
+    if not consumed:
+        return None, None, False
 
     return token.user, token.workspace, True
 
