@@ -12,9 +12,12 @@ class RbacResolver(
     private val workspaceMembershipRepository: WorkspaceMembershipRepository,
     private val customRoleRepository: CustomRoleRepository,
 ) {
-    fun resolve(user: User, workspaceId: UUID? = null): RbacContext {
-        val orgMemberships = orgMembershipRepository.findByUserId(user.id)
-        val orgMembership = orgMemberships.firstOrNull()
+    fun resolve(user: User, workspaceId: UUID? = null, orgId: UUID? = null): RbacContext {
+        val orgMembership = if (orgId != null) {
+            orgMembershipRepository.findByUserAndOrganization(user.id, orgId)
+        } else {
+            orgMembershipRepository.findByUserId(user.id).firstOrNull()
+        }
 
         val workspaceMembership = if (workspaceId != null) {
             workspaceMembershipRepository.findByUserAndWorkspace(user.id, workspaceId)

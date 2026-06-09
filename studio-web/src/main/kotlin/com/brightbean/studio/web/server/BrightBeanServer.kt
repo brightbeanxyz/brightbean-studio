@@ -5,6 +5,10 @@ import com.brightbean.studio.application.di.applicationModule
 import com.brightbean.studio.application.usecase.AuthUseCases
 import com.brightbean.studio.infrastructure.di.infrastructureModule
 import com.brightbean.studio.web.api.AuthApi
+import com.brightbean.studio.web.api.CustomRoleApi
+import com.brightbean.studio.web.api.InvitationApi
+import com.brightbean.studio.web.api.MemberApi
+import com.brightbean.studio.web.api.OrganizationApi
 import com.brightbean.studio.web.api.PostApi
 import com.brightbean.studio.web.api.SocialAccountApi
 import com.brightbean.studio.web.api.WorkspaceApi
@@ -25,6 +29,10 @@ class BrightBeanServer(
     private val workspaceApi: WorkspaceApi by inject()
     private val postApi: PostApi by inject()
     private val socialAccountApi: SocialAccountApi by inject()
+    private val invitationApi: InvitationApi by inject()
+    private val memberApi: MemberApi by inject()
+    private val organizationApi: OrganizationApi by inject()
+    private val customRoleApi: CustomRoleApi by inject()
 
     fun start() {
         startKoin {
@@ -36,7 +44,7 @@ class BrightBeanServer(
             routes = mapOf(
                 "/health" to HealthHandler(),
                 "/api/auth" to authApi,
-                "/api" to ApiDispatcher(postApi, socialAccountApi, workspaceApi),
+                "/api" to ApiDispatcher(postApi, socialAccountApi, workspaceApi, invitationApi, memberApi, organizationApi, customRoleApi),
             )
         )
         val authed = RBACMiddleware(authUseCases, rbacResolver, publicPaths, router)

@@ -17,6 +17,7 @@ class RBACMiddleware(
         const val BEARER_PREFIX = "Bearer "
         const val RBAC_CONTEXT_ATTR = "rbac.context"
         private val WORKSPACE_ID_PATTERN = Regex("/api/workspaces/([^/]+)")
+        private val ORG_ID_PATTERN = Regex("/api/orgs/([^/]+)")
     }
 
     override fun handle(exchange: HttpExchange) {
@@ -40,7 +41,8 @@ class RBACMiddleware(
         }
 
         val workspaceId = extractWorkspaceId(path)
-        val context = rbacResolver.resolve(user, workspaceId)
+        val orgId = extractOrgId(path)
+        val context = rbacResolver.resolve(user, workspaceId, orgId)
 
         if (workspaceId != null && context.workspaceMembership == null) {
             sendForbidden(exchange, "You do not have access to this workspace")
@@ -57,6 +59,11 @@ class RBACMiddleware(
 
     private fun extractWorkspaceId(path: String): UUID? {
         val match = WORKSPACE_ID_PATTERN.find(path) ?: return null
+        return try { UUID.fromString(match.groupValues[1]) } catch (_: Exception) { null }
+    }
+
+    private fun extractOrgId(path: String): UUID? {
+        val match = ORG_ID_PATTERN.find(path) ?: return null
         return try { UUID.fromString(match.groupValues[1]) } catch (_: Exception) { null }
     }
 
