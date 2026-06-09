@@ -47,9 +47,15 @@ def log_audit_entry(
         # Anonymous (failed-auth) paths produce no audit row — they're
         # represented by the rate-limit counter on the IP throttle.
         return
+    # OAuth MCP callers carry an ``OAuthMcpActor`` shim (not a saved ApiKey),
+    # so we attribute the row to the user via ``actor_user`` instead of the
+    # ``api_key`` FK. See apps/api/auth.py::OAuthMcpActor.
+    is_oauth = getattr(api_key, "is_oauth", False)
     try:
         ApiKeyAuditLog.objects.create(
-            api_key=api_key,
+            api_key=None if is_oauth else api_key,
+            actor_user=api_key.issued_by if is_oauth else None,
+            actor_label="oauth" if is_oauth else "",
             action=action,
             target_id=target_id,
             method=request.method or "",
@@ -61,7 +67,9 @@ def log_audit_entry(
     except Exception:  # noqa: BLE001 — best-effort, swallow.
         import logging
 
-        logging.getLogger(__name__).warning("Failed to write ApiKeyAuditLog for key %s", api_key.id, exc_info=True)
+        logging.getLogger(__name__).warning(
+            "Failed to write ApiKeyAuditLog for actor %s", getattr(api_key, "id", "oauth"), exc_info=True
+        )
 
 
 def _client_ip(request: HttpRequest) -> str | None:

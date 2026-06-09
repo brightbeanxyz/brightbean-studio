@@ -43,6 +43,8 @@ THIRD_PARTY_APPS = [
     "django_htmx",
     "tailwind",
     "csp",
+    # OAuth 2.1 Authorization Server backing the MCP connector flow.
+    "oauth2_provider",
     "apps.background_task_config.BackgroundTaskConfig",
 ]
 
@@ -72,6 +74,7 @@ LOCAL_APPS = [
     "apps.api_keys",
     "apps.api",
     "apps.mcp",
+    "apps.oauth_server",
     "apps.analytics",
     "theme",
 ]
@@ -438,6 +441,44 @@ YOUTUBE_WEBHOOK_SECRET = env("YOUTUBE_WEBHOOK_SECRET", default="")
 # Rate limiting
 RATELIMIT_ENABLE = not DEBUG
 RATELIMIT_USE_CACHE = "default"
+
+
+# ---------------------------------------------------------------------------
+# OAuth 2.1 Authorization Server (django-oauth-toolkit) — MCP connector flow
+# ---------------------------------------------------------------------------
+# Powers the /api/v1/mcp endpoint's native connector flow: an MCP client
+# (e.g. Claude Desktop) registers itself via Dynamic Client Registration,
+# then runs an authorization-code + PKCE flow against /oauth/authorize/ and
+# /oauth/token/. Issued access tokens resolve to a User and act with that
+# user's current workspace permissions. Existing bb_studio_ API keys keep
+# working unchanged (Claude Code injects them as a static header).
+#
+# Studio serves the app, the API, and the OAuth server on ONE host, so both
+# URLs default to APP_URL (unlike a split app/api deployment).
+#   MCP_PUBLIC_BASE_URL  — origin advertised as the /mcp resource server.
+#   MCP_OAUTH_ISSUER_URL — origin of the OAuth Authorization Server (where
+#     /oauth/authorize/ sends unauthenticated users to log in via allauth).
+MCP_PUBLIC_BASE_URL = env("MCP_PUBLIC_BASE_URL", default=APP_URL).rstrip("/")
+MCP_OAUTH_ISSUER_URL = env("MCP_OAUTH_ISSUER_URL", default=APP_URL).rstrip("/")
+
+OAUTH2_PROVIDER = {
+    "SCOPES": {"mcp": "Call BrightBean Studio MCP tools on your behalf"},
+    "DEFAULT_SCOPES": ["mcp"],
+    "PKCE_REQUIRED": True,
+    # Restrict ``code_challenge_method`` to ``S256``. django-oauth-toolkit
+    # (and oauthlib under it) accept ``plain`` by default — RFC 7636 §4.2
+    # marks ``plain`` as insecure. ``S256OnlyOAuth2Validator`` rejects any
+    # authorize request whose method is missing or ``plain`` before a Grant
+    # row is written.
+    "OAUTH2_VALIDATOR_CLASS": "apps.oauth_server.validator.S256OnlyOAuth2Validator",
+    "ACCESS_TOKEN_EXPIRE_SECONDS": 60 * 60,
+    "REFRESH_TOKEN_EXPIRE_SECONDS": 30 * 24 * 60 * 60,
+    "AUTHORIZATION_CODE_EXPIRE_SECONDS": 600,
+    "ROTATE_REFRESH_TOKEN": True,
+    "REQUEST_APPROVAL_PROMPT": "auto",
+    # Claude's OAuth callback is always https; reject non-TLS redirect URIs.
+    "ALLOWED_REDIRECT_URI_SCHEMES": ["https"],
+}
 
 
 # ---------------------------------------------------------------------------

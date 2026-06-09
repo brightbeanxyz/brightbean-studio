@@ -24,6 +24,7 @@ and never write a synthetic ``WorkspaceMembership`` row.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,7 +35,7 @@ from ninja.security import HttpBearer
 
 from apps.api.limits import is_failed_auth_ip_blocked, record_failed_auth
 from apps.api_keys.models import ApiKey
-from apps.api_keys.services import touch_last_used, verify_token
+from apps.api_keys.services import TOKEN_PREFIX, touch_last_used, verify_token
 
 
 @dataclass(frozen=True)
@@ -158,3 +159,148 @@ def _client_ip(request: HttpRequest) -> str | None:
     from apps.api.limits import _client_ip as _canonical
 
     return _canonical(request)
+
+
+# ---------------------------------------------------------------------------
+# MCP auth — bb_studio_ API keys OR OAuth 2.1 access tokens
+# ---------------------------------------------------------------------------
+#
+# The /api/v1/mcp endpoint accepts a second credential type beyond the
+# bb_studio_ key: an OAuth 2.1 access token issued by the BrightBean Studio
+# Authorization Server (apps.oauth_server), which is what Claude Desktop's
+# native connector flow obtains. OAuth authenticates a *person* rather than a
+# minted credential, so we map the token's user to their active workspace and
+# expose an ApiKey-shaped shim — the MCP handlers, throttle, and audit log all
+# read an ``ApiKey``-like object off the request and run unchanged.
+
+_MCP_OAUTH_SCOPE = "mcp"
+
+
+class _AllWorkspaceAccounts:
+    """Duck-types ``ApiKey.social_accounts`` for an OAuth caller.
+
+    A scoped API key carries an explicit account allowlist; an OAuth caller
+    acts as *themselves*, so their effective allowlist is every connected
+    account in the workspace they're operating in. Only ``.all()`` is consumed
+    by the MCP handlers (apps/mcp/handlers.py), so that's all we implement.
+    """
+
+    def __init__(self, workspace_id: Any) -> None:
+        self._workspace_id = workspace_id
+
+    def all(self):  # noqa: A003 — mirrors the Django manager method name.
+        from apps.social_accounts.models import SocialAccount
+
+        return SocialAccount.objects.for_workspace(self._workspace_id)
+
+
+class OAuthMcpActor:
+    """ApiKey-shaped stand-in for an OAuth-authenticated MCP caller.
+
+    Exposes exactly the ``ApiKey`` attributes the MCP path touches — the
+    handlers' ``workspace`` / ``social_accounts`` / ``issued_by``, the
+    throttle's ``id`` / ``workspace_id`` / ``rate_override_*``, and the audit
+    log's ``is_oauth`` discriminator — without creating a DB row. The caller's
+    permissions are carried via the ``VirtualMembership`` attached separately
+    to the request, so no key-style permission intersection applies here.
+    """
+
+    is_oauth = True
+    # No per-key rate overrides — OAuth callers use the default tiers.
+    rate_override_writes = None
+    rate_override_reads = None
+
+    def __init__(self, *, user: Any, membership: Any) -> None:
+        self.issued_by = user
+        self.issued_by_id = user.id
+        self.workspace = membership.workspace
+        self.workspace_id = membership.workspace_id
+        # Namespaced id so the per-actor rate-limit cache key
+        # (``apikey:<id>:w``) can't collide with a real ApiKey UUID.
+        self.id = f"oauth:{user.id}"
+        self.social_accounts = _AllWorkspaceAccounts(membership.workspace_id)
+        # Read by ``McpAuth`` to build the request's ``VirtualMembership`` — the
+        # single source of truth for this caller's permissions.
+        self.effective_permissions = membership.effective_permissions
+
+
+def _resolve_active_membership(user: Any):
+    """Pick the workspace an OAuth caller operates in.
+
+    Mirrors the dashboard's "current workspace" notion (see
+    ``apps.members.middleware.RBACMiddleware``): the user's
+    ``last_workspace_id`` when they still have a non-archived membership
+    there, else their earliest-joined non-archived membership. Returns None
+    when the user has no usable workspace — the caller refuses the auth.
+    """
+    from apps.members.models import WorkspaceMembership
+
+    base = WorkspaceMembership.objects.select_related("workspace", "custom_role").filter(
+        user=user, workspace__is_archived=False
+    )
+    if getattr(user, "last_workspace_id", None):
+        current = base.filter(workspace_id=user.last_workspace_id).first()
+        if current is not None:
+            return current
+    return base.order_by("added_at").first()
+
+
+def _resolve_oauth_actor(token: str) -> OAuthMcpActor | None:
+    """Resolve a non-bb_studio_ bearer as a django-oauth-toolkit access token.
+
+    Looks the token up by its indexed ``token_checksum`` (the path DOT's own
+    bearer validation uses; a plain ``token=`` filter scans an unindexed
+    column and degrades as tokens accumulate). Returns None for any missing /
+    invalid / expired / wrong-scope token, or when the user has no usable
+    workspace.
+    """
+    from oauth2_provider.models import get_access_token_model
+
+    access_token_model = get_access_token_model()
+    token_checksum = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    tok = access_token_model.objects.select_related("user").filter(token_checksum=token_checksum).first()
+    if tok is None or tok.user_id is None or not tok.is_valid([_MCP_OAUTH_SCOPE]):
+        return None
+    membership = _resolve_active_membership(tok.user)
+    if membership is None:
+        return None
+    return OAuthMcpActor(user=tok.user, membership=membership)
+
+
+class McpAuth(ApiKeyAuth):
+    """Bearer auth for the MCP router: bb_studio_ keys OR OAuth 2.1 tokens.
+
+    A ``bb_studio_`` token reuses the parent ``ApiKeyAuth`` path verbatim —
+    same IP throttle, HTTPS guard, permission intersection, and audit. Any
+    other bearer is resolved as an OAuth access token issued by the BrightBean
+    Studio Authorization Server (apps.oauth_server) and mapped to the user's
+    active workspace via an ``OAuthMcpActor`` shim.
+    """
+
+    def authenticate(self, request: HttpRequest, token: str):  # type: ignore[override]
+        if token.startswith(TOKEN_PREFIX):
+            return super().authenticate(request, token)
+
+        # OAuth path — same pre-auth defenses as the key path.
+        if is_failed_auth_ip_blocked(request):
+            return None
+        if not request.is_secure() and not settings.DEBUG:
+            record_failed_auth(request)
+            return None
+
+        actor = _resolve_oauth_actor(token)
+        if actor is None:
+            record_failed_auth(request)
+            return None
+
+        request.api_key = actor  # type: ignore[attr-defined]
+        request.workspace = actor.workspace  # type: ignore[attr-defined]
+        request.workspace_membership = VirtualMembership(  # type: ignore[attr-defined]
+            effective_permissions=actor.effective_permissions,
+            workspace=actor.workspace,
+            user=actor.issued_by,
+        )
+        # Lets audit logging / author attribution treat the OAuth user as the
+        # actor, exactly as the key path treats ``api_key.issued_by``.
+        request.user = actor.issued_by  # type: ignore[assignment]
+        return actor

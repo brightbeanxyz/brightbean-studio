@@ -123,6 +123,25 @@ class ApiKeyAuditLog(models.Model):
         ApiKey,
         on_delete=models.CASCADE,
         related_name="audit_logs",
+        null=True,
+        blank=True,
+        help_text="Set for bb_studio_ key requests; null for OAuth callers (see actor_user).",
+    )
+    # OAuth 2.1 MCP callers act as a *person*, not a minted key — there is no
+    # ApiKey row to point at, so attribute the request to the user instead.
+    actor_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="mcp_audit_logs",
+        null=True,
+        blank=True,
+        help_text="Set for OAuth-authenticated MCP requests; null for key requests.",
+    )
+    actor_label = models.CharField(
+        max_length=16,
+        blank=True,
+        default="",
+        help_text='Credential type, e.g. "oauth". Empty for bb_studio_ keys.',
     )
     action = models.CharField(
         max_length=64,
@@ -147,4 +166,5 @@ class ApiKeyAuditLog(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.action} -> {self.status_code} ({self.api_key.name})"
+        actor = self.api_key.name if self.api_key_id else (self.actor_label or "oauth")
+        return f"{self.action} -> {self.status_code} ({actor})"

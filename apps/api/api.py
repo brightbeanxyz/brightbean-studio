@@ -14,10 +14,10 @@ from typing import Any
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from ninja import NinjaAPI
-from ninja.errors import HttpError
+from ninja.errors import AuthenticationError, HttpError
 from ninja.openapi.docs import Swagger
 
-from apps.api.auth import ApiKeyAuth
+from apps.api.auth import ApiKeyAuth, McpAuth
 from apps.api.routers.accounts import router as accounts_router
 from apps.api.routers.analytics import router as analytics_router
 from apps.api.routers.me import router as me_router
@@ -76,10 +76,11 @@ api.add_router("/accounts", accounts_router)
 api.add_router("/posts", posts_router)
 api.add_router("/media", media_router)
 api.add_router("/analytics", analytics_router)
-# MCP Streamable HTTP transport. Same auth, same audit, same rate
-# limits — only the wire protocol differs. Mounted last so its path
-# prefix can't shadow another router.
-api.add_router("/mcp", mcp_router)
+# MCP Streamable HTTP transport. Same audit + rate limits as REST, but a
+# wider auth class: ``McpAuth`` accepts both bb_studio_ keys AND OAuth 2.1
+# access tokens (Claude Desktop's native connector flow). Mounted last so
+# its path prefix can't shadow another router.
+api.add_router("/mcp", mcp_router, auth=McpAuth())
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +104,35 @@ def _http_error_handler(request: HttpRequest, exc: HttpError) -> HttpResponse:
     for k, v in headers.items():
         response[k] = v
     _audit_failed_request(request, status_code=exc.status_code)
+    return response
+
+
+# Path of the MCP endpoint, used to scope the OAuth challenge below. The
+# router is mounted at ``/mcp`` under the ``/api/v1/`` prefix, and the
+# endpoint itself is ``POST /`` — so the resolved path is ``/api/v1/mcp/``.
+_MCP_ENDPOINT_PATH = "/api/v1/mcp"
+_MCP_RESOURCE_METADATA_PATH = "/.well-known/oauth-protected-resource/api/v1/mcp"
+
+
+@api.exception_handler(AuthenticationError)
+def _authentication_error_handler(request: HttpRequest, exc: AuthenticationError) -> HttpResponse:
+    """Uniform 401 envelope; on the MCP endpoint, advertise the OAuth challenge.
+
+    A bare 401 is enough for the bb_studio_ key path (Claude Code injects a
+    static header). Claude Desktop's native connector, however, only begins
+    its OAuth login when the 401 carries a ``WWW-Authenticate: Bearer
+    resource_metadata="..."`` header pointing at the RFC 9728 protected-
+    resource document. We emit that header only for the MCP path, so the REST
+    surface keeps its opaque 401 and doesn't fingerprint an OAuth server it
+    doesn't run.
+    """
+    response = JsonResponse(
+        {"error": "unauthorized", "detail": "Authentication required."},
+        status=401,
+    )
+    if (request.path or "").rstrip("/").endswith(_MCP_ENDPOINT_PATH):
+        metadata_url = f"{settings.MCP_PUBLIC_BASE_URL}{_MCP_RESOURCE_METADATA_PATH}"
+        response["WWW-Authenticate"] = f'Bearer resource_metadata="{metadata_url}"'
     return response
 
 

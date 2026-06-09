@@ -6,6 +6,7 @@ from django.urls import include, path
 from apps.accounts.views import health_check
 from apps.api.api import api as agent_api
 from apps.approvals.views import org_approval_queue
+from apps.oauth_server import views as oauth_views
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -34,6 +35,29 @@ urlpatterns = [
     # is Ninja's (patterns, app_namespace, instance_namespace) tuple,
     # which Django's path() handles natively.
     path("api/v1/", agent_api.urls),
+    # OAuth 2.1 Authorization Server for the MCP connector flow (native
+    # Claude Desktop login). django-oauth-toolkit serves /oauth/authorize/
+    # + /oauth/token/ + /oauth/revoke_token/; apps.oauth_server adds DCR
+    # (/oauth/register) and the discovery documents below.
+    path("oauth/", include("apps.oauth_server.urls")),
+    path(
+        ".well-known/oauth-authorization-server",
+        oauth_views.authorization_server_metadata_view,
+        name="oauth-authorization-server-metadata",
+    ),
+    path(
+        ".well-known/oauth-protected-resource",
+        oauth_views.protected_resource_metadata_view,
+        name="oauth-protected-resource-metadata",
+    ),
+    # RFC 9728 inserts the well-known segment before the resource's path, so
+    # the metadata for the /api/v1/mcp resource is discovered at this
+    # path-scoped URL — what the WWW-Authenticate challenge points clients at.
+    path(
+        ".well-known/oauth-protected-resource/api/v1/mcp",
+        oauth_views.protected_resource_metadata_view,
+        name="oauth-protected-resource-metadata-mcp",
+    ),
     # Approval Workflow (Stream F)
     path("workspace/<uuid:workspace_id>/", include("apps.approvals.urls")),
     # Client Portal Admin (workspace settings)
