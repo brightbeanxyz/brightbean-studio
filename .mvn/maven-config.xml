@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<maven-config>
+    <activeCombos>
+        <activeCombo>jdk-17</activeCombo>
+    </activeCombos>
+</maven-config>

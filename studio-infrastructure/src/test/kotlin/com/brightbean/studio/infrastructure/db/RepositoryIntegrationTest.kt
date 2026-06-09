@@ -1,0 +1,795 @@
+package com.brightbean.studio.infrastructure.db
+
+import com.brightbean.studio.domain.model.*
+import org.jdbi.v3.core.Jdbi
+import org.jdbi.v3.core.kotlin.KotlinPlugin
+import org.jdbi.v3.sqlobject.kotlin.KotlinSqlObjectPlugin
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import java.time.Instant
+import java.util.UUID
+
+class RepositoryIntegrationTest {
+
+    private lateinit var jdbi: Jdbi
+    private lateinit var memberRepo: JDBIMemberRepository
+    private lateinit var credentialRepo: JDBICredentialRepository
+    private lateinit var socialAccountRepo: JDBISocialAccountRepository
+    private lateinit var postRepo: JDBIPostRepository
+    private lateinit var platformPostRepo: JDBIPlatformPostRepository
+    private lateinit var inboxMessageRepo: JDBIInboxMessageRepository
+    private lateinit var approvalRequestRepo: JDBIApprovalRequestRepository
+    private lateinit var organizationRepo: JDBIOrganizationRepository
+    private lateinit var orgMembershipRepo: JDBIOrgMembershipRepository
+    private lateinit var workspaceMembershipRepo: JDBIWorkspaceMembershipRepository
+    private lateinit var customRoleRepo: JDBICustomRoleRepository
+    private lateinit var invitationRepo: JDBIInvitationRepository
+
+    @BeforeEach
+    fun setUp() {
+        jdbi = Jdbi.create("jdbc:h2:mem:test_${UUID.randomUUID()};DB_CLOSE_DELAY=-1")
+        jdbi.installPlugin(KotlinPlugin())
+        jdbi.installPlugin(KotlinSqlObjectPlugin())
+
+        jdbi.useHandle<Exception> { handle ->
+            handle.createUpdate("""
+                CREATE TABLE member (
+                    id UUID PRIMARY KEY,
+                    workspace_id UUID NOT NULL,
+                    user_id UUID NOT NULL,
+                    role VARCHAR NOT NULL,
+                    invited_by UUID,
+                    joined_at TIMESTAMP NOT NULL
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE credential (
+                    id UUID PRIMARY KEY,
+                    workspace_id UUID NOT NULL,
+                    platform_type VARCHAR NOT NULL,
+                    encrypted_access_token VARCHAR NOT NULL,
+                    encrypted_refresh_token VARCHAR,
+                    token_expires_at TIMESTAMP,
+                    metadata VARCHAR NOT NULL,
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE social_account (
+                    id UUID PRIMARY KEY,
+                    workspace_id UUID NOT NULL,
+                    credential_id UUID NOT NULL,
+                    platform_type VARCHAR NOT NULL,
+                    platform_user_id VARCHAR NOT NULL,
+                    platform_username VARCHAR NOT NULL,
+                    platform_display_name VARCHAR NOT NULL,
+                    platform_avatar_url VARCHAR,
+                    profile_url VARCHAR,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    connection_status VARCHAR(20) NOT NULL DEFAULT 'CONNECTED',
+                    last_health_check_at TIMESTAMP,
+                    last_error VARCHAR,
+                    follower_count INT NOT NULL DEFAULT 0,
+                    instance_url VARCHAR(500),
+                    daily_post_limit_override INT,
+                    analytics_needs_reconnect BOOLEAN NOT NULL DEFAULT FALSE,
+                    metadata VARCHAR NOT NULL,
+                    connected_at TIMESTAMP NOT NULL,
+                    last_sync_at TIMESTAMP
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE composer_post (
+                    id UUID PRIMARY KEY,
+                    workspace_id UUID NOT NULL,
+                    author_id UUID,
+                    title VARCHAR(255) NOT NULL DEFAULT '',
+                    caption TEXT NOT NULL DEFAULT '',
+                    first_comment TEXT NOT NULL DEFAULT '',
+                    internal_notes TEXT NOT NULL DEFAULT '',
+                    tags TEXT NOT NULL DEFAULT '[]',
+                    category_id UUID,
+                    scheduled_at TIMESTAMP,
+                    published_at TIMESTAMP,
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE composer_platform_post (
+                    id UUID PRIMARY KEY,
+                    post_id UUID NOT NULL,
+                    social_account_id UUID NOT NULL,
+                    platform_specific_title TEXT,
+                    platform_specific_caption TEXT,
+                    platform_specific_media TEXT,
+                    platform_specific_first_comment TEXT,
+                    platform_extra TEXT NOT NULL DEFAULT '{}',
+                    status VARCHAR(30) NOT NULL DEFAULT 'DRAFT',
+                    platform_post_id VARCHAR(255) NOT NULL DEFAULT '',
+                    publish_error TEXT NOT NULL DEFAULT '',
+                    published_at TIMESTAMP,
+                    scheduled_at TIMESTAMP,
+                    retry_count INT NOT NULL DEFAULT 0,
+                    next_retry_at TIMESTAMP,
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE inbox_message (
+                    id UUID PRIMARY KEY,
+                    workspace_id UUID NOT NULL,
+                    social_account_id UUID NOT NULL,
+                    platform_message_id VARCHAR NOT NULL,
+                    message_type VARCHAR NOT NULL,
+                    sender_name VARCHAR NOT NULL,
+                    sender_handle VARCHAR NOT NULL DEFAULT '',
+                    sender_avatar_url VARCHAR NOT NULL DEFAULT '',
+                    body TEXT NOT NULL,
+                    sentiment VARCHAR NOT NULL DEFAULT '',
+                    sentiment_source VARCHAR NOT NULL DEFAULT '',
+                    status VARCHAR NOT NULL DEFAULT 'UNREAD',
+                    assigned_to UUID,
+                    parent_message_id UUID,
+                    related_post_id UUID,
+                    extra TEXT,
+                    received_at TIMESTAMP NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    UNIQUE(social_account_id, platform_message_id)
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE approval_request (
+                    id UUID PRIMARY KEY,
+                    workspace_id UUID NOT NULL,
+                    post_id UUID NOT NULL,
+                    requested_by UUID NOT NULL,
+                    requested_at TIMESTAMP NOT NULL,
+                    status VARCHAR NOT NULL DEFAULT 'PENDING',
+                    reviewed_by UUID,
+                    reviewed_at TIMESTAMP,
+                    comment VARCHAR
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE organization (
+                    id UUID PRIMARY KEY,
+                    name VARCHAR NOT NULL,
+                    logo_url VARCHAR,
+                    default_timezone VARCHAR NOT NULL DEFAULT 'UTC',
+                    billing_email VARCHAR NOT NULL DEFAULT '',
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE org_membership (
+                    id UUID PRIMARY KEY,
+                    user_id UUID NOT NULL,
+                    organization_id UUID NOT NULL,
+                    org_role VARCHAR NOT NULL DEFAULT 'MEMBER',
+                    invited_at TIMESTAMP NOT NULL,
+                    accepted_at TIMESTAMP
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE workspace_membership (
+                    id UUID PRIMARY KEY,
+                    user_id UUID NOT NULL,
+                    workspace_id UUID NOT NULL,
+                    workspace_role VARCHAR NOT NULL DEFAULT 'VIEWER',
+                    custom_role_id UUID,
+                    added_at TIMESTAMP NOT NULL
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE custom_role (
+                    id UUID PRIMARY KEY,
+                    organization_id UUID NOT NULL,
+                    name VARCHAR NOT NULL,
+                    permissions TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
+                )
+            """).execute()
+
+            handle.createUpdate("""
+                CREATE TABLE invitation (
+                    id UUID PRIMARY KEY,
+                    organization_id UUID NOT NULL,
+                    email VARCHAR NOT NULL,
+                    org_role VARCHAR NOT NULL DEFAULT 'MEMBER',
+                    workspace_assignments TEXT NOT NULL,
+                    invited_by UUID,
+                    token VARCHAR NOT NULL UNIQUE,
+                    expires_at TIMESTAMP NOT NULL,
+                    accepted_at TIMESTAMP,
+                    status VARCHAR NOT NULL DEFAULT 'PENDING',
+                    created_at TIMESTAMP NOT NULL
+                )
+            """).execute()
+        }
+
+        memberRepo = JDBIMemberRepository(jdbi)
+        credentialRepo = JDBICredentialRepository(jdbi)
+        socialAccountRepo = JDBISocialAccountRepository(jdbi)
+        postRepo = JDBIPostRepository(jdbi)
+        platformPostRepo = JDBIPlatformPostRepository(jdbi)
+        inboxMessageRepo = JDBIInboxMessageRepository(jdbi)
+        approvalRequestRepo = JDBIApprovalRequestRepository(jdbi)
+        organizationRepo = JDBIOrganizationRepository(jdbi)
+        orgMembershipRepo = JDBIOrgMembershipRepository(jdbi)
+        workspaceMembershipRepo = JDBIWorkspaceMembershipRepository(jdbi)
+        customRoleRepo = JDBICustomRoleRepository(jdbi)
+        invitationRepo = JDBIInvitationRepository(jdbi)
+    }
+
+    @Test
+    fun `member save and findById`() {
+        val member = createTestMember()
+        memberRepo.save(member)
+
+        val found = memberRepo.findById(member.id)
+
+        assertNotNull(found)
+        assertEquals(member.id, found!!.id)
+        assertEquals(member.workspaceId, found.workspaceId)
+        assertEquals(member.userId, found.userId)
+        assertEquals(MemberRole.EDITOR, found.role)
+    }
+
+    @Test
+    fun `member findByWorkspaceId returns members`() {
+        val wsId = UUID.randomUUID()
+        val m1 = createTestMember(workspaceId = wsId)
+        val m2 = createTestMember(workspaceId = wsId)
+        memberRepo.save(m1)
+        memberRepo.save(m2)
+
+        val results = memberRepo.findByWorkspaceId(wsId)
+
+        assertEquals(2, results.size)
+    }
+
+    @Test
+    fun `member delete removes member`() {
+        val member = createTestMember()
+        memberRepo.save(member)
+
+        memberRepo.delete(member.id)
+
+        assertNull(memberRepo.findById(member.id))
+    }
+
+    @Test
+    fun `credential save and findById`() {
+        val credential = createTestCredential()
+        credentialRepo.save(credential)
+
+        val found = credentialRepo.findById(credential.id)
+
+        assertNotNull(found)
+        assertEquals(credential.id, found!!.id)
+        assertEquals(PlatformType.INSTAGRAM, found.platformType)
+        assertEquals("encrypted-token", found.encryptedAccessToken)
+    }
+
+    @Test
+    fun `credential findByPlatformType returns credential`() {
+        val wsId = UUID.randomUUID()
+        val credential = createTestCredential(workspaceId = wsId)
+        credentialRepo.save(credential)
+
+        val found = credentialRepo.findByPlatformType(wsId, PlatformType.INSTAGRAM)
+
+        assertNotNull(found)
+        assertEquals(credential.id, found!!.id)
+    }
+
+    @Test
+    fun `credential delete removes credential`() {
+        val credential = createTestCredential()
+        credentialRepo.save(credential)
+
+        credentialRepo.delete(credential.id)
+
+        assertNull(credentialRepo.findById(credential.id))
+    }
+
+    @Test
+    fun `socialAccount save and findById`() {
+        val account = createTestSocialAccount()
+        socialAccountRepo.save(account)
+
+        val found = socialAccountRepo.findById(account.id)
+
+        assertNotNull(found)
+        assertEquals(account.id, found!!.id)
+        assertEquals("ig_user_123", found.platformUserId)
+        assertTrue(found.isActive)
+    }
+
+    @Test
+    fun `socialAccount findActiveByWorkspace returns active accounts`() {
+        val wsId = UUID.randomUUID()
+        val active = createTestSocialAccount(workspaceId = wsId, isActive = true)
+        val inactive = createTestSocialAccount(workspaceId = wsId, isActive = false)
+        socialAccountRepo.save(active)
+        socialAccountRepo.save(inactive)
+
+        val results = socialAccountRepo.findActiveByWorkspace(wsId)
+
+        assertEquals(1, results.size)
+        assertEquals(active.id, results[0].id)
+    }
+
+    @Test
+    fun `socialAccount delete removes account`() {
+        val account = createTestSocialAccount()
+        socialAccountRepo.save(account)
+
+        socialAccountRepo.delete(account.id)
+
+        assertNull(socialAccountRepo.findById(account.id))
+    }
+
+    @Test
+    fun `post save and findById`() {
+        val post = createTestPost()
+        postRepo.save(post)
+
+        val found = postRepo.findById(post.id)
+
+        assertNotNull(found)
+        assertEquals(post.id, found!!.id)
+        assertEquals("Hello world", found.caption)
+        assertEquals(listOf("tag1"), found.tags)
+    }
+
+    @Test
+    fun `post findByAuthorId returns posts`() {
+        val authorId = UUID.randomUUID()
+        val p1 = createTestPost(authorId = authorId)
+        val p2 = createTestPost(authorId = authorId)
+        postRepo.save(p1)
+        postRepo.save(p2)
+
+        val results = postRepo.findByAuthorId(authorId)
+
+        assertEquals(2, results.size)
+    }
+
+    @Test
+    fun `post delete removes post`() {
+        val post = createTestPost()
+        postRepo.save(post)
+
+        postRepo.delete(post.id)
+
+        assertNull(postRepo.findById(post.id))
+    }
+
+    @Test
+    fun `platformPost save and findById`() {
+        val pp = createTestPlatformPost()
+        platformPostRepo.save(pp)
+
+        val found = platformPostRepo.findById(pp.id)
+
+        assertNotNull(found)
+        assertEquals(pp.id, found!!.id)
+        assertEquals("ig_post_789", found.platformPostId)
+        assertEquals(PlatformPostStatus.DRAFT, found.status)
+    }
+
+    @Test
+    fun `platformPost findByPostId returns platform posts`() {
+        val postId = UUID.randomUUID()
+        val pp1 = createTestPlatformPost(postId = postId)
+        val pp2 = createTestPlatformPost(postId = postId)
+        platformPostRepo.save(pp1)
+        platformPostRepo.save(pp2)
+
+        val results = platformPostRepo.findByPostId(postId)
+
+        assertEquals(2, results.size)
+    }
+
+    @Test
+    fun `platformPost delete removes item`() {
+        val pp = createTestPlatformPost()
+        platformPostRepo.save(pp)
+
+        platformPostRepo.delete(pp.id)
+
+        assertNull(platformPostRepo.findById(pp.id))
+    }
+
+    @Test
+    fun `inboxMessage save and findById`() {
+        val message = createTestInboxMessage()
+        inboxMessageRepo.save(message)
+
+        val found = inboxMessageRepo.findById(message.id)
+
+        assertNotNull(found)
+        assertEquals(message.id, found!!.id)
+        assertEquals(InboxMessageType.COMMENT, found.messageType)
+        assertEquals(InboxMessageStatus.UNREAD, found.status)
+    }
+
+    @Test
+    fun `inboxMessage findByWorkspaceId returns messages`() {
+        val wsId = UUID.randomUUID()
+        val m1 = createTestInboxMessage(workspaceId = wsId)
+        val m2 = createTestInboxMessage(workspaceId = wsId)
+        inboxMessageRepo.save(m1)
+        inboxMessageRepo.save(m2)
+
+        val results = inboxMessageRepo.findByWorkspaceId(wsId)
+
+        assertEquals(2, results.size)
+    }
+
+    @Test
+    fun `inboxMessage delete removes message`() {
+        val message = createTestInboxMessage()
+        inboxMessageRepo.save(message)
+
+        inboxMessageRepo.delete(message.id)
+
+        assertNull(inboxMessageRepo.findById(message.id))
+    }
+
+    @Test
+    fun `approvalRequest save and findById`() {
+        val request = createTestApprovalRequest()
+        approvalRequestRepo.save(request)
+
+        val found = approvalRequestRepo.findById(request.id)
+
+        assertNotNull(found)
+        assertEquals(request.id, found!!.id)
+        assertEquals(ApprovalStatus.PENDING, found.status)
+    }
+
+    @Test
+    fun `approvalRequest findByPostId returns requests`() {
+        val postId = UUID.randomUUID()
+        val r1 = createTestApprovalRequest(postId = postId)
+        val r2 = createTestApprovalRequest(postId = postId)
+        approvalRequestRepo.save(r1)
+        approvalRequestRepo.save(r2)
+
+        val results = approvalRequestRepo.findByPostId(postId)
+
+        assertEquals(2, results.size)
+    }
+
+    @Test
+    fun `approvalRequest delete removes request`() {
+        val request = createTestApprovalRequest()
+        approvalRequestRepo.save(request)
+
+        approvalRequestRepo.delete(request.id)
+
+        assertNull(approvalRequestRepo.findById(request.id))
+    }
+
+    private fun createTestMember(
+        workspaceId: UUID = UUID.randomUUID(),
+    ) = Member(
+        id = UUID.randomUUID(),
+        workspaceId = workspaceId,
+        userId = UUID.randomUUID(),
+        role = MemberRole.EDITOR,
+        invitedBy = UUID.randomUUID(),
+        joinedAt = Instant.now(),
+    )
+
+    private fun createTestCredential(
+        workspaceId: UUID = UUID.randomUUID(),
+    ) = Credential(
+        id = UUID.randomUUID(),
+        workspaceId = workspaceId,
+        platformType = PlatformType.INSTAGRAM,
+        encryptedAccessToken = "encrypted-token",
+        encryptedRefreshToken = "encrypted-refresh",
+        tokenExpiresAt = Instant.now().plusSeconds(3600),
+        metadata = mapOf("scope" to "read write"),
+        createdAt = Instant.now(),
+        updatedAt = Instant.now(),
+    )
+
+    private fun createTestSocialAccount(
+        workspaceId: UUID = UUID.randomUUID(),
+        isActive: Boolean = true,
+    ) = SocialAccount(
+        id = UUID.randomUUID(),
+        workspaceId = workspaceId,
+        credentialId = UUID.randomUUID(),
+        platformType = PlatformType.INSTAGRAM,
+        platformUserId = "ig_user_123",
+        platformUsername = "testuser",
+        platformDisplayName = "Test User",
+        platformAvatarUrl = "https://example.com/avatar.jpg",
+        profileUrl = "https://instagram.com/testuser",
+        isActive = isActive,
+        metadata = mapOf("followers" to "1000"),
+        connectedAt = Instant.now(),
+        lastSyncAt = null,
+    )
+
+    private fun createTestPost(
+        authorId: UUID? = UUID.randomUUID(),
+    ) = Post(
+        id = UUID.randomUUID(),
+        workspaceId = UUID.randomUUID(),
+        authorId = authorId,
+        title = "",
+        caption = "Hello world",
+        firstComment = "",
+        internalNotes = "",
+        tags = listOf("tag1"),
+        categoryId = null,
+        scheduledAt = null,
+        publishedAt = null,
+        createdAt = Instant.now(),
+        updatedAt = Instant.now(),
+    )
+
+    private fun createTestPlatformPost(
+        postId: UUID = UUID.randomUUID(),
+    ) = PlatformPost(
+        id = UUID.randomUUID(),
+        postId = postId,
+        socialAccountId = UUID.randomUUID(),
+        platformTitle = null,
+        platformCaption = null,
+        platformFirstComment = null,
+        platformMedia = null,
+        platformExtra = "{}",
+        status = PlatformPostStatus.DRAFT,
+        platformPostId = "ig_post_789",
+        publishError = "",
+        publishedAt = null,
+        scheduledAt = null,
+        retryCount = 0,
+        nextRetryAt = null,
+        createdAt = Instant.now(),
+        updatedAt = Instant.now(),
+    )
+
+    private fun createTestInboxMessage(
+        workspaceId: UUID = UUID.randomUUID(),
+    ) = InboxMessage(
+        id = UUID.randomUUID(),
+        workspaceId = workspaceId,
+        socialAccountId = UUID.randomUUID(),
+        platformMessageId = "ig_msg_${UUID.randomUUID()}",
+        messageType = InboxMessageType.COMMENT,
+        senderName = "Jane Doe",
+        senderHandle = "@janedoe",
+        senderAvatarUrl = "https://example.com/jane.jpg",
+        body = "Great post!",
+        sentiment = "POSITIVE",
+        sentimentSource = "auto",
+        status = InboxMessageStatus.UNREAD,
+        assignedTo = null,
+        parentMessageId = null,
+        relatedPostId = null,
+        extra = null,
+        receivedAt = Instant.now(),
+        createdAt = Instant.now(),
+    )
+
+    private fun createTestApprovalRequest(
+        postId: UUID = UUID.randomUUID(),
+    ) = ApprovalRequest(
+        id = UUID.randomUUID(),
+        workspaceId = UUID.randomUUID(),
+        postId = postId,
+        requestedBy = UUID.randomUUID(),
+        requestedAt = Instant.now(),
+        status = ApprovalStatus.PENDING,
+        reviewedBy = null,
+        reviewedAt = null,
+        comment = null,
+    )
+
+    @Test
+    fun `organization save and findById`() {
+        val org = createTestOrganization()
+        organizationRepo.save(org)
+
+        val found = organizationRepo.findById(org.id)
+
+        assertNotNull(found)
+        assertEquals(org.id, found!!.id)
+        assertEquals("Test Org", found.name)
+        assertEquals("UTC", found.defaultTimezone)
+    }
+
+    @Test
+    fun `organization delete removes organization`() {
+        val org = createTestOrganization()
+        organizationRepo.save(org)
+
+        organizationRepo.delete(org.id)
+
+        assertNull(organizationRepo.findById(org.id))
+    }
+
+    @Test
+    fun `orgMembership save and findById`() {
+        val membership = createTestOrgMembership()
+        orgMembershipRepo.save(membership)
+
+        val found = orgMembershipRepo.findById(membership.id)
+
+        assertNotNull(found)
+        assertEquals(membership.id, found!!.id)
+        assertEquals(OrgRole.MEMBER, found.orgRole)
+    }
+
+    @Test
+    fun `orgMembership findByOrganizationId returns memberships`() {
+        val orgId = UUID.randomUUID()
+        val m1 = createTestOrgMembership(organizationId = orgId)
+        val m2 = createTestOrgMembership(organizationId = orgId)
+        orgMembershipRepo.save(m1)
+        orgMembershipRepo.save(m2)
+
+        val results = orgMembershipRepo.findByOrganizationId(orgId)
+
+        assertEquals(2, results.size)
+    }
+
+    @Test
+    fun `workspaceMembership save and findById`() {
+        val membership = createTestWorkspaceMembership()
+        workspaceMembershipRepo.save(membership)
+
+        val found = workspaceMembershipRepo.findById(membership.id)
+
+        assertNotNull(found)
+        assertEquals(membership.id, found!!.id)
+        assertEquals(WorkspaceRole.EDITOR, found.workspaceRole)
+    }
+
+    @Test
+    fun `workspaceMembership findByWorkspaceId returns memberships`() {
+        val wsId = UUID.randomUUID()
+        val m1 = createTestWorkspaceMembership(workspaceId = wsId)
+        val m2 = createTestWorkspaceMembership(workspaceId = wsId)
+        workspaceMembershipRepo.save(m1)
+        workspaceMembershipRepo.save(m2)
+
+        val results = workspaceMembershipRepo.findByWorkspaceId(wsId)
+
+        assertEquals(2, results.size)
+    }
+
+    @Test
+    fun `customRole save and findById`() {
+        val role = createTestCustomRole()
+        customRoleRepo.save(role)
+
+        val found = customRoleRepo.findById(role.id)
+
+        assertNotNull(found)
+        assertEquals(role.id, found!!.id)
+        assertEquals("Editor", found.name)
+        assertEquals(mapOf("can_edit" to true, "can_delete" to false), found.permissions)
+    }
+
+    @Test
+    fun `customRole findByOrganizationId returns roles`() {
+        val orgId = UUID.randomUUID()
+        val r1 = createTestCustomRole(organizationId = orgId)
+        val r2 = createTestCustomRole(organizationId = orgId)
+        customRoleRepo.save(r1)
+        customRoleRepo.save(r2)
+
+        val results = customRoleRepo.findByOrganizationId(orgId)
+
+        assertEquals(2, results.size)
+    }
+
+    @Test
+    fun `invitation save and findById`() {
+        val invitation = createTestInvitation()
+        invitationRepo.save(invitation)
+
+        val found = invitationRepo.findById(invitation.id)
+
+        assertNotNull(found)
+        assertEquals(invitation.id, found!!.id)
+        assertEquals("test@example.com", found.email)
+        assertEquals(OrgRole.MEMBER, found.orgRole)
+        assertEquals(InvitationStatus.PENDING, found.status)
+    }
+
+    @Test
+    fun `invitation findByToken returns invitation`() {
+        val invitation = createTestInvitation(token = "unique-token-123")
+        invitationRepo.save(invitation)
+
+        val found = invitationRepo.findByToken("unique-token-123")
+
+        assertNotNull(found)
+        assertEquals(invitation.id, found!!.id)
+    }
+
+    private fun createTestOrganization() = Organization(
+        id = UUID.randomUUID(),
+        name = "Test Org",
+        logoUrl = null,
+        defaultTimezone = "UTC",
+        billingEmail = "billing@test.com",
+        createdAt = Instant.now(),
+        updatedAt = Instant.now(),
+    )
+
+    private fun createTestOrgMembership(
+        organizationId: UUID = UUID.randomUUID(),
+    ) = OrgMembership(
+        id = UUID.randomUUID(),
+        userId = UUID.randomUUID(),
+        organizationId = organizationId,
+        orgRole = OrgRole.MEMBER,
+        invitedAt = Instant.now(),
+        acceptedAt = null,
+    )
+
+    private fun createTestWorkspaceMembership(
+        workspaceId: UUID = UUID.randomUUID(),
+    ) = WorkspaceMembership(
+        id = UUID.randomUUID(),
+        userId = UUID.randomUUID(),
+        workspaceId = workspaceId,
+        workspaceRole = WorkspaceRole.EDITOR,
+        customRoleId = null,
+        addedAt = Instant.now(),
+    )
+
+    private fun createTestCustomRole(
+        organizationId: UUID = UUID.randomUUID(),
+    ) = CustomRole(
+        id = UUID.randomUUID(),
+        organizationId = organizationId,
+        name = "Editor",
+        permissions = mapOf("can_edit" to true, "can_delete" to false),
+        createdAt = Instant.now(),
+        updatedAt = Instant.now(),
+    )
+
+    private fun createTestInvitation(
+        token: String = "token-${UUID.randomUUID()}",
+    ) = Invitation(
+        id = UUID.randomUUID(),
+        organizationId = UUID.randomUUID(),
+        email = "test@example.com",
+        orgRole = OrgRole.MEMBER,
+        workspaceAssignments = "[]",
+        invitedBy = UUID.randomUUID(),
+        token = token,
+        expiresAt = Instant.now().plusSeconds(86400),
+        acceptedAt = null,
+        status = InvitationStatus.PENDING,
+        createdAt = Instant.now(),
+    )
+}

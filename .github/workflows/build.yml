@@ -1,0 +1,46 @@
+name: Release Build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build JAR
+        run: mvn package -DskipTests -T 4
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" studio-web/target/studio-web-*.jar
+          $hash = (Get-FileHash studio-web/target/studio-web-*.jar -Algorithm SHA256).Hash.ToLower()
+          "$hash  studio-web-$(basename (Get-Item studio-web/target/studio-web-*.jar).Name)" | Out-File -Encoding ascii studio-web-*.jar.sha256
+          gh release upload "${{ github.ref_name }}" studio-web-*.jar.sha256
+        shell: pwsh
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: github.event_name != 'release'
+        with:
+          name: studio-jar
+          path: '**/target/*.jar'
+          retention-days: 30
