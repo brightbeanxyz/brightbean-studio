@@ -5,14 +5,20 @@ import com.brightbean.studio.application.di.applicationModule
 import com.brightbean.studio.application.usecase.AuthUseCases
 import com.brightbean.studio.infrastructure.di.infrastructureModule
 import com.brightbean.studio.web.api.AuthApi
+import com.brightbean.studio.web.api.CalendarApi
+import com.brightbean.studio.web.api.CategoryApi
 import com.brightbean.studio.web.api.CustomRoleApi
+import com.brightbean.studio.web.api.FeedApi
+import com.brightbean.studio.web.api.IdeaApi
 import com.brightbean.studio.web.api.InvitationApi
 import com.brightbean.studio.web.api.MemberApi
 import com.brightbean.studio.web.api.OrganizationApi
 import com.brightbean.studio.web.api.PlatformConfigApi
 import com.brightbean.studio.web.api.PlatformCredentialApi
+import com.brightbean.studio.web.api.PlatformPostTransitionApi
 import com.brightbean.studio.web.api.PostApi
 import com.brightbean.studio.web.api.SocialAccountApi
+import com.brightbean.studio.web.api.TemplateApi
 import com.brightbean.studio.web.api.WorkspaceApi
 import com.brightbean.studio.web.di.webModule
 import com.sun.net.httpserver.HttpServer
@@ -37,6 +43,12 @@ class BrightBeanServer(
     private val customRoleApi: CustomRoleApi by inject()
     private val platformConfigApi: PlatformConfigApi by inject()
     private val platformCredentialApi: PlatformCredentialApi by inject()
+    private val categoryApi: CategoryApi by inject()
+    private val ideaApi: IdeaApi by inject()
+    private val templateApi: TemplateApi by inject()
+    private val feedApi: FeedApi by inject()
+    private val calendarApi: CalendarApi by inject()
+    private val platformPostTransitionApi: PlatformPostTransitionApi by inject()
 
     fun start() {
         startKoin {
@@ -48,7 +60,7 @@ class BrightBeanServer(
             routes = mapOf(
                 "/health" to HealthHandler(),
                 "/api/auth" to authApi,
-                "/api" to ApiDispatcher(postApi, socialAccountApi, workspaceApi, invitationApi, memberApi, organizationApi, customRoleApi, platformConfigApi, platformCredentialApi),
+                "/api" to ApiDispatcher(postApi, socialAccountApi, workspaceApi, invitationApi, memberApi, organizationApi, customRoleApi, platformConfigApi, platformCredentialApi, categoryApi, ideaApi, templateApi, feedApi, calendarApi, platformPostTransitionApi),
             )
         )
         val authed = RBACMiddleware(authUseCases, rbacResolver, publicPaths, router)

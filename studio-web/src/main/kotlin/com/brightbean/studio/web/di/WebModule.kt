@@ -1,14 +1,20 @@
 package com.brightbean.studio.web.di
 
 import com.brightbean.studio.web.api.AuthApi
+import com.brightbean.studio.web.api.CalendarApi
+import com.brightbean.studio.web.api.CategoryApi
 import com.brightbean.studio.web.api.CustomRoleApi
+import com.brightbean.studio.web.api.FeedApi
+import com.brightbean.studio.web.api.IdeaApi
 import com.brightbean.studio.web.api.InvitationApi
 import com.brightbean.studio.web.api.MemberApi
 import com.brightbean.studio.web.api.OrganizationApi
 import com.brightbean.studio.web.api.PlatformConfigApi
 import com.brightbean.studio.web.api.PlatformCredentialApi
+import com.brightbean.studio.web.api.PlatformPostTransitionApi
 import com.brightbean.studio.web.api.PostApi
 import com.brightbean.studio.web.api.SocialAccountApi
+import com.brightbean.studio.web.api.TemplateApi
 import com.brightbean.studio.web.api.WorkspaceApi
 import org.koin.dsl.module
 
@@ -23,4 +29,10 @@ val webModule = module {
     single { CustomRoleApi(get(), get(), get(), get()) }
     single { PlatformConfigApi() }
     single { PlatformCredentialApi(get()) }
+    single { CategoryApi(get()) }
+    single { IdeaApi(get(), get()) }
+    single { TemplateApi(get()) }
+    single { FeedApi(get()) }
+    single { CalendarApi(get(), get(), get(), get()) }
+    single { PlatformPostTransitionApi(get()) }
 }
