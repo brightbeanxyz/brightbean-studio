@@ -1,11 +1,13 @@
 package com.brightbean.studio.web.api
 
+import com.brightbean.studio.application.auth.WorkspacePermissionKeys
 import com.brightbean.studio.application.usecase.ConnectSocialAccountUseCase
 import com.brightbean.studio.domain.repository.SocialAccountRepository
 import com.brightbean.studio.web.api.dto.ConnectSocialAccountRequest
 import com.brightbean.studio.web.api.dto.ErrorResponse
 import com.brightbean.studio.web.api.dto.SocialAccountResponse
 import com.brightbean.studio.web.api.dto.toResponse
+import com.brightbean.studio.web.server.PermissionChecks
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpHandler
 import java.io.InputStreamReader
@@ -45,6 +47,9 @@ class SocialAccountApi(
     }
 
     private fun connectAccount(exchange: HttpExchange) {
+        if (!PermissionChecks.hasPermission(exchange, WorkspacePermissionKeys.MANAGE_SOCIAL_ACCOUNTS)) {
+            sendError(exchange, 403, "Forbidden"); return
+        }
         try {
             val pathParts = exchange.requestURI.path.split("/")
             val workspaceId = UUID.fromString(pathParts[4])
@@ -65,6 +70,9 @@ class SocialAccountApi(
     }
 
     private fun disconnectAccount(exchange: HttpExchange) {
+        if (!PermissionChecks.hasPermission(exchange, WorkspacePermissionKeys.MANAGE_SOCIAL_ACCOUNTS)) {
+            sendError(exchange, 403, "Forbidden"); return
+        }
         try {
             val pathParts = exchange.requestURI.path.split("/")
             val workspaceId = UUID.fromString(pathParts[4])
@@ -94,6 +102,7 @@ class SocialAccountApi(
         val error = ErrorResponse(
             error = when (statusCode) {
                 400 -> "Bad Request"
+                403 -> "Forbidden"
                 404 -> "Not Found"
                 500 -> "Internal Server Error"
                 else -> "Error"

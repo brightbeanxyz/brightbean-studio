@@ -1,5 +1,6 @@
 package com.brightbean.studio.web.api
 
+import com.brightbean.studio.application.auth.WorkspacePermissionKeys
 import com.brightbean.studio.application.usecase.CreatePostUseCase
 import com.brightbean.studio.application.usecase.PublishPostUseCase
 import com.brightbean.studio.application.usecase.SchedulePostUseCase
@@ -11,6 +12,7 @@ import com.brightbean.studio.web.api.dto.PaginatedResponse
 import com.brightbean.studio.web.api.dto.PostResponse
 import com.brightbean.studio.web.api.dto.SchedulePostRequest
 import com.brightbean.studio.web.api.dto.toResponse
+import com.brightbean.studio.web.server.PermissionChecks
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpHandler
 import java.io.InputStreamReader
@@ -88,6 +90,9 @@ class PostApi(
     }
 
     private fun createPost(exchange: HttpExchange) {
+        if (!PermissionChecks.hasPermission(exchange, WorkspacePermissionKeys.CREATE_POSTS)) {
+            sendError(exchange, 403, "Forbidden"); return
+        }
         try {
             val pathParts = exchange.requestURI.path.split("/")
             val workspaceId = UUID.fromString(pathParts[3])
@@ -113,6 +118,9 @@ class PostApi(
     }
 
     private fun publishPost(exchange: HttpExchange) {
+        if (!PermissionChecks.hasPermission(exchange, WorkspacePermissionKeys.PUBLISH_DIRECTLY)) {
+            sendError(exchange, 403, "Forbidden"); return
+        }
         try {
             val pathParts = exchange.requestURI.path.split("/")
             val postId = UUID.fromString(pathParts[3])
@@ -125,6 +133,9 @@ class PostApi(
     }
 
     private fun schedulePost(exchange: HttpExchange) {
+        if (!PermissionChecks.hasPermission(exchange, WorkspacePermissionKeys.PUBLISH_DIRECTLY)) {
+            sendError(exchange, 403, "Forbidden"); return
+        }
         try {
             val pathParts = exchange.requestURI.path.split("/")
             val postId = UUID.fromString(pathParts[3])
@@ -155,6 +166,7 @@ class PostApi(
         val error = ErrorResponse(
             error = when (statusCode) {
                 400 -> "Bad Request"
+                403 -> "Forbidden"
                 404 -> "Not Found"
                 500 -> "Internal Server Error"
                 else -> "Error"
