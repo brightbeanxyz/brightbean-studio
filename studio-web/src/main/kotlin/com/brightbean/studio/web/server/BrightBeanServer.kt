@@ -1,5 +1,6 @@
 package com.brightbean.studio.web.server
 
+import com.brightbean.studio.application.auth.RbacResolver
 import com.brightbean.studio.application.di.applicationModule
 import com.brightbean.studio.application.usecase.AuthUseCases
 import com.brightbean.studio.infrastructure.di.infrastructureModule
@@ -19,6 +20,7 @@ class BrightBeanServer(
 ) : KoinComponent {
     private var server: HttpServer? = null
     private val authUseCases: AuthUseCases by inject()
+    private val rbacResolver: RbacResolver by inject()
     private val authApi: AuthApi by inject()
     private val workspaceApi: WorkspaceApi by inject()
     private val postApi: PostApi by inject()
@@ -37,7 +39,7 @@ class BrightBeanServer(
                 "/api" to ApiDispatcher(postApi, socialAccountApi, workspaceApi),
             )
         )
-        val authed = AuthMiddleware(authUseCases, publicPaths, router)
+        val authed = RBACMiddleware(authUseCases, rbacResolver, publicPaths, router)
         val rateLimited = RateLimitMiddleware(authed)
         val corsWrapped = Middleware.corsMiddleware(config.corsOrigins, rateLimited)
         val secured = SecurityHeadersMiddleware(corsWrapped)
