@@ -1,8 +1,6 @@
 package com.brightbean.studio.application.usecase
 
-import com.brightbean.studio.domain.model.PlatformPost
 import com.brightbean.studio.domain.model.PlatformPostStatus
-import com.brightbean.studio.domain.model.Post
 import com.brightbean.studio.domain.repository.PlatformPostRepository
 import com.brightbean.studio.domain.repository.PostRepository
 import java.time.Instant
@@ -12,27 +10,22 @@ class SchedulePostUseCase(
     private val postRepository: PostRepository,
     private val platformPostRepository: PlatformPostRepository,
 ) {
-    fun execute(postId: UUID, scheduledFor: Instant): Post {
+    fun execute(postId: UUID, scheduledAt: Instant) {
         val post = postRepository.findById(postId)
             ?: throw IllegalArgumentException("Post not found: $postId")
 
-        val now = Instant.now()
-        val updatedPost = post.copy(
-            scheduledAt = scheduledFor,
-            updatedAt = now,
-        )
+        val updatedPost = post.copy(scheduledAt = scheduledAt, updatedAt = Instant.now())
         postRepository.update(updatedPost)
 
         val platformPosts = platformPostRepository.findByPostId(postId)
         for (pp in platformPosts) {
-            val updated = pp.copy(
-                status = PlatformPostStatus.SCHEDULED,
-                scheduledAt = scheduledFor,
-                updatedAt = now,
-            )
-            platformPostRepository.update(updated)
+            if (pp.status.canTransitionTo(PlatformPostStatus.SCHEDULED)) {
+                val scheduled = pp.transitionTo(PlatformPostStatus.SCHEDULED).copy(
+                    scheduledAt = scheduledAt,
+                    updatedAt = Instant.now(),
+                )
+                platformPostRepository.update(scheduled)
+            }
         }
-
-        return updatedPost
     }
 }

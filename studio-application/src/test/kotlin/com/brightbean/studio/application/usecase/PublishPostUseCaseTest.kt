@@ -12,8 +12,10 @@ import com.brightbean.studio.infrastructure.provider.PlatformProfile
 import com.brightbean.studio.infrastructure.provider.ProviderRegistry
 import com.brightbean.studio.infrastructure.provider.PublishResult
 import com.brightbean.studio.infrastructure.provider.SocialProvider
+import com.brightbean.studio.infrastructure.provider.types.PublishContent
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -78,7 +80,7 @@ class PublishPostUseCaseTest {
     }
 
     @Test
-    fun `publish post should publish to all platforms and update post`() {
+    fun `publish post should publish to all platforms and return results`() {
         val post = postRepository.save(
             Post(
                 id = UUID.randomUUID(),
@@ -100,22 +102,24 @@ class PublishPostUseCaseTest {
         platformPostRepository.save(PlatformPost(
             id = UUID.randomUUID(), postId = post.id, socialAccountId = facebookAccountId,
             platformTitle = null, platformCaption = null, platformFirstComment = null,
-            platformMedia = null, platformExtra = null, status = PlatformPostStatus.DRAFT,
-            platformPostId = "", publishError = "", publishedAt = null, scheduledAt = null,
+            platformMedia = null, platformExtra = null, status = PlatformPostStatus.SCHEDULED,
+            platformPostId = "", publishError = "", publishedAt = null,
+            scheduledAt = Instant.now().minusSeconds(60),
             retryCount = 0, nextRetryAt = null, createdAt = Instant.now(), updatedAt = Instant.now(),
         ))
         platformPostRepository.save(PlatformPost(
             id = UUID.randomUUID(), postId = post.id, socialAccountId = instagramAccountId,
             platformTitle = null, platformCaption = null, platformFirstComment = null,
-            platformMedia = null, platformExtra = null, status = PlatformPostStatus.DRAFT,
-            platformPostId = "", publishError = "", publishedAt = null, scheduledAt = null,
+            platformMedia = null, platformExtra = null, status = PlatformPostStatus.SCHEDULED,
+            platformPostId = "", publishError = "", publishedAt = null,
+            scheduledAt = Instant.now().minusSeconds(60),
             retryCount = 0, nextRetryAt = null, createdAt = Instant.now(), updatedAt = Instant.now(),
         ))
 
-        val result = publishPostUseCase.execute(post.id)
+        val results = publishPostUseCase.execute(post.id)
 
-        assertEquals(post.id, result.id)
-        assertNotNull(result.publishedAt)
+        assertEquals(2, results.size)
+        assertTrue(results.all { it.success })
 
         val platformPosts = platformPostRepository.findByPostId(post.id)
         assertEquals(2, platformPosts.size)
@@ -131,7 +135,7 @@ class PublishPostUseCaseTest {
     }
 
     @Test
-    fun `publish post should throw when no social accounts found`() {
+    fun `publish post should throw when no schedulable platform posts found`() {
         val post = postRepository.save(
             Post(
                 id = UUID.randomUUID(),
@@ -167,7 +171,7 @@ class FakeFacebookProvider : SocialProvider {
         platformAvatarUrl = socialAccount.platformAvatarUrl,
     )
 
-    override fun publishPost(account: SocialAccount, content: com.brightbean.studio.infrastructure.provider.types.PublishContent) = PublishResult(
+    override fun publishPost(account: SocialAccount, content: PublishContent) = PublishResult(
         success = true,
         platformPostId = "fb_post_${account.id}",
         postUrl = "https://facebook.com/post/${account.id}",
@@ -188,7 +192,7 @@ class FakeInstagramProvider : SocialProvider {
         platformAvatarUrl = socialAccount.platformAvatarUrl,
     )
 
-    override fun publishPost(account: SocialAccount, content: com.brightbean.studio.infrastructure.provider.types.PublishContent) = PublishResult(
+    override fun publishPost(account: SocialAccount, content: PublishContent) = PublishResult(
         success = true,
         platformPostId = "ig_post_${account.id}",
         postUrl = "https://instagram.com/post/${account.id}",

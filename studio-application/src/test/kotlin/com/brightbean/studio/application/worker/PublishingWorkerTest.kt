@@ -13,6 +13,7 @@ import com.brightbean.studio.infrastructure.provider.PlatformProfile
 import com.brightbean.studio.infrastructure.provider.ProviderRegistry
 import com.brightbean.studio.infrastructure.provider.PublishResult
 import com.brightbean.studio.infrastructure.provider.SocialProvider
+import com.brightbean.studio.infrastructure.provider.types.PublishContent
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -181,7 +182,7 @@ class WorkerFakeFacebookProvider : SocialProvider {
         platformAvatarUrl = socialAccount.platformAvatarUrl,
     )
 
-    override fun publishPost(account: SocialAccount, content: com.brightbean.studio.infrastructure.provider.types.PublishContent) = PublishResult(
+    override fun publishPost(account: SocialAccount, content: PublishContent) = PublishResult(
         success = true,
         platformPostId = "fb_post_${account.id}",
         postUrl = "https://facebook.com/post/${account.id}",

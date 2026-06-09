@@ -88,18 +88,23 @@ class PostApi(
             val body = InputStreamReader(exchange.requestBody).readText()
             val request = gson.fromJson(body, CreatePostRequest::class.java)
 
-            val post = createPostUseCase.execute(
-                workspaceId = workspaceId,
-                authorId = UUID.randomUUID(),
-                content = request.content,
-                socialAccountIds = emptyList(),
-                scheduledAt = request.scheduledAt,
-                requiresApproval = request.requiresApproval,
-                categoryId = request.categoryId,
-                mediaIds = request.mediaIds,
+            val result = createPostUseCase.execute(
+                CreatePostUseCase.Request(
+                    workspaceId = workspaceId,
+                    authorId = UUID.randomUUID(),
+                    title = "",
+                    caption = request.content,
+                    firstComment = "",
+                    internalNotes = "",
+                    tags = emptyList(),
+                    categoryId = request.categoryId,
+                    socialAccountIds = emptyList(),
+                    mediaAssetIds = request.mediaIds,
+                    scheduledAt = request.scheduledAt,
+                )
             )
 
-            sendJson(exchange, 201, post.toResponse())
+            sendJson(exchange, 201, result.post.toResponse())
         } catch (e: Exception) {
             sendError(exchange, 400, e.message ?: "Failed to create post")
         }
@@ -113,8 +118,13 @@ class PostApi(
             val pathParts = exchange.requestURI.path.split("/")
             val postId = UUID.fromString(pathParts[3])
 
-            val post = publishPostUseCase.execute(postId)
-            sendJson(exchange, 200, post.toResponse())
+            val results = publishPostUseCase.execute(postId)
+            val post = postRepository.findById(postId)
+            sendJson(exchange, 200, mapOf(
+                "postId" to postId,
+                "results" to results,
+                "post" to post?.toResponse()
+            ))
         } catch (e: Exception) {
             sendError(exchange, 400, e.message ?: "Failed to publish post")
         }
@@ -131,11 +141,13 @@ class PostApi(
             val body = InputStreamReader(exchange.requestBody).readText()
             val request = gson.fromJson(body, SchedulePostRequest::class.java)
 
-            val post = schedulePostUseCase.execute(postId, request.scheduledFor)
+            schedulePostUseCase.execute(postId, request.scheduledFor)
+
+            val post = postRepository.findById(postId)
 
             sendJson(exchange, 200, mapOf(
-                "postId" to post.id,
-                "post" to post.toResponse()
+                "postId" to postId,
+                "post" to post?.toResponse()
             ))
         } catch (e: Exception) {
             sendError(exchange, 400, e.message ?: "Failed to schedule post")

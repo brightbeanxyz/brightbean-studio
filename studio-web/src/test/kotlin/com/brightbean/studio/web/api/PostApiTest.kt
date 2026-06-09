@@ -3,7 +3,11 @@ package com.brightbean.studio.web.api
 import com.brightbean.studio.application.usecase.CreatePostUseCase
 import com.brightbean.studio.application.usecase.PublishPostUseCase
 import com.brightbean.studio.application.usecase.SchedulePostUseCase
+import com.brightbean.studio.domain.model.PlatformPost
 import com.brightbean.studio.domain.model.Post
+import com.brightbean.studio.domain.model.PostMedia
+import com.brightbean.studio.domain.repository.PlatformPostRepository
+import com.brightbean.studio.domain.repository.PostMediaRepository
 import com.brightbean.studio.domain.repository.PostRepository
 import com.brightbean.studio.web.server.Middleware
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -140,8 +144,9 @@ class PostApiTest {
     @Test
     fun `create post returns 201 with created post`() {
         val postRepository = Mockito.mock(PostRepository::class.java)
-        val approvalRequestRepository = Mockito.mock(com.brightbean.studio.domain.repository.ApprovalRequestRepository::class.java)
-        val createPostUseCase = com.brightbean.studio.application.usecase.CreatePostUseCase(postRepository, approvalRequestRepository)
+        val platformPostRepository = Mockito.mock(PlatformPostRepository::class.java)
+        val postMediaRepository = Mockito.mock(PostMediaRepository::class.java)
+        val createPostUseCase = CreatePostUseCase(postRepository, platformPostRepository, postMediaRepository)
         val schedulePostUseCase = Mockito.mock(SchedulePostUseCase::class.java)
         val publishPostUseCase = Mockito.mock(PublishPostUseCase::class.java)
 
@@ -197,7 +202,8 @@ class PostApiTest {
             updatedAt = Instant.now(),
         )
 
-        Mockito.doReturn(publishedPost).`when`(publishPostUseCase).execute(postId)
+        Mockito.doReturn(listOf<PublishPostUseCase.PlatformResult>()).`when`(publishPostUseCase).execute(postId)
+        Mockito.doReturn(publishedPost).`when`(postRepository).findById(postId)
 
         val postApi = PostApi(createPostUseCase, schedulePostUseCase, publishPostUseCase, postRepository)
         val handler = Middleware.corsMiddleware(listOf("*"), postApi)
@@ -243,7 +249,8 @@ class PostApiTest {
             updatedAt = Instant.now(),
         )
 
-        Mockito.doReturn(scheduledPost).`when`(schedulePostUseCase).execute(postId, scheduledFor)
+        Mockito.doNothing().`when`(schedulePostUseCase).execute(postId, scheduledFor)
+        Mockito.doReturn(scheduledPost).`when`(postRepository).findById(postId)
 
         val postApi = PostApi(createPostUseCase, schedulePostUseCase, publishPostUseCase, postRepository)
         val handler = Middleware.corsMiddleware(listOf("*"), postApi)
