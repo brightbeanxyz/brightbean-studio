@@ -32,6 +32,9 @@ import com.brightbean.studio.domain.repository.TagRepository
 import com.brightbean.studio.domain.repository.SessionRepository
 import com.brightbean.studio.domain.repository.SocialAccountRepository
 import com.brightbean.studio.domain.repository.UserRepository
+import com.brightbean.studio.domain.repository.MediaAssetRepository
+import com.brightbean.studio.domain.repository.MediaAssetVersionRepository
+import com.brightbean.studio.domain.repository.MediaFolderRepository
 import com.brightbean.studio.domain.repository.WorkspaceMembershipRepository
 import com.brightbean.studio.domain.repository.WorkspaceRepository
 import com.brightbean.studio.infrastructure.config.StudioConfig
@@ -45,6 +48,9 @@ import com.brightbean.studio.infrastructure.db.JDBIOAuthConnectionRepository
 import com.brightbean.studio.infrastructure.db.JDBIOrgMembershipRepository
 import com.brightbean.studio.infrastructure.db.JDBIOrganizationRepository
 import com.brightbean.studio.infrastructure.db.JDBIAnalyticsPlatformConfigRepository
+import com.brightbean.studio.infrastructure.db.JDBIMediaAssetRepository
+import com.brightbean.studio.infrastructure.db.JDBIMediaAssetVersionRepository
+import com.brightbean.studio.infrastructure.db.JDBIMediaFolderRepository
 import com.brightbean.studio.infrastructure.db.JDBIPlatformCredentialRepository
 import com.brightbean.studio.infrastructure.db.JDBIPlatformPostRepository
 import com.brightbean.studio.infrastructure.db.JDBIPlatformVisibilityRepository
@@ -114,6 +120,9 @@ val infrastructureModule = module {
     single<PlatformCredentialRepository> { JDBIPlatformCredentialRepository(get()) }
     single<PlatformVisibilityRepository> { JDBIPlatformVisibilityRepository(get()) }
     single<AnalyticsPlatformConfigRepository> { JDBIAnalyticsPlatformConfigRepository(get()) }
+    single<MediaFolderRepository> { JDBIMediaFolderRepository(get()) }
+    single<MediaAssetRepository> { JDBIMediaAssetRepository(get()) }
+    single<MediaAssetVersionRepository> { JDBIMediaAssetVersionRepository(get()) }
     single { ProviderRegistry.from(emptyList()) }
 }
 

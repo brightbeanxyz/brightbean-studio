@@ -7,6 +7,7 @@ import com.brightbean.studio.web.api.FeedApi
 import com.brightbean.studio.web.api.IdeaApi
 import com.brightbean.studio.web.api.InvitationApi
 import com.brightbean.studio.web.api.MemberApi
+import com.brightbean.studio.web.api.MediaApi
 import com.brightbean.studio.web.api.OrganizationApi
 import com.brightbean.studio.web.api.PlatformConfigApi
 import com.brightbean.studio.web.api.PlatformCredentialApi
@@ -34,6 +35,7 @@ class ApiDispatcher(
     private val feedApi: FeedApi,
     private val calendarApi: CalendarApi,
     private val platformPostTransitionApi: PlatformPostTransitionApi,
+    private val mediaApi: MediaApi,
 ) : HttpHandler {
     private val postPattern = Regex("^/api/workspaces/[^/]+/posts|^/api/posts/[^/]+/(publish|schedule)")
     private val transitionPattern = Regex("^/api/workspaces/[^/]+/posts/[^/]+/platform-posts")
@@ -43,6 +45,7 @@ class ApiDispatcher(
     private val feedPattern = Regex("^/api/workspaces/[^/]+/feeds")
     private val calendarPattern = Regex("^/api/workspaces/[^/]+/calendar|^/api/workspaces/[^/]+/queues|^/api/workspaces/[^/]+/posting-slots")
     private val socialAccountPattern = Regex("^/api/workspaces/[^/]+/social-accounts")
+    private val mediaPattern = Regex("^/api/workspaces/[^/]+/media")
     private val invitationAcceptPattern = Regex("^/api/invitations")
     private val invitationPattern = Regex("^/api/orgs/[^/]+/invitations")
     private val memberPattern = Regex("^/api/orgs/[^/]+/members")
@@ -61,6 +64,7 @@ class ApiDispatcher(
             feedPattern.containsMatchIn(path) -> feedApi.handle(exchange)
             calendarPattern.containsMatchIn(path) -> calendarApi.handle(exchange)
             socialAccountPattern.containsMatchIn(path) -> socialAccountApi.handle(exchange)
+            mediaPattern.containsMatchIn(path) -> mediaApi.handle(exchange)
             path.startsWith("/api/workspaces") -> workspaceApi.handle(exchange)
             invitationAcceptPattern.containsMatchIn(path) -> invitationApi.handle(exchange)
             invitationPattern.containsMatchIn(path) -> invitationApi.handle(exchange)

@@ -12,6 +12,7 @@ import com.brightbean.studio.web.api.FeedApi
 import com.brightbean.studio.web.api.IdeaApi
 import com.brightbean.studio.web.api.InvitationApi
 import com.brightbean.studio.web.api.MemberApi
+import com.brightbean.studio.web.api.MediaApi
 import com.brightbean.studio.web.api.OrganizationApi
 import com.brightbean.studio.web.api.PlatformConfigApi
 import com.brightbean.studio.web.api.PlatformCredentialApi
@@ -49,6 +50,7 @@ class BrightBeanServer(
     private val feedApi: FeedApi by inject()
     private val calendarApi: CalendarApi by inject()
     private val platformPostTransitionApi: PlatformPostTransitionApi by inject()
+    private val mediaApi: MediaApi by inject()
 
     fun start() {
         startKoin {
@@ -60,7 +62,7 @@ class BrightBeanServer(
             routes = mapOf(
                 "/health" to HealthHandler(),
                 "/api/auth" to authApi,
-                "/api" to ApiDispatcher(postApi, socialAccountApi, workspaceApi, invitationApi, memberApi, organizationApi, customRoleApi, platformConfigApi, platformCredentialApi, categoryApi, ideaApi, templateApi, feedApi, calendarApi, platformPostTransitionApi),
+                "/api" to ApiDispatcher(postApi, socialAccountApi, workspaceApi, invitationApi, memberApi, organizationApi, customRoleApi, platformConfigApi, platformCredentialApi, categoryApi, ideaApi, templateApi, feedApi, calendarApi, platformPostTransitionApi, mediaApi),
             )
         )
         val authed = RBACMiddleware(authUseCases, rbacResolver, publicPaths, router)

@@ -7,6 +7,7 @@ import com.brightbean.studio.web.api.CustomRoleApi
 import com.brightbean.studio.web.api.FeedApi
 import com.brightbean.studio.web.api.IdeaApi
 import com.brightbean.studio.web.api.InvitationApi
+import com.brightbean.studio.web.api.MediaApi
 import com.brightbean.studio.web.api.MemberApi
 import com.brightbean.studio.web.api.OrganizationApi
 import com.brightbean.studio.web.api.PlatformConfigApi
@@ -35,4 +36,5 @@ val webModule = module {
     single { FeedApi(get()) }
     single { CalendarApi(get(), get(), get(), get()) }
     single { PlatformPostTransitionApi(get()) }
+    single { MediaApi(get()) }
 }

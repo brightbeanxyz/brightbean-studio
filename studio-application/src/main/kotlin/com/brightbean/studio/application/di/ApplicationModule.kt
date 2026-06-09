@@ -34,6 +34,7 @@ import com.brightbean.studio.application.usecase.CustomCalendarEventUseCases
 import com.brightbean.studio.application.usecase.ReschedulePostUseCase
 import com.brightbean.studio.application.usecase.PostTemplateUseCases
 import com.brightbean.studio.application.usecase.FeedUseCases
+import com.brightbean.studio.application.usecase.MediaLibraryUseCases
 import com.brightbean.studio.infrastructure.security.EncryptionService
 import org.koin.dsl.module
 
@@ -78,4 +79,5 @@ val applicationModule = module {
     single { ReschedulePostUseCase(get(), get()) }
     single { PostTemplateUseCases(get()) }
     single { FeedUseCases(get()) }
+    single { MediaLibraryUseCases(get(), get(), get()) }
 }
