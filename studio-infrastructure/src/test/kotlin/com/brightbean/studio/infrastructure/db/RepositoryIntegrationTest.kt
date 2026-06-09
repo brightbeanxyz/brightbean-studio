@@ -71,6 +71,13 @@ class RepositoryIntegrationTest {
                     platform_avatar_url VARCHAR,
                     profile_url VARCHAR,
                     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    connection_status VARCHAR(20) NOT NULL DEFAULT 'CONNECTED',
+                    last_health_check_at TIMESTAMP,
+                    last_error VARCHAR,
+                    follower_count INT NOT NULL DEFAULT 0,
+                    instance_url VARCHAR(500),
+                    daily_post_limit_override INT,
+                    analytics_needs_reconnect BOOLEAN NOT NULL DEFAULT FALSE,
                     metadata VARCHAR NOT NULL,
                     connected_at TIMESTAMP NOT NULL,
                     last_sync_at TIMESTAMP
