@@ -122,9 +122,6 @@ private class HealthStubProvider(
     override fun authenticate(credential: Credential): AuthResult =
         AuthResult(success = true, accessToken = "token")
 
-    override fun refreshToken(credential: Credential): AuthResult =
-        AuthResult(success = true, accessToken = "new-token")
-
     override fun getProfile(socialAccount: SocialAccount): PlatformProfile {
         shouldThrow?.let { throw it }
         return PlatformProfile(
@@ -136,14 +133,10 @@ private class HealthStubProvider(
         )
     }
 
-    override fun publish(post: com.brightbean.studio.domain.model.Post, socialAccount: SocialAccount) =
+    override fun publishPost(account: SocialAccount, content: com.brightbean.studio.infrastructure.provider.types.PublishContent) =
         PublishResult(success = true)
 
-    override fun getComments(postId: String): List<Comment> = emptyList()
-
     override fun getInboxItems(socialAccount: SocialAccount): List<com.brightbean.studio.domain.model.InboxItem> = emptyList()
-
-    override fun getInsights(postId: String): PostInsights? = null
 }
 
 private class HealthInMemorySocialAccountRepository : SocialAccountRepository {

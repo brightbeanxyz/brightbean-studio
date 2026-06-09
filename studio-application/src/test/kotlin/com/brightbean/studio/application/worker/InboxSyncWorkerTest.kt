@@ -137,12 +137,6 @@ class InMemoryInboxRepository : InboxRepository {
 class InboxSyncWorkerFakeFacebookProvider : SocialProvider {
     override val platformType = PlatformType.FACEBOOK
 
-    override fun authenticate(credential: com.brightbean.studio.domain.model.Credential) =
-        com.brightbean.studio.infrastructure.provider.AuthResult(success = true)
-
-    override fun refreshToken(credential: com.brightbean.studio.domain.model.Credential) =
-        com.brightbean.studio.infrastructure.provider.AuthResult(success = true)
-
     override fun getProfile(socialAccount: SocialAccount) =
         com.brightbean.studio.infrastructure.provider.PlatformProfile(
             platformUserId = socialAccount.platformUserId,
@@ -152,15 +146,13 @@ class InboxSyncWorkerFakeFacebookProvider : SocialProvider {
             platformAvatarUrl = socialAccount.platformAvatarUrl,
         )
 
-    override fun publish(post: com.brightbean.studio.domain.model.Post, socialAccount: SocialAccount) =
+    override fun publishPost(account: SocialAccount, content: com.brightbean.studio.infrastructure.provider.types.PublishContent) =
         com.brightbean.studio.infrastructure.provider.PublishResult(
             success = true,
-            platformPostId = "fb_post_${post.id}",
-            postUrl = "https://facebook.com/post/${post.id}",
+            platformPostId = "fb_post_${account.id}",
+            postUrl = "https://facebook.com/post/${account.id}",
             publishedAt = Instant.now(),
         )
-
-    override fun getComments(postId: String): List<com.brightbean.studio.infrastructure.provider.Comment> = emptyList()
 
     override fun getInboxItems(socialAccount: SocialAccount): List<InboxItem> = listOf(
         InboxItem(
@@ -198,18 +190,10 @@ class InboxSyncWorkerFakeFacebookProvider : SocialProvider {
             receivedAt = Instant.now(),
         ),
     )
-
-    override fun getInsights(postId: String): com.brightbean.studio.infrastructure.provider.PostInsights? = null
 }
 
 class InboxSyncWorkerFakeInstagramProvider : SocialProvider {
     override val platformType = PlatformType.INSTAGRAM
-
-    override fun authenticate(credential: com.brightbean.studio.domain.model.Credential) =
-        com.brightbean.studio.infrastructure.provider.AuthResult(success = true)
-
-    override fun refreshToken(credential: com.brightbean.studio.domain.model.Credential) =
-        com.brightbean.studio.infrastructure.provider.AuthResult(success = true)
 
     override fun getProfile(socialAccount: SocialAccount) =
         com.brightbean.studio.infrastructure.provider.PlatformProfile(
@@ -220,15 +204,13 @@ class InboxSyncWorkerFakeInstagramProvider : SocialProvider {
             platformAvatarUrl = socialAccount.platformAvatarUrl,
         )
 
-    override fun publish(post: com.brightbean.studio.domain.model.Post, socialAccount: SocialAccount) =
+    override fun publishPost(account: SocialAccount, content: com.brightbean.studio.infrastructure.provider.types.PublishContent) =
         com.brightbean.studio.infrastructure.provider.PublishResult(
             success = true,
-            platformPostId = "ig_post_${post.id}",
-            postUrl = "https://instagram.com/post/${post.id}",
+            platformPostId = "ig_post_${account.id}",
+            postUrl = "https://instagram.com/post/${account.id}",
             publishedAt = Instant.now(),
         )
-
-    override fun getComments(postId: String): List<com.brightbean.studio.infrastructure.provider.Comment> = emptyList()
 
     override fun getInboxItems(socialAccount: SocialAccount): List<InboxItem> = listOf(
         InboxItem(
@@ -249,6 +231,4 @@ class InboxSyncWorkerFakeInstagramProvider : SocialProvider {
             receivedAt = Instant.now(),
         ),
     )
-
-    override fun getInsights(postId: String): com.brightbean.studio.infrastructure.provider.PostInsights? = null
 }

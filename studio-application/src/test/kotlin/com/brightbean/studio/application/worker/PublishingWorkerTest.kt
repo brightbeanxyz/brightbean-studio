@@ -249,12 +249,6 @@ class InMemoryPlatformPostRepository : PlatformPostRepository {
 class FakeFacebookProvider : SocialProvider {
     override val platformType = PlatformType.FACEBOOK
 
-    override fun authenticate(credential: com.brightbean.studio.domain.model.Credential) =
-        com.brightbean.studio.infrastructure.provider.AuthResult(success = true)
-
-    override fun refreshToken(credential: com.brightbean.studio.domain.model.Credential) =
-        com.brightbean.studio.infrastructure.provider.AuthResult(success = true)
-
     override fun getProfile(socialAccount: SocialAccount) = PlatformProfile(
         platformUserId = socialAccount.platformUserId,
         platformUsername = socialAccount.platformUsername,
@@ -263,16 +257,12 @@ class FakeFacebookProvider : SocialProvider {
         platformAvatarUrl = socialAccount.platformAvatarUrl,
     )
 
-    override fun publish(post: Post, socialAccount: SocialAccount) = PublishResult(
+    override fun publishPost(account: SocialAccount, content: com.brightbean.studio.infrastructure.provider.types.PublishContent) = PublishResult(
         success = true,
-        platformPostId = "fb_post_${post.id}",
-        postUrl = "https://facebook.com/post/${post.id}",
+        platformPostId = "fb_post_${account.id}",
+        postUrl = "https://facebook.com/post/${account.id}",
         publishedAt = Instant.now(),
     )
 
-    override fun getComments(postId: String): List<com.brightbean.studio.infrastructure.provider.Comment> = emptyList()
-
     override fun getInboxItems(socialAccount: SocialAccount): List<com.brightbean.studio.domain.model.InboxItem> = emptyList()
-
-    override fun getInsights(postId: String): com.brightbean.studio.infrastructure.provider.PostInsights? = null
 }

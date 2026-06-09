@@ -124,10 +124,6 @@ class ConnectFakeFacebookProvider : SocialProvider {
         )
     }
 
-    override fun refreshToken(credential: Credential): AuthResult {
-        return AuthResult(success = true, accessToken = "refreshed_token")
-    }
-
     override fun getProfile(socialAccount: SocialAccount): PlatformProfile {
         return PlatformProfile(
             platformUserId = "fb_user_456",
@@ -138,14 +134,10 @@ class ConnectFakeFacebookProvider : SocialProvider {
         )
     }
 
-    override fun publish(post: com.brightbean.studio.domain.model.Post, socialAccount: SocialAccount) =
+    override fun publishPost(account: SocialAccount, content: com.brightbean.studio.infrastructure.provider.types.PublishContent) =
         com.brightbean.studio.infrastructure.provider.PublishResult(success = true, platformPostId = "post_123")
 
-    override fun getComments(postId: String): List<com.brightbean.studio.infrastructure.provider.Comment> = emptyList()
-
     override fun getInboxItems(socialAccount: SocialAccount): List<com.brightbean.studio.domain.model.InboxItem> = emptyList()
-
-    override fun getInsights(postId: String): com.brightbean.studio.infrastructure.provider.PostInsights? = null
 }
 
 class ConnectFailingProvider : SocialProvider {
@@ -153,10 +145,6 @@ class ConnectFailingProvider : SocialProvider {
 
     override fun authenticate(credential: Credential): AuthResult {
         return AuthResult(success = false, errorMessage = "Invalid authorization code")
-    }
-
-    override fun refreshToken(credential: Credential): AuthResult {
-        return AuthResult(success = false)
     }
 
     override fun getProfile(socialAccount: SocialAccount): PlatformProfile {
@@ -167,14 +155,10 @@ class ConnectFailingProvider : SocialProvider {
         )
     }
 
-    override fun publish(post: com.brightbean.studio.domain.model.Post, socialAccount: SocialAccount) =
+    override fun publishPost(account: SocialAccount, content: com.brightbean.studio.infrastructure.provider.types.PublishContent) =
         com.brightbean.studio.infrastructure.provider.PublishResult(success = false)
 
-    override fun getComments(postId: String): List<com.brightbean.studio.infrastructure.provider.Comment> = emptyList()
-
     override fun getInboxItems(socialAccount: SocialAccount): List<com.brightbean.studio.domain.model.InboxItem> = emptyList()
-
-    override fun getInsights(postId: String): com.brightbean.studio.infrastructure.provider.PostInsights? = null
 }
 
 class ConnectInMemorySocialAccountRepository : SocialAccountRepository {

@@ -80,7 +80,7 @@ class ThreadsProvider : AbstractSocialProvider(
     }
 
     override fun getProfile(account: SocialAccount): PlatformProfile {
-        val accessToken = account.accessToken
+        val accessToken = account.metadata["access_token"]
             ?: return PlatformProfile(
                 platformUserId = account.platformUserId,
                 platformUsername = account.platformUsername,
@@ -106,7 +106,7 @@ class ThreadsProvider : AbstractSocialProvider(
     }
 
     override fun publishPost(account: SocialAccount, content: PublishContent): PublishResult {
-        val accessToken = account.accessToken
+        val accessToken = account.metadata["access_token"]
             ?: return PublishResult(success = false, errorMessage = "No access token")
 
         val userId = resolveUserId(account, content, accessToken)
@@ -210,7 +210,7 @@ class ThreadsProvider : AbstractSocialProvider(
     }
 
     override fun publishComment(account: SocialAccount, postId: String, comment: String): PublishResult {
-        val accessToken = account.accessToken
+        val accessToken = account.metadata["access_token"]
             ?: return PublishResult(success = false, errorMessage = "No access token")
 
         val meUrl = "$API_BASE/me?fields=id"
@@ -233,7 +233,7 @@ class ThreadsProvider : AbstractSocialProvider(
     }
 
     override fun getPostMetrics(account: SocialAccount, platformPostId: String): PostInsights? {
-        val accessToken = account.accessToken ?: return null
+        val accessToken = account.metadata["access_token"] ?: return null
         val url = "$API_BASE/$platformPostId/insights?metric=views,likes,replies,reposts,quotes"
         val data = httpGet(url, accessToken)
 

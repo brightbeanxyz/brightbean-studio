@@ -106,20 +106,13 @@ private class ReconnectStubProvider(
     override fun authenticate(credential: Credential): AuthResult =
         AuthResult(success = true, accessToken = "new_access_token", refreshToken = "new_refresh", expiresAt = System.currentTimeMillis() + 3600000)
 
-    override fun refreshToken(credential: Credential): AuthResult =
-        AuthResult(success = true, accessToken = "refreshed")
-
     override fun getProfile(socialAccount: SocialAccount): PlatformProfile =
         PlatformProfile(platformUserId = "123", platformUsername = "user", platformDisplayName = "User")
 
-    override fun publish(post: com.brightbean.studio.domain.model.Post, socialAccount: SocialAccount) =
+    override fun publishPost(account: SocialAccount, content: com.brightbean.studio.infrastructure.provider.types.PublishContent) =
         PublishResult(success = true)
 
-    override fun getComments(postId: String): List<Comment> = emptyList()
-
     override fun getInboxItems(socialAccount: SocialAccount): List<com.brightbean.studio.domain.model.InboxItem> = emptyList()
-
-    override fun getInsights(postId: String): PostInsights? = null
 }
 
 private class ReconnectFailingProvider(
@@ -129,20 +122,13 @@ private class ReconnectFailingProvider(
     override fun authenticate(credential: Credential): AuthResult =
         AuthResult(success = false, errorMessage = "Invalid code")
 
-    override fun refreshToken(credential: Credential): AuthResult =
-        AuthResult(success = false)
-
     override fun getProfile(socialAccount: SocialAccount): PlatformProfile =
         PlatformProfile(platformUserId = "123", platformUsername = "user", platformDisplayName = "User")
 
-    override fun publish(post: com.brightbean.studio.domain.model.Post, socialAccount: SocialAccount) =
+    override fun publishPost(account: SocialAccount, content: com.brightbean.studio.infrastructure.provider.types.PublishContent) =
         PublishResult(success = false)
 
-    override fun getComments(postId: String): List<Comment> = emptyList()
-
     override fun getInboxItems(socialAccount: SocialAccount): List<com.brightbean.studio.domain.model.InboxItem> = emptyList()
-
-    override fun getInsights(postId: String): PostInsights? = null
 }
 
 private class ReconnectInMemorySocialAccountRepository : SocialAccountRepository {

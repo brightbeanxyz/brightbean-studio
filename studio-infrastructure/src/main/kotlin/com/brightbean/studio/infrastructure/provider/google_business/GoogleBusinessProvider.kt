@@ -76,7 +76,7 @@ class GoogleBusinessProvider : AbstractSocialProvider(
     }
 
     override fun revokeToken(account: SocialAccount): Boolean {
-        val accessToken = account.accessToken ?: return false
+        val accessToken = account.metadata["access_token"] ?: return false
         return try {
             httpPostForm(REVOKE_URL, mapOf("token" to accessToken))
             true
@@ -104,7 +104,7 @@ class GoogleBusinessProvider : AbstractSocialProvider(
     }
 
     override fun getProfile(account: SocialAccount): PlatformProfile {
-        val accessToken = account.accessToken
+        val accessToken = account.metadata["access_token"]
             ?: return PlatformProfile(
                 platformUserId = account.platformUserId,
                 platformUsername = account.platformUsername,
@@ -146,7 +146,7 @@ class GoogleBusinessProvider : AbstractSocialProvider(
     }
 
     override fun publishPost(account: SocialAccount, content: PublishContent): PublishResult {
-        val accessToken = account.accessToken
+        val accessToken = account.metadata["access_token"]
             ?: return PublishResult(success = false, errorMessage = "No access token")
 
         if (content.text.length > maxCaptionLength) {
@@ -202,7 +202,7 @@ class GoogleBusinessProvider : AbstractSocialProvider(
     }
 
     override fun getPostMetrics(account: SocialAccount, platformPostId: String): PostInsights? {
-        val accessToken = account.accessToken ?: return null
+        val accessToken = account.metadata["access_token"] ?: return null
         val data = httpGet("$POSTS_API/$platformPostId", accessToken)
         val obj = data.asJsonObject
 
