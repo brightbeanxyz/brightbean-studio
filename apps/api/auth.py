@@ -320,8 +320,7 @@ def _resolve_oauth_actor(token: str) -> OAuthMcpActor | None:
         # WARNING: a valid, scoped, unexpired token whose user maps to no
         # workspace is the genuinely anomalous case operators want to see.
         LOG.warning(
-            "Bearer auth rejected: user %s has a valid OAuth token but no active "
-            "(non-archived) workspace membership.",
+            "Bearer auth rejected: user %s has a valid OAuth token but no active (non-archived) workspace membership.",
             tok.user_id,
         )
         return None
