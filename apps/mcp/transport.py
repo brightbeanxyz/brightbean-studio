@@ -136,6 +136,11 @@ METHODS = {
 # ---------------------------------------------------------------------------
 
 
+# The no-slash alias matters: the RFC 9728 metadata and the README both
+# advertise ``/api/v1/mcp``, and a bare ``@router.post("/")`` would leave that
+# URL to CommonMiddleware's APPEND_SLASH 301 — which HTTP clients follow as a
+# GET, killing the MCP handshake before the 401 challenge is ever issued.
+@router.post("", include_in_schema=False)
 @router.post(
     "/",
     summary="MCP Streamable HTTP endpoint (JSON-RPC over POST)",

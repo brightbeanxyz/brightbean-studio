@@ -121,6 +121,16 @@ class TestMcpOAuthChallenge:
         assert "resource_metadata=" in challenge
         assert "/.well-known/oauth-protected-resource/api/v1/mcp" in challenge
 
+    def test_unauthenticated_post_to_no_slash_url_advertises_oauth(self):
+        # The metadata's ``resource`` is ``/api/v1/mcp`` and Claude Desktop
+        # POSTs there verbatim. Without the no-slash route alias this answered
+        # 301 (APPEND_SLASH), the client re-issued the POST as GET, and the
+        # OAuth handshake never received its 401 challenge.
+        c = _SecureClient()
+        r = c.post("/api/v1/mcp", data=json.dumps(_rpc("initialize", {})), content_type="application/json")
+        assert r.status_code == 401
+        assert "resource_metadata=" in r.headers.get("WWW-Authenticate", "")
+
     def test_invalid_bearer_returns_401(self):
         c = _SecureClient(HTTP_AUTHORIZATION="Bearer not-a-real-token")
         r = c.post(MCP_URL, data=json.dumps(_rpc("ping")), content_type="application/json")

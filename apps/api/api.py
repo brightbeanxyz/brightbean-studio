@@ -108,8 +108,9 @@ def _http_error_handler(request: HttpRequest, exc: HttpError) -> HttpResponse:
 
 
 # Path of the MCP endpoint, used to scope the OAuth challenge below. The
-# router is mounted at ``/mcp`` under the ``/api/v1/`` prefix, and the
-# endpoint itself is ``POST /`` — so the resolved path is ``/api/v1/mcp/``.
+# router is mounted at ``/mcp`` under the ``/api/v1/`` prefix and registers
+# the endpoint at both ``""`` and ``"/"``, so it resolves at ``/api/v1/mcp``
+# (the advertised canonical form) and ``/api/v1/mcp/`` alike.
 _MCP_ENDPOINT_PATH = "/api/v1/mcp"
 _MCP_RESOURCE_METADATA_PATH = "/.well-known/oauth-protected-resource/api/v1/mcp"
 

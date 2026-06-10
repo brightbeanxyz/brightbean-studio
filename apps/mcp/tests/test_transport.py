@@ -41,6 +41,10 @@ class _SecureClient(Client):
 
 
 MCP_URL = "/api/v1/mcp/"
+# The no-slash form is what the RFC 9728 metadata advertises and what Claude
+# Desktop POSTs to; it must resolve directly (never via APPEND_SLASH's 301,
+# which clients follow as GET).
+MCP_URL_NO_SLASH = "/api/v1/mcp"
 
 
 def _rpc(method: str, params: dict | None = None, *, id_: int | str | None = 1) -> dict:
@@ -162,6 +166,32 @@ class TestMcpAuth:
         assert status == 200
         assert body["jsonrpc"] == "2.0"
         assert body["result"] == {}
+
+
+# ---------------------------------------------------------------------------
+# URL variants — regression for the Claude Desktop outage: a POST to the
+# advertised no-slash URL got a 301 from APPEND_SLASH, the client re-issued
+# it as GET, and the handshake died on a 405 before auth ever ran.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestMcpUrlVariants:
+    def test_post_to_no_slash_url_dispatches_without_redirect(self, client_with_token):
+        r = client_with_token.post(
+            MCP_URL_NO_SLASH,
+            data=json.dumps(_rpc("initialize", {"protocolVersion": "2025-03-26", "capabilities": {}})),
+            content_type="application/json",
+        )
+        assert r.status_code == 200
+        assert r.json()["result"]["serverInfo"]["name"] == "brightbean-studio"
+
+    def test_get_returns_405_on_both_variants(self, client_with_token):
+        # Streamable HTTP permits a plain 405 for GET (we offer no SSE
+        # stream); what it must never be is a redirect.
+        for url in (MCP_URL_NO_SLASH, MCP_URL):
+            r = client_with_token.get(url)
+            assert r.status_code == 405
 
 
 # ---------------------------------------------------------------------------
