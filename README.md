@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/brightbeanxyz-brightbean-studio-badge.png)](https://mseep.ai/app/brightbeanxyz-brightbean-studio)
+
 <p align="center">
   <a href="https://github.com/brightbeanxyz/brightbean-studio">
     <img src=".github/assets/brightbean-studio-logo.webp" alt="BrightBean Studio" width="280">
