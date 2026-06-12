@@ -737,6 +737,18 @@ span.flatpickr-weekday {
   outline-offset: 1px;
 }
 
+/* Select with a custom chevron inset from the edge (the native arrow hugs
+   the right border). Pair with the usual border/padding utility classes. */
+.bb-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2378716C' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 1rem 1rem;
+  padding-right: 2.5rem;
+}
+
 /* Toggle switch:
    <label class="bb-toggle"><input type="checkbox" …><span class="bb-toggle-track"></span></label> */
 .bb-toggle {
