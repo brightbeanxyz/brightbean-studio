@@ -330,7 +330,7 @@ class TikTokProvider(SocialProvider):
         return resp.json()
 
     def _build_post_info(self, content: PublishContent, privacy_level: str) -> dict:
-        post_info = {
+        post_info: dict[str, str | bool] = {
             "title": (content.title or content.text or "")[: self.max_caption_length],
             "privacy_level": privacy_level,
         }
