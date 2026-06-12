@@ -12,6 +12,12 @@
       "runtimeExecutable": "sh",
       "runtimeArgs": ["-c", "while true; do sleep 3600; done"],
       "port": 8000
+    },
+    {
+      "name": "django-dev",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["manage.py", "runserver", "8003", "--noreload"],
+      "port": 8003
     }
   ]
 }

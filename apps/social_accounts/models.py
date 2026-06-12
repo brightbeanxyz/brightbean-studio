@@ -93,6 +93,35 @@ class SocialAccount(models.Model):
             self.ConnectionStatus.ERROR,
         )
 
+    def refresh_oauth_token(self, provider) -> str:
+        """Refresh this account's OAuth access token via *provider* and persist it.
+
+        Returns the new access token. Propagates whatever the provider's
+        ``refresh_token`` raises so callers decide between degrading (publish
+        engine keeps the old token) and aborting (composer endpoints 502).
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        new_tokens = provider.refresh_token(self.oauth_refresh_token)
+        self.oauth_access_token = new_tokens.access_token
+        if new_tokens.refresh_token:
+            self.oauth_refresh_token = new_tokens.refresh_token
+        if new_tokens.expires_in:
+            self.token_expires_at = timezone.now() + timedelta(seconds=new_tokens.expires_in)
+        self.connection_status = self.ConnectionStatus.CONNECTED
+        self.save(
+            update_fields=[
+                "oauth_access_token",
+                "oauth_refresh_token",
+                "token_expires_at",
+                "connection_status",
+                "updated_at",
+            ]
+        )
+        return new_tokens.access_token
+
     # Platform character limits
     PLATFORM_CHAR_LIMITS = {
         "facebook": 63206,

@@ -3,7 +3,11 @@
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from providers.exceptions import APIError, PublishError
 from providers.tiktok import TikTokProvider
+from providers.types import PostType, PublishContent
 
 
 def _make_response(payload: dict) -> MagicMock:
@@ -389,3 +393,173 @@ class TestAccountMetricsPersistence:
             "TikTok must list one of the account-level growth metrics for "
             "follower_growth_metric to surface follower data in the UI header"
         )
+
+
+CREATOR_INFO_URL = "https://open.tiktokapis.com/v2/post/publish/creator_info/query/"
+VIDEO_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
+
+
+def _video_content(**extra) -> PublishContent:
+    return PublishContent(
+        text="Hello TikTok",
+        media_urls=["https://cdn.example.com/video.mp4"],
+        post_type=PostType.VIDEO,
+        extra=extra,
+    )
+
+
+def _creator_info_response(options: list[str]) -> MagicMock:
+    return _make_response(
+        {
+            "data": {
+                "creator_nickname": "janschmitz51",
+                "privacy_level_options": options,
+                "comment_disabled": False,
+                "duet_disabled": False,
+                "stitch_disabled": False,
+                "max_video_post_duration_sec": 600,
+            }
+        }
+    )
+
+
+def _init_response() -> MagicMock:
+    return _make_response({"data": {"publish_id": "v_pub_url~123"}})
+
+
+class TestPublishPost:
+    @patch.object(TikTokProvider, "_request")
+    def test_creator_info_queried_before_video_init(self, mock_request):
+        mock_request.side_effect = [
+            _creator_info_response(["PUBLIC_TO_EVERYONE", "SELF_ONLY"]),
+            _init_response(),
+        ]
+
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        result = provider.publish_post("tok", _video_content())
+
+        urls = [call.args[1] for call in mock_request.call_args_list]
+        assert urls == [CREATOR_INFO_URL, VIDEO_INIT_URL]
+        assert result.platform_post_id == "v_pub_url~123"
+
+    @patch.object(TikTokProvider, "_request")
+    def test_unaudited_options_block_public_post_before_init(self, mock_request):
+        # Unaudited apps only get SELF_ONLY back — a public post must fail
+        # fast with retryable=False, without ever hitting video/init.
+        mock_request.return_value = _creator_info_response(["SELF_ONLY"])
+
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        with pytest.raises(PublishError) as excinfo:
+            provider.publish_post("tok", _video_content())
+
+        assert excinfo.value.retryable is False
+        assert "audit" in str(excinfo.value)
+        assert "SELF_ONLY" in str(excinfo.value)
+        urls = [call.args[1] for call in mock_request.call_args_list]
+        assert VIDEO_INIT_URL not in urls
+
+    @patch.object(TikTokProvider, "_request")
+    def test_self_only_post_allowed_when_unaudited(self, mock_request):
+        mock_request.side_effect = [
+            _creator_info_response(["SELF_ONLY"]),
+            _init_response(),
+        ]
+
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        result = provider.publish_post("tok", _video_content(privacy_level="SELF_ONLY"))
+
+        assert result.platform_post_id == "v_pub_url~123"
+        init_call = mock_request.call_args_list[1]
+        assert init_call.kwargs["json"]["post_info"]["privacy_level"] == "SELF_ONLY"
+
+    @patch.object(TikTokProvider, "_request")
+    def test_creator_info_failure_does_not_block_publish(self, mock_request):
+        mock_request.side_effect = [
+            APIError("creator_info down", platform="TikTok", status_code=500),
+            _init_response(),
+        ]
+
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        result = provider.publish_post("tok", _video_content())
+
+        assert result.platform_post_id == "v_pub_url~123"
+        urls = [call.args[1] for call in mock_request.call_args_list]
+        assert urls == [CREATOR_INFO_URL, VIDEO_INIT_URL]
+
+    @patch.object(TikTokProvider, "_request")
+    def test_init_unaudited_error_becomes_non_retryable(self, mock_request):
+        mock_request.side_effect = [
+            _creator_info_response(["PUBLIC_TO_EVERYONE", "SELF_ONLY"]),
+            APIError(
+                "TikTok API error 403",
+                platform="TikTok",
+                status_code=403,
+                raw_response={
+                    "error": {
+                        "code": "unaudited_client_can_only_post_to_private_accounts",
+                        "message": "Please review our integration guidelines",
+                    }
+                },
+            ),
+        ]
+
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        with pytest.raises(PublishError) as excinfo:
+            provider.publish_post("tok", _video_content())
+
+        assert excinfo.value.retryable is False
+        assert "audit" in str(excinfo.value)
+
+    @patch.object(TikTokProvider, "_request")
+    def test_init_unknown_error_stays_retryable(self, mock_request):
+        original = APIError(
+            "TikTok API error 500",
+            platform="TikTok",
+            status_code=500,
+            raw_response={"error": {"code": "internal_error"}},
+        )
+        mock_request.side_effect = [
+            _creator_info_response(["PUBLIC_TO_EVERYONE"]),
+            original,
+        ]
+
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        with pytest.raises(APIError) as excinfo:
+            provider.publish_post("tok", _video_content())
+
+        assert excinfo.value is original
+        assert excinfo.value.retryable is True
+
+    @patch.object(TikTokProvider, "_request")
+    def test_optional_post_info_fields_forwarded(self, mock_request):
+        mock_request.side_effect = [
+            _creator_info_response(["PUBLIC_TO_EVERYONE"]),
+            _init_response(),
+        ]
+
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        provider.publish_post(
+            "tok",
+            _video_content(
+                disable_comment=True,
+                brand_content_toggle=True,
+                is_aigc=True,
+            ),
+        )
+
+        post_info = mock_request.call_args_list[1].kwargs["json"]["post_info"]
+        assert post_info["disable_comment"] is True
+        assert post_info["brand_content_toggle"] is True
+        assert post_info["is_aigc"] is True
+        # Fields the composer didn't set must not be sent at all.
+        assert "disable_duet" not in post_info
+        assert "brand_organic_toggle" not in post_info
+
+    @patch.object(TikTokProvider, "_request")
+    def test_invalid_privacy_level_rejected_without_requests(self, mock_request):
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        with pytest.raises(PublishError) as excinfo:
+            provider.publish_post("tok", _video_content(privacy_level="BOGUS"))
+
+        assert excinfo.value.retryable is False
+        mock_request.assert_not_called()

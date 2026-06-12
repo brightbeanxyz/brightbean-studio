@@ -254,7 +254,10 @@ class PublishEngine:
                 duration_ms=duration_ms,
             )
 
-            self._schedule_retry(platform_post, error_msg)
+            if getattr(e, "retryable", True):
+                self._schedule_retry(platform_post, error_msg)
+            else:
+                self._fail_permanently(platform_post, error_msg)
             return {"success": False, "error": error_msg}
 
     def _dispatch_to_provider(self, platform_post):
@@ -270,27 +273,13 @@ class PublishEngine:
         credentials = _resolve_publish_credentials(account)
         provider = get_provider(platform, credentials)
 
-        # Refresh token if expired or expiring soon (OAuth2 providers only)
+        # Refresh token if expired or expiring soon (OAuth2 providers only).
+        # Best-effort: on refresh failure we keep the old token and let the
+        # publish attempt surface the real error.
         access_token = account.oauth_access_token
         if account.token_expires_at and account.is_token_expiring_soon and provider.auth_type == AuthType.OAUTH2:
             try:
-                new_tokens = provider.refresh_token(account.oauth_refresh_token)
-                account.oauth_access_token = new_tokens.access_token
-                if new_tokens.refresh_token:
-                    account.oauth_refresh_token = new_tokens.refresh_token
-                if new_tokens.expires_in:
-                    account.token_expires_at = timezone.now() + timedelta(seconds=new_tokens.expires_in)
-                account.connection_status = account.ConnectionStatus.CONNECTED
-                account.save(
-                    update_fields=[
-                        "oauth_access_token",
-                        "oauth_refresh_token",
-                        "token_expires_at",
-                        "connection_status",
-                        "updated_at",
-                    ]
-                )
-                access_token = new_tokens.access_token
+                access_token = account.refresh_oauth_token(provider)
                 logger.info("Refreshed token for %s", account)
             except Exception:
                 logger.exception("Token refresh failed for %s", account)
@@ -473,18 +462,22 @@ class PublishEngine:
             return PostType.IMAGE
         return PostType.TEXT
 
+    def _fail_permanently(self, platform_post, error_msg, *, reason="non-retryable"):
+        """Mark a post FAILED with no further retries."""
+        platform_post.status = PlatformPost.Status.FAILED
+        platform_post.publish_error = error_msg
+        platform_post.save()
+        logger.warning(
+            "PlatformPost %s failed (%s): %s",
+            platform_post.id,
+            reason,
+            error_msg,
+        )
+
     def _schedule_retry(self, platform_post, error_msg):
         """Schedule a retry with exponential backoff."""
         if platform_post.retry_count >= MAX_RETRIES:
-            platform_post.status = PlatformPost.Status.FAILED
-            platform_post.publish_error = error_msg
-            platform_post.save()
-            logger.warning(
-                "PlatformPost %s failed after %d retries: %s",
-                platform_post.id,
-                MAX_RETRIES,
-                error_msg,
-            )
+            self._fail_permanently(platform_post, error_msg, reason=f"after {MAX_RETRIES} retries")
             return
 
         backoff_seconds = RETRY_BACKOFF[min(platform_post.retry_count, len(RETRY_BACKOFF) - 1)]

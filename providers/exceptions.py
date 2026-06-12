@@ -2,16 +2,22 @@
 
 
 class ProviderError(Exception):
-    """Base exception for all provider errors."""
+    """Base exception for all provider errors.
+
+    ``retryable=False`` marks the error as permanent: the publish engine
+    fails the post immediately instead of scheduling backoff retries.
+    """
 
     def __init__(
         self,
         message: str,
         platform: str = "",
         raw_response: dict | None = None,
+        retryable: bool = True,
     ):
         self.platform = platform
         self.raw_response = raw_response or {}
+        self.retryable = retryable
         super().__init__(message)
 
 

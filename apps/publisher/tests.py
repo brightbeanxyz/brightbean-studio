@@ -179,3 +179,62 @@ class DispatchExtraInjectionTest(SimpleTestCase):
 
         _access_token, content = mock_provider.publish_post.call_args.args
         self.assertNotIn("author", content.extra)
+
+
+class NonRetryableFailureTest(TestCase):
+    """_publish_platform_post must honor the exception's ``retryable`` flag."""
+
+    def setUp(self):
+        from apps.composer.models import PlatformPost, Post
+        from apps.organizations.models import Organization
+        from apps.social_accounts.models import SocialAccount
+        from apps.workspaces.models import Workspace
+
+        self.org = Organization.objects.create(name="Org")
+        self.workspace = Workspace.objects.create(organization=self.org, name="WS")
+        self.account = SocialAccount.objects.create(
+            workspace=self.workspace,
+            platform="tiktok",
+            account_platform_id="tt-1",
+            account_name="janschmitz51",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        self.post = Post.objects.create(workspace=self.workspace, caption="hi")
+        self.platform_post = PlatformPost.objects.create(
+            post=self.post,
+            social_account=self.account,
+            status=PlatformPost.Status.PUBLISHING,
+        )
+
+    def test_non_retryable_error_fails_immediately(self):
+        from apps.composer.models import PlatformPost
+        from providers.exceptions import PublishError
+
+        engine = PublishEngine()
+        error = PublishError("TikTok rejected the post: audit pending", platform="TikTok", retryable=False)
+        with patch.object(PublishEngine, "_dispatch_to_provider", side_effect=error):
+            result = engine._publish_platform_post(self.platform_post)
+
+        self.assertFalse(result["success"])
+        self.platform_post.refresh_from_db()
+        self.assertEqual(self.platform_post.status, PlatformPost.Status.FAILED)
+        self.assertEqual(self.platform_post.retry_count, 0)
+        self.assertIsNone(self.platform_post.next_retry_at)
+        self.assertIn("audit pending", self.platform_post.publish_error)
+        self.assertEqual(PublishLog.objects.filter(platform_post=self.platform_post).count(), 1)
+
+    def test_retryable_error_schedules_backoff_retry(self):
+        from apps.composer.models import PlatformPost
+        from providers.exceptions import PublishError
+
+        engine = PublishEngine()
+        error = PublishError("transient", platform="TikTok")
+        with patch.object(PublishEngine, "_dispatch_to_provider", side_effect=error):
+            result = engine._publish_platform_post(self.platform_post)
+
+        self.assertFalse(result["success"])
+        self.platform_post.refresh_from_db()
+        self.assertEqual(self.platform_post.status, PlatformPost.Status.SCHEDULED)
+        self.assertEqual(self.platform_post.retry_count, 1)
+        self.assertIsNotNone(self.platform_post.next_retry_at)
+        self.assertEqual(PublishLog.objects.filter(platform_post=self.platform_post).count(), 1)

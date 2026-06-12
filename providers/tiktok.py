@@ -6,10 +6,11 @@ import contextlib
 import logging
 import os
 from datetime import datetime
+from typing import NoReturn
 from urllib.parse import urlencode
 
 from .base import SocialProvider
-from .exceptions import OAuthError, PublishError
+from .exceptions import APIError, OAuthError, PublishError
 from .types import (
     AccountMetrics,
     AccountProfile,
@@ -37,6 +38,38 @@ VALID_PRIVACY_LEVELS = frozenset(
         "FOLLOWER_OF_CREATOR",
         "SELF_ONLY",
     }
+)
+
+# Error codes from /v2/post/publish/video/init/ that no amount of retrying
+# can fix (app audit status, bad params, missing scopes). The engine fails
+# these immediately instead of burning the backoff schedule.
+PERMANENT_PUBLISH_ERROR_CODES = frozenset(
+    {
+        "unaudited_client_can_only_post_to_private_accounts",
+        "privacy_level_option_mismatch",
+        "invalid_param",
+        "scope_not_authorized",
+        "scope_permission_missed",
+        "url_ownership_unverified",
+    }
+)
+
+UNAUDITED_CLIENT_HINT = (
+    "The TikTok app has not passed TikTok's content-posting audit yet. "
+    "Until TikTok approves the audit (developer portal → Content Posting API "
+    "→ apply for an audit), videos can only be published as private "
+    "(SELF_ONLY). Set this post's TikTok privacy to 'Only you' to publish now."
+)
+
+# Optional post_info fields the composer may set via platform_extra.
+# https://developers.tiktok.com/doc/content-posting-api-reference-direct-post
+OPTIONAL_POST_INFO_FIELDS = (
+    "disable_comment",
+    "disable_duet",
+    "disable_stitch",
+    "brand_content_toggle",
+    "brand_organic_toggle",
+    "is_aigc",
 )
 
 # TikTok FILE_UPLOAD's per-chunk limit is 64 MB decimal (not 64 MiB).
@@ -203,6 +236,25 @@ class TikTokProvider(SocialProvider):
     # Publishing
     # ------------------------------------------------------------------
 
+    def query_creator_info(self, access_token: str) -> dict:
+        """Query the creator's current posting capabilities.
+
+        Returns the ``data`` block of ``/v2/post/publish/creator_info/query/``:
+        ``creator_nickname``, ``privacy_level_options``, ``comment_disabled``,
+        ``duet_disabled``, ``stitch_disabled``, ``max_video_post_duration_sec``.
+
+        TikTok's integration guidelines require fetching this fresh at posting
+        time (the allowed privacy levels depend on the app's audit status and
+        the creator's account settings), so the result is never cached.
+        """
+        resp = self._request(
+            "POST",
+            f"{API_BASE}/post/publish/creator_info/query/",
+            access_token=access_token,
+            json={},
+        )
+        return resp.json().get("data", {}) or {}
+
     def publish_post(self, access_token: str, content: PublishContent) -> PublishResult:
         if content.post_type != PostType.VIDEO:
             raise PublishError(
@@ -215,7 +267,10 @@ class TikTokProvider(SocialProvider):
             raise PublishError(
                 f"Invalid privacy_level '{privacy_level}'. Must be one of {sorted(VALID_PRIVACY_LEVELS)}",
                 platform=self.platform_name,
+                retryable=False,
             )
+
+        self._check_creator_privacy_options(access_token, privacy_level)
 
         # Prefer FILE_UPLOAD: PULL_FROM_URL requires the source domain to be
         # verified with TikTok, which presigned S3/R2 URLs can't satisfy.
@@ -226,7 +281,78 @@ class TikTokProvider(SocialProvider):
         raise PublishError(
             "No video source provided (media_files or media_urls required)",
             platform=self.platform_name,
+            retryable=False,
         )
+
+    def _check_creator_privacy_options(self, access_token: str, privacy_level: str) -> None:
+        """Validate the requested privacy level against creator_info.
+
+        A creator_info failure is logged and ignored — a transient outage of
+        that endpoint must not block publishing; the video init call surfaces
+        any real error and :meth:`_raise_classified_publish_error` handles it.
+        """
+        try:
+            info = self.query_creator_info(access_token)
+        except Exception:
+            logger.warning("TikTok creator_info query failed; proceeding with publish", exc_info=True)
+            return
+
+        options = info.get("privacy_level_options") or []
+        if options and privacy_level not in options:
+            message = (
+                f"TikTok does not allow privacy level '{privacy_level}' for this "
+                f"account (allowed: {', '.join(options)})."
+            )
+            if options == ["SELF_ONLY"]:
+                message = f"{message} {UNAUDITED_CLIENT_HINT}"
+            raise PublishError(
+                message,
+                platform=self.platform_name,
+                raw_response=info,
+                retryable=False,
+            )
+
+    def _init_video_publish(self, access_token: str, payload: dict) -> dict:
+        """POST to /post/publish/video/init/ and return the parsed body.
+
+        Permanent TikTok error codes are re-raised as non-retryable
+        PublishErrors via :meth:`_raise_classified_publish_error`.
+        """
+        try:
+            resp = self._request(
+                "POST",
+                f"{API_BASE}/post/publish/video/init/",
+                access_token=access_token,
+                json=payload,
+            )
+        except APIError as exc:
+            self._raise_classified_publish_error(exc)
+        return resp.json()
+
+    def _build_post_info(self, content: PublishContent, privacy_level: str) -> dict:
+        post_info = {
+            "title": (content.title or content.text or "")[: self.max_caption_length],
+            "privacy_level": privacy_level,
+        }
+        for field in OPTIONAL_POST_INFO_FIELDS:
+            if field in content.extra:
+                post_info[field] = bool(content.extra[field])
+        return post_info
+
+    def _raise_classified_publish_error(self, exc: APIError) -> NoReturn:
+        """Re-raise an APIError from video init, marking permanent codes non-retryable."""
+        code = ((exc.raw_response or {}).get("error") or {}).get("code", "")
+        if code not in PERMANENT_PUBLISH_ERROR_CODES:
+            raise exc
+        message = f"TikTok rejected the post ({code}): {exc}"
+        if code == "unaudited_client_can_only_post_to_private_accounts":
+            message = f"TikTok rejected the post: {UNAUDITED_CLIENT_HINT}"
+        raise PublishError(
+            message,
+            platform=self.platform_name,
+            raw_response=exc.raw_response,
+            retryable=False,
+        ) from exc
 
     def _publish_pull_from_url(
         self,
@@ -236,22 +362,13 @@ class TikTokProvider(SocialProvider):
     ) -> PublishResult:
         """Publish using PULL_FROM_URL source."""
         payload = {
-            "post_info": {
-                "title": (content.title or content.text or "")[: self.max_caption_length],
-                "privacy_level": privacy_level,
-            },
+            "post_info": self._build_post_info(content, privacy_level),
             "source_info": {
                 "source": "PULL_FROM_URL",
                 "video_url": content.media_urls[0],
             },
         }
-        resp = self._request(
-            "POST",
-            f"{API_BASE}/post/publish/video/init/",
-            access_token=access_token,
-            json=payload,
-        )
-        body = resp.json()
+        body = self._init_video_publish(access_token, payload)
         publish_id = body.get("data", {}).get("publish_id", "")
         return PublishResult(
             platform_post_id=publish_id,
@@ -280,10 +397,7 @@ class TikTokProvider(SocialProvider):
 
         # Step 1: initialize upload with size metadata TikTok requires
         payload = {
-            "post_info": {
-                "title": (content.title or content.text or "")[: self.max_caption_length],
-                "privacy_level": privacy_level,
-            },
+            "post_info": self._build_post_info(content, privacy_level),
             "source_info": {
                 "source": "FILE_UPLOAD",
                 "video_size": video_size,
@@ -291,13 +405,7 @@ class TikTokProvider(SocialProvider):
                 "total_chunk_count": 1,
             },
         }
-        init_resp = self._request(
-            "POST",
-            f"{API_BASE}/post/publish/video/init/",
-            access_token=access_token,
-            json=payload,
-        )
-        init_body = init_resp.json()
+        init_body = self._init_video_publish(access_token, payload)
         upload_url = init_body.get("data", {}).get("upload_url")
         publish_id = init_body.get("data", {}).get("publish_id", "")
 

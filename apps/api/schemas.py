@@ -224,6 +224,7 @@ class PlatformPostSummary(Schema):
     scheduled_at: dt.datetime | None
     published_at: dt.datetime | None
     platform_post_id: str = ""
+    publish_error: str = ""
 
     @field_serializer("scheduled_at", "published_at")
     def _serialize_dt(self, value: dt.datetime | None) -> str | None:
@@ -239,6 +240,7 @@ class PlatformPostSummary(Schema):
             scheduled_at=pp.scheduled_at,
             published_at=pp.published_at,
             platform_post_id=pp.platform_post_id or "",
+            publish_error=pp.publish_error or "",
         )
 
 

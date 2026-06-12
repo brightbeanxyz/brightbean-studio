@@ -342,6 +342,13 @@ class PlatformPost(models.Model):
         PUBLISHED = "published", "Published"
         FAILED = "failed", "Failed"
 
+    # Statuses that must never be removed by *accidental* deletion paths
+    # (composer account deselection, autosave sync): a published or
+    # mid-publish row is history, and deleting it cascades away its
+    # PublishLog records. Explicit deletion (the post delete action) is the
+    # user's call and intentionally bypasses this.
+    PROTECTED_STATUSES = (Status.PUBLISHED, Status.PUBLISHING)
+
     # Valid state transitions (from → set of allowed targets). Mirrors the old
     # Post-level state machine minus ``partially_published`` — that concept
     # only applies at the aggregate/Post level and is produced by

@@ -11,7 +11,7 @@ import httpx
 from dateutil import parser as date_parser
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import PermissionDenied, SuspiciousOperation, ValidationError
 from django.db import models, transaction
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -30,6 +30,7 @@ from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
+from providers.tiktok import VALID_PRIVACY_LEVELS as TIKTOK_PRIVACY_LEVELS
 
 from .forms import ContentCategoryForm, PostForm
 from .models import (
@@ -63,6 +64,64 @@ def _get_workspace(request, workspace_id):
     return workspace
 
 
+def _is_valid_uuid(value):
+    try:
+        uuid.UUID(value)
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
+def _parse_selected_account_ids(raw):
+    """Split a comma-separated ``selected_accounts`` value into account IDs.
+
+    Non-UUID entries are dropped: they can only come from a crafted or
+    corrupted request, and letting them reach a UUIDField lookup raises
+    ValidationError (an unhandled 500) instead of being ignored.
+    """
+    return [s.strip() for s in (raw or "").split(",") if s.strip() and _is_valid_uuid(s.strip())]
+
+
+def _get_account_scope(request):
+    """Return the validated ``account_scope`` POST value, or ``None`` when unscoped.
+
+    The hidden input is server-rendered from a UUID-validated ``?account=``
+    param, so a malformed value means a crafted or corrupted request —
+    reject it outright (HTTP 400) rather than guessing which rows to touch.
+    """
+    scope = request.POST.get("account_scope", "").strip()
+    if not scope:
+        return None
+    if not _is_valid_uuid(scope):
+        raise SuspiciousOperation("Malformed account_scope.")
+    return scope
+
+
+def _remove_deselected_platform_posts(request, post, selected_ids):
+    """Delete PlatformPosts the user deselected in the composer form.
+
+    When the composer was opened scoped to a single account
+    (``?account=`` → hidden ``account_scope`` input), the form only renders
+    that account, so ``selected_ids`` is NOT the complete desired set —
+    restrict deletion to the scoped account to keep siblings intact.
+    Published/publishing rows are never deleted by deselection (explicit
+    post deletion remains the user's call — see PlatformPost.PROTECTED_STATUSES).
+    """
+    qs = post.platform_posts.exclude(social_account_id__in=selected_ids)
+    scope = _get_account_scope(request)
+    if scope:
+        qs = qs.filter(social_account_id=scope)
+    qs.exclude(status__in=PlatformPost.PROTECTED_STATUSES).delete()
+
+
+def _scoped_platform_post_ids(request, post):
+    """PlatformPost IDs inside the composer's ``account_scope``, or ``None`` when unscoped."""
+    scope = _get_account_scope(request)
+    if not scope:
+        return None
+    return list(post.platform_posts.filter(social_account_id=scope).values_list("id", flat=True))
+
+
 def _sync_platform_posts(request, post, workspace, initial_status=None):
     """Sync platform post selections from form data.
 
@@ -71,9 +130,8 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
     ``"pending_review"``). Existing rows are not touched here — call
     ``_transition_post_children`` separately if you want to move them.
     """
-    selected_ids_str = request.POST.get("selected_accounts", "")
-    selected_ids = [s.strip() for s in selected_ids_str.split(",") if s.strip()]
-    post.platform_posts.exclude(social_account_id__in=selected_ids).delete()
+    selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
+    _remove_deselected_platform_posts(request, post, selected_ids)
     for acc_id in selected_ids:
         try:
             account = SocialAccount.objects.get(id=acc_id, workspace=workspace)
@@ -118,6 +176,26 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
                 "show_similar_products": request.POST.get(f"pin_show_similar_{acc_id}") == "true",
                 "cover_image_asset_id": request.POST.get(f"pin_cover_image_asset_id_{acc_id}", "").strip() or None,
             }
+
+        elif account.platform == "tiktok" and f"tiktok_privacy_level_{acc_id}" in request.POST:
+            # Only rebuild extras when the TikTok panel was part of the form,
+            # so non-composer saves can't wipe a previously chosen privacy level.
+            privacy = request.POST.get(f"tiktok_privacy_level_{acc_id}", "").strip()
+            if privacy not in TIKTOK_PRIVACY_LEVELS:
+                # An empty/invalid submit (required-validation bypassed) must
+                # not wipe a previously saved choice.
+                privacy = (pp.platform_extra or {}).get("privacy_level", "")
+            extra = {
+                "disable_comment": request.POST.get(f"tiktok_allow_comment_{acc_id}") != "true",
+                "disable_duet": request.POST.get(f"tiktok_allow_duet_{acc_id}") != "true",
+                "disable_stitch": request.POST.get(f"tiktok_allow_stitch_{acc_id}") != "true",
+                "brand_organic_toggle": request.POST.get(f"tiktok_brand_organic_{acc_id}") == "true",
+                "brand_content_toggle": request.POST.get(f"tiktok_brand_content_{acc_id}") == "true",
+                "is_aigc": request.POST.get(f"tiktok_is_aigc_{acc_id}") == "true",
+            }
+            if privacy:
+                extra["privacy_level"] = privacy
+            pp.platform_extra = extra
 
         pp.save()
 
@@ -174,8 +252,7 @@ def _resolve_queues_for_post(queue_id, workspace, post_data):
         q = Queue.objects.filter(id=queue_id, workspace=workspace, is_active=True).first()
         return [q] if q else []
 
-    selected_raw = post_data.get("selected_accounts", "") or ""
-    account_ids = [a.strip() for a in selected_raw.split(",") if a.strip()]
+    account_ids = _parse_selected_account_ids(post_data.get("selected_accounts", ""))
     if not account_ids:
         return []
 
@@ -265,6 +342,14 @@ def compose(request, workspace_id, post_id=None):
     """Render the full-page composer for creating or editing a post."""
     workspace = _get_workspace(request, workspace_id)
 
+    # ?account= scopes the composer to one connected account (calendar links).
+    # Validate it up front: a malformed value must behave as "unscoped" rather
+    # than leak into UUID lookups (ValidationError → 500) or the hidden
+    # account_scope input the save endpoints trust.
+    account_filter = request.GET.get("account", "").strip()
+    if account_filter and not _is_valid_uuid(account_filter):
+        account_filter = ""
+
     # Load existing post or prepare a blank one
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
@@ -282,15 +367,16 @@ def compose(request, workspace_id, post_id=None):
             local_dt = post.scheduled_at.astimezone(tz)
             form.initial["scheduled_date"] = local_dt.strftime("%Y-%m-%d")
             form.initial["scheduled_time"] = local_dt.strftime("%H:%M")
-        _acct_filter = request.GET.get("account")
-        if _acct_filter:
-            selected_account_ids = list(
-                post.platform_posts.filter(social_account_id=_acct_filter).values_list("social_account_id", flat=True)
-            )
+        # One fetch serves selected ids, extras, and the status checks below.
+        platform_post_list = list(post.platform_posts.select_related("social_account"))
+        if account_filter:
+            selected_account_ids = [
+                pp.social_account_id for pp in platform_post_list if str(pp.social_account_id) == account_filter
+            ]
         else:
-            selected_account_ids = list(post.platform_posts.values_list("social_account_id", flat=True))
+            selected_account_ids = [pp.social_account_id for pp in platform_post_list]
         media_attachments = post.media_attachments.select_related("media_asset").all()
-        platform_extras = {str(pp.social_account_id): (pp.platform_extra or {}) for pp in post.platform_posts.all()}
+        platform_extras = {str(pp.social_account_id): (pp.platform_extra or {}) for pp in platform_post_list}
         template_data = None
     else:
         post = None
@@ -317,6 +403,7 @@ def compose(request, workspace_id, post_id=None):
         if template_data and template_data.get("caption"):
             initial["caption"] = template_data["caption"]
         form = PostForm(initial=initial)
+        platform_post_list = []
         selected_account_ids = []
         media_attachments = []
         platform_extras = {}
@@ -340,7 +427,6 @@ def compose(request, workspace_id, post_id=None):
     )
 
     # When opening from calendar with a specific account, show only that account
-    account_filter = request.GET.get("account")
     if account_filter and post_id:
         social_accounts = social_accounts.filter(id=account_filter)
 
@@ -381,9 +467,7 @@ def compose(request, workspace_id, post_id=None):
     # Approval workflow context
     workflow_mode = workspace.approval_workflow_mode
     show_submit_button = workflow_mode != "none"
-    show_resubmit_button = (
-        post is not None and post.platform_posts.filter(status__in=("changes_requested", "rejected")).exists()
-    )
+    show_resubmit_button = any(pp.status in ("changes_requested", "rejected") for pp in platform_post_list)
 
     # Approval history and comments for existing posts
     approval_history = []
@@ -398,6 +482,12 @@ def compose(request, workspace_id, post_id=None):
 
     # Workspace tags for the tag dropdown
     all_tags = Tag.objects.for_workspace(workspace.id)
+
+    # Failed platform posts with an error message — shown as a banner so the
+    # user can see why a publish failed before retrying.
+    failed_platform_posts = [
+        pp for pp in platform_post_list if pp.status == PlatformPost.Status.FAILED and pp.publish_error
+    ]
 
     # Build media_items for the initial preview render
     media_items = []
@@ -471,6 +561,10 @@ def compose(request, workspace_id, post_id=None):
         "post_comments": post_comments,
         "pending_assets": pending_assets,
         "all_tags": all_tags,
+        # When opened scoped to one account (?account=), the form only renders
+        # that account — the save endpoints use this to leave siblings alone.
+        "account_scope": account_filter if (post_id and account_filter) else "",
+        "failed_platform_posts": failed_platform_posts,
     }
     return render(request, "composer/compose.html", context)
 
@@ -606,7 +700,7 @@ def save_post(request, workspace_id, post_id=None):
         if floor_date:
             _reassign_queue_slots_from_floor(queues, post, floor_date, workspace)
         # Transition every child whose scheduled_at was filled in to "scheduled".
-        _transition_post_children(post, "scheduled")
+        _transition_post_children(post, "scheduled", only=_scoped_platform_post_ids(request, post))
         _save_version(post, request.user)
         if request.htmx:
             return HttpResponse(
@@ -628,7 +722,7 @@ def save_post(request, workspace_id, post_id=None):
         _sync_platform_posts(request, post, workspace, initial_status="draft")
         for q in queues:
             add_to_queue(post, q, priority=True)
-        _transition_post_children(post, "scheduled")
+        _transition_post_children(post, "scheduled", only=_scoped_platform_post_ids(request, post))
         _save_version(post, request.user)
         if request.htmx:
             return HttpResponse(
@@ -737,15 +831,21 @@ def save_post(request, workspace_id, post_id=None):
     _sync_platform_posts(request, post, workspace, initial_status=initial_status)
 
     # Propagate manually-chosen schedule/publish_now datetimes to every
-    # PlatformPost now that they exist.
+    # PlatformPost now that they exist — except published/publishing rows
+    # (their schedule is history) and, in scoped mode, siblings outside the
+    # ``?account=`` scope.
+    scoped_ids = _scoped_platform_post_ids(request, post)
     propagate_dt = getattr(post, "_schedule_propagate_dt", None)
     if propagate_dt is not None:
-        post.platform_posts.update(scheduled_at=propagate_dt)
+        propagate_qs = post.platform_posts.exclude(status__in=PlatformPost.PROTECTED_STATUSES)
+        if scoped_ids is not None:
+            propagate_qs = propagate_qs.filter(id__in=scoped_ids)
+        propagate_qs.update(scheduled_at=propagate_dt)
 
     # Move existing children to the requested target state (no-op for
     # save_draft — children that are already mid-workflow stay put).
     if pending_target:
-        _transition_post_children(post, pending_target)
+        _transition_post_children(post, pending_target, only=scoped_ids)
 
     # Save version
     _save_version(post, request.user)
@@ -873,9 +973,8 @@ def autosave(request, workspace_id, post_id=None):
             del request.session[session_key]
 
     # Sync platform selections
-    selected_ids_str = request.POST.get("selected_accounts", "")
-    selected_ids = [s.strip() for s in selected_ids_str.split(",") if s.strip()]
-    post.platform_posts.exclude(social_account_id__in=selected_ids).delete()
+    selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
+    _remove_deselected_platform_posts(request, post, selected_ids)
     for acc_id in selected_ids:
         PlatformPost.objects.get_or_create(
             post=post,
@@ -900,8 +999,7 @@ def preview(request, workspace_id):
     title = request.GET.get("title", "")
     caption = request.GET.get("caption", "")
     first_comment = request.GET.get("first_comment", "")
-    selected_ids_str = request.GET.get("selected_accounts", "")
-    selected_ids = [s.strip() for s in selected_ids_str.split(",") if s.strip()]
+    selected_ids = _parse_selected_account_ids(request.GET.get("selected_accounts", ""))
 
     # Build preview data per platform
     previews = []
@@ -1092,25 +1190,7 @@ def pinterest_boards(request, workspace_id, account_id):
     access_token = account.oauth_access_token
     if account.token_expires_at and account.is_token_expiring_soon:
         try:
-            new_tokens = provider.refresh_token(account.oauth_refresh_token)
-            account.oauth_access_token = new_tokens.access_token
-            if new_tokens.refresh_token:
-                account.oauth_refresh_token = new_tokens.refresh_token
-            if new_tokens.expires_in:
-                from datetime import timedelta
-
-                account.token_expires_at = timezone.now() + timedelta(seconds=new_tokens.expires_in)
-            account.connection_status = account.ConnectionStatus.CONNECTED
-            account.save(
-                update_fields=[
-                    "oauth_access_token",
-                    "oauth_refresh_token",
-                    "token_expires_at",
-                    "connection_status",
-                    "updated_at",
-                ]
-            )
-            access_token = new_tokens.access_token
+            access_token = account.refresh_oauth_token(provider)
         except Exception:
             return JsonResponse({"error": "Token refresh failed"}, status=502)
 
@@ -1120,6 +1200,49 @@ def pinterest_boards(request, workspace_id, account_id):
         return JsonResponse({"error": "Failed to fetch boards"}, status=502)
 
     return JsonResponse({"boards": [{"id": b.get("id"), "name": b.get("name")} for b in boards]})
+
+
+@login_required
+@require_GET
+def tiktok_creator_info(request, workspace_id, account_id):
+    """Fetch TikTok creator info for the composer's TikTok settings panel.
+
+    TikTok's integration guidelines require querying this fresh before each
+    post: the allowed privacy levels depend on the app's audit status and the
+    creator's account settings.
+    """
+    workspace = _get_workspace(request, workspace_id)
+    account = get_object_or_404(SocialAccount, id=account_id, workspace=workspace, platform="tiktok")
+
+    from apps.credentials.models import resolve_platform_credentials
+    from providers import get_provider
+
+    credentials = resolve_platform_credentials("tiktok", workspace.organization_id)
+    provider = get_provider("tiktok", credentials)
+
+    # Refresh token if expiring
+    access_token = account.oauth_access_token
+    if account.token_expires_at and account.is_token_expiring_soon:
+        try:
+            access_token = account.refresh_oauth_token(provider)
+        except Exception:
+            return JsonResponse({"privacy_level_options": [], "error": "Token refresh failed"}, status=502)
+
+    try:
+        info = provider.query_creator_info(access_token)
+    except Exception:
+        return JsonResponse({"privacy_level_options": [], "error": "Failed to fetch creator info"}, status=502)
+
+    return JsonResponse(
+        {
+            "creator_nickname": info.get("creator_nickname", ""),
+            "privacy_level_options": info.get("privacy_level_options") or [],
+            "comment_disabled": bool(info.get("comment_disabled")),
+            "duet_disabled": bool(info.get("duet_disabled")),
+            "stitch_disabled": bool(info.get("stitch_disabled")),
+            "max_video_post_duration_sec": info.get("max_video_post_duration_sec"),
+        }
+    )
 
 
 @login_required
