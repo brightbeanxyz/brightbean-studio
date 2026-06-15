@@ -279,3 +279,60 @@ class MediaAssetVersion(models.Model):
     @property
     def duration_seconds(self):
         return self.duration
+
+
+class PendingUpload(models.Model):
+    """A presigned direct-to-storage upload awaiting server-side finalization.
+
+    Created by the MCP ``request_media_upload`` tool (which presigns a POST for
+    ``storage_key``) and consumed by ``finalize_media_upload``. The row binds the
+    server-chosen key to one workspace + user so a finalize call can't register
+    an arbitrary or cross-tenant object, and it carries the idempotency state
+    (``finalized_at`` + ``media_asset``) that a rowless OAuth caller can't get
+    from the REST ``IdempotencyRecord`` path.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.CASCADE,
+        related_name="pending_uploads",
+    )
+    workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        on_delete=models.CASCADE,
+        related_name="pending_uploads",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pending_uploads",
+    )
+    # The exact key we presigned. Unique so a key is issued — and finalized — once.
+    storage_key = models.CharField(max_length=1024, unique=True)
+    declared_content_type = models.CharField(max_length=100, blank=True, default="")
+    declared_filename = models.CharField(max_length=255)
+    # Edge size cap baked into the presigned POST; NOT trusted for the asset —
+    # finalize re-derives the real size from the stored object.
+    max_bytes = models.PositiveBigIntegerField()
+    expires_at = models.DateTimeField()
+    finalized_at = models.DateTimeField(null=True, blank=True)
+    media_asset = models.ForeignKey(
+        MediaAsset,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "media_library_pending_upload"
+        indexes = [
+            models.Index(fields=["expires_at", "finalized_at"]),
+        ]
+
+    def __str__(self):
+        return f"PendingUpload {self.id} -> {self.storage_key}"

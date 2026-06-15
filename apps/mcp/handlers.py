@@ -76,6 +76,33 @@ def _resolve_allowed_account(api_key, social_account_id_str: str) -> SocialAccou
     return SocialAccount.objects.get(id=sa_id)
 
 
+def _resolve_media_folder(workspace, args: dict):
+    """Resolve an optional ``folder_id`` arg to a MediaFolder in the workspace's org.
+
+    Shared by the upload tools so they scope folders identically.
+    """
+    folder_id_raw = args.get("folder_id")
+    if not folder_id_raw:
+        return None
+    from apps.media_library.models import MediaFolder
+
+    try:
+        return MediaFolder.objects.get(
+            id=_parse_uuid(folder_id_raw, "folder_id"),
+            organization=workspace.organization,
+        )
+    except MediaFolder.DoesNotExist as exc:
+        raise JsonRpcError(INVALID_PARAMS, "folder_id not found in this organization") from exc
+
+
+def _parse_media_tags(args: dict) -> list:
+    """Validate an optional ``tags`` arg as a list of strings."""
+    tags = args.get("tags") or []
+    if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+        raise JsonRpcError(INVALID_PARAMS, "tags must be a list of strings")
+    return tags
+
+
 def _serialize_post(post: Post) -> dict:
     """Serialize a Post for an MCP tool response.
 
@@ -646,22 +673,8 @@ def _upload_media(args: dict, context: dict[str, Any]) -> dict:
 
     api_key = context["api_key"]
     workspace = api_key.workspace
-    folder = None
-    folder_id_raw = args.get("folder_id")
-    if folder_id_raw:
-        from apps.media_library.models import MediaFolder
-
-        try:
-            folder = MediaFolder.objects.get(
-                id=_parse_uuid(folder_id_raw, "folder_id"),
-                organization=workspace.organization,
-            )
-        except MediaFolder.DoesNotExist as exc:
-            raise JsonRpcError(INVALID_PARAMS, "folder_id not found in this organization") from exc
-
-    tags = args.get("tags") or []
-    if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
-        raise JsonRpcError(INVALID_PARAMS, "tags must be a list of strings")
+    folder = _resolve_media_folder(workspace, args)
+    tags = _parse_media_tags(args)
 
     try:
         asset = media_create_asset(
@@ -717,6 +730,212 @@ register_tool(
             "additionalProperties": False,
         },
         handler=_upload_media,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# Tools: request_media_upload / finalize_media_upload (presigned direct-to-R2)
+# ---------------------------------------------------------------------------
+#
+# Large media (videos especially) can't ride a base64 JSON-RPC envelope, so the
+# base64 upload_media above caps at 1 MB. These two tools let an OAuth caller
+# upload large files entirely over MCP — no REST API key needed: request a
+# presigned POST, upload the bytes straight to object storage, then finalize so
+# the server validates the stored object and registers the asset. Because upload
+# and the later create_draft both ride the same OAuth connection, they resolve
+# the same workspace — the media is always found.
+
+_MCP_PRESIGN_LOCAL_MODE_MSG = (
+    "Presigned upload requires S3/R2 storage. In local mode use upload_media "
+    "(base64, ≤1 MB) or POST /api/v1/media/ (multipart)."
+)
+
+
+def _request_media_upload(args: dict, context: dict[str, Any]) -> dict:
+    from apps.media_library.services import create_pending_upload
+    from apps.media_library.storage import is_s3_backend
+    from apps.media_library.validators import ALL_ALLOWED_MIMES
+
+    _require_perm(context, "upload_media")
+    if not is_s3_backend():
+        raise JsonRpcError(INVALID_PARAMS, _MCP_PRESIGN_LOCAL_MODE_MSG)
+
+    filename = args.get("filename")
+    if not isinstance(filename, str) or not filename.strip():
+        raise JsonRpcError(INVALID_PARAMS, "filename must be a non-empty string")
+    # media_type is constrained to the enum by the input schema. content_type is
+    # pinned into the presigned POST policy and becomes the stored object's
+    # Content-Type, so constrain it to the upload allowlist (or octet-stream):
+    # gives a clear up-front error instead of an opaque storage rejection, and
+    # stops a caller from pinning a renderable type (e.g. text/html).
+    media_type = args["media_type"]
+    content_type = args.get("content_type") or "application/octet-stream"
+    if content_type != "application/octet-stream" and content_type not in ALL_ALLOWED_MIMES:
+        raise JsonRpcError(
+            INVALID_PARAMS,
+            "content_type must be one of " + ", ".join(sorted(ALL_ALLOWED_MIMES)) + " (or omitted).",
+        )
+
+    api_key = context["api_key"]
+    workspace = api_key.workspace
+    pending, presigned = create_pending_upload(
+        organization=workspace.organization,
+        workspace=workspace,
+        created_by=api_key.issued_by if api_key.issued_by_id else None,
+        declared_filename=filename,
+        content_type=content_type,
+        requested_media_type=media_type,
+    )
+    return _wrap_text(
+        {
+            "upload_id": str(pending.id),
+            "method": presigned["method"],
+            "url": presigned["url"],
+            "fields": presigned["fields"],
+            "max_bytes": pending.max_bytes,
+            "expires_at": pending.expires_at.isoformat(),
+            "instructions": (
+                "Upload the raw bytes to 'url' as a multipart/form-data POST: send every "
+                "key/value in 'fields' as form fields, then a final 'file' field holding the "
+                "binary body. Then call finalize_media_upload with this upload_id."
+            ),
+        }
+    )
+
+
+def _finalize_media_upload(args: dict, context: dict[str, Any]) -> dict:
+    from django.core.exceptions import ValidationError
+    from django.db import transaction
+    from django.utils import timezone
+
+    from apps.media_library.models import MediaAsset, PendingUpload
+    from apps.media_library.quotas import StorageQuotaExceededError
+    from apps.media_library.services import inspect_uploaded_object, register_uploaded_asset
+    from apps.media_library.storage import is_s3_backend
+    from apps.media_library.tasks import process_media_asset
+
+    _require_perm(context, "upload_media")
+    if not is_s3_backend():
+        raise JsonRpcError(INVALID_PARAMS, _MCP_PRESIGN_LOCAL_MODE_MSG)
+
+    upload_id = _parse_uuid(args.get("upload_id"), "upload_id")
+    api_key = context["api_key"]
+    workspace = api_key.workspace
+
+    # Validate caller args up front — no lock, no remote I/O.
+    folder = _resolve_media_folder(workspace, args)
+    tags = _parse_media_tags(args)
+
+    # Tenant-scoped fetch (no lock) for the fast replay path and to read the key.
+    try:
+        pending = PendingUpload.objects.get(id=upload_id, workspace_id=workspace.id)
+    except PendingUpload.DoesNotExist as exc:
+        raise JsonRpcError(INVALID_PARAMS, "Upload not found") from exc
+
+    if pending.finalized_at:
+        # Idempotent replay — return the existing asset, never mint a second.
+        if pending.media_asset_id is None:
+            # Finalized earlier but the asset was since deleted; don't re-create.
+            raise JsonRpcError(INVALID_PARAMS, "This upload was already finalized; its media asset no longer exists.")
+        asset = pending.media_asset
+    else:
+        if pending.expires_at < timezone.now():
+            raise JsonRpcError(INVALID_PARAMS, "This upload request has expired; request a new one.")
+        # Inspect the stored object (HEAD + range-GET) OUTSIDE the row lock so the
+        # lock never spans remote round-trips.
+        try:
+            inspected = inspect_uploaded_object(pending)
+        except FileNotFoundError as exc:
+            raise JsonRpcError(INVALID_PARAMS, str(exc)) from exc
+        except StorageQuotaExceededError as exc:
+            raise JsonRpcError(
+                INVALID_PARAMS,
+                f"Storage quota exceeded: used={exc.used} limit={exc.limit} attempted={exc.attempted}",
+            ) from exc
+        except ValidationError as exc:
+            raise JsonRpcError(INVALID_PARAMS, "; ".join(getattr(exc, "messages", [str(exc)]))) from exc
+
+        # Create + mark finalized under a short row lock, re-checking idempotency
+        # so a finalize that won the race while we inspected still wins.
+        with transaction.atomic():
+            locked = PendingUpload.objects.select_for_update().get(id=upload_id, workspace_id=workspace.id)
+            if locked.finalized_at and locked.media_asset_id:
+                asset = locked.media_asset
+            else:
+                asset = register_uploaded_asset(
+                    pending=locked,
+                    inspected=inspected,
+                    uploaded_by=api_key.issued_by if api_key.issued_by_id else None,
+                    folder=folder,
+                    alt_text=args.get("alt_text", "") or "",
+                    title=args.get("title", "") or "",
+                    tags=tags,
+                )
+                locked.finalized_at = timezone.now()
+                locked.media_asset = asset
+                locked.save(update_fields=["finalized_at", "media_asset"])
+
+    # Ensure processing is queued — for a fresh asset, or to self-heal a replay
+    # whose original enqueue was lost (asset still stuck at 'pending').
+    if asset.processing_status == MediaAsset.ProcessingStatus.PENDING:
+        process_media_asset(str(asset.id))
+    return _wrap_text(_serialize_media(asset))
+
+
+register_tool(
+    Tool(
+        name="request_media_upload",
+        description=(
+            "Step 1 of uploading large media (video, or any file >1 MB) over MCP — no REST "
+            "API key required. Returns a short-lived presigned POST: 'url' plus 'fields' to "
+            "upload the bytes directly to storage (multipart/form-data: send every 'fields' "
+            "entry, then a 'file' field with the body), and an 'upload_id'. After the upload "
+            "succeeds, call finalize_media_upload with the upload_id. For files ≤1 MB you can "
+            "use upload_media (base64) instead. Requires the upload_media permission."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "filename": {"type": "string", "maxLength": 255},
+                "media_type": {
+                    "type": "string",
+                    "enum": ["image", "video", "gif", "document"],
+                    "description": "Used only to size the upload cap; the stored type is re-sniffed at finalize.",
+                },
+                "content_type": {"type": "string", "description": "MIME type the client will send (e.g. video/mp4)."},
+            },
+            "required": ["filename", "media_type"],
+            "additionalProperties": False,
+        },
+        handler=_request_media_upload,
+    )
+)
+
+
+register_tool(
+    Tool(
+        name="finalize_media_upload",
+        description=(
+            "Step 2 of a presigned upload: call with the 'upload_id' from request_media_upload "
+            "once the bytes are uploaded. The server validates the stored object (size, real "
+            "MIME by magic bytes, storage quota) and registers the media asset. Returns the same "
+            "shape as get_media; processing_status starts at 'pending'. Safe to retry — a second "
+            "call with the same upload_id returns the same asset. Requires the upload_media permission."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "upload_id": {"type": "string", "format": "uuid"},
+                "alt_text": {"type": "string", "maxLength": 2000},
+                "title": {"type": "string", "maxLength": 255},
+                "folder_id": {"type": "string", "format": "uuid"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["upload_id"],
+            "additionalProperties": False,
+        },
+        handler=_finalize_media_upload,
     )
 )
 

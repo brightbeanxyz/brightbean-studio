@@ -13,6 +13,7 @@ status transitions so audit + idempotency live in one place.
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 from collections.abc import Iterable
 from typing import Any
 
@@ -124,11 +125,28 @@ def create_post(
     media_ids = list(media_asset_ids or [])
     # Pull and validate all referenced assets in a single query — fail
     # closed if any ID is missing or belongs to a different workspace.
-    asset_map: dict[Any, MediaAsset] = {}
+    #
+    # Normalize every id to a ``UUID`` for keying/lookup so all caller shapes
+    # match identically: UUID objects (REST, coerced by Pydantic) and UUID
+    # *strings* in any form (MCP, off the JSON-RPC wire — including uppercase or
+    # braced). A raw string never compares equal to a UUID key, so without this
+    # MCP-supplied assets are wrongly rejected as "not found in workspace".
+    asset_map: dict[uuid.UUID, MediaAsset] = {}
+    resolved: list[tuple[Any, uuid.UUID | None]] = []
     if media_ids:
-        found = list(MediaAsset.objects.filter(id__in=media_ids, workspace=workspace))
+
+        def _to_uuid(value):
+            try:
+                return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
+            except (ValueError, TypeError, AttributeError):
+                return None
+
+        resolved = [(mid, _to_uuid(mid)) for mid in media_ids]
+        found = list(
+            MediaAsset.objects.filter(id__in=[u for _, u in resolved if u is not None], workspace=workspace)
+        )
         asset_map = {a.id: a for a in found}
-        missing = [mid for mid in media_ids if mid not in asset_map]
+        missing = [mid for mid, u in resolved if u is None or u not in asset_map]
         if missing:
             raise ValueError(f"Media asset(s) not found in workspace {workspace.id}: {missing}")
 
@@ -156,10 +174,10 @@ def create_post(
             platform_specific_caption=override.get("caption"),
             platform_specific_first_comment=override.get("first_comment"),
         )
-        for position, mid in enumerate(media_ids):
+        for position, (_mid, u) in enumerate(resolved):
             PostMedia.objects.create(
                 post=post,
-                media_asset=asset_map[mid],
+                media_asset=asset_map[u],
                 position=position,
             )
 

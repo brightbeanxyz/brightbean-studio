@@ -321,6 +321,7 @@ MEDIA_LIBRARY_MAX_BULK_UPLOAD = 50
 MEDIA_LIBRARY_THUMBNAIL_SIZE = (400, 400)
 MEDIA_LIBRARY_FFMPEG_TIMEOUT = 300  # 5 minutes
 MEDIA_LIBRARY_MAX_CONCURRENT_TRANSCODES = 2
+MEDIA_LIBRARY_PRESIGN_EXPIRE = 900  # seconds a presigned direct-upload URL stays valid
 
 # Storage quota — bounds the total bytes a single Organization can
 # accumulate in the media library. Without this, an Agent API key with

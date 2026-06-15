@@ -106,6 +106,151 @@ def create_asset(
     return asset
 
 
+def create_pending_upload(
+    *,
+    organization,
+    workspace,
+    created_by,
+    declared_filename: str,
+    content_type: str,
+    requested_media_type: str,
+):
+    """Choose a server key, presign a direct upload, and persist a PendingUpload.
+
+    Backs the MCP ``request_media_upload`` tool: the agent uploads bytes straight
+    to object storage with the returned presigned POST, then calls
+    ``finalize_media_upload``. ``max_bytes`` is derived from the requested
+    media_type purely to cap the edge POST — it is NOT trusted for the final
+    asset, whose real size/type ``inspect_uploaded_object`` re-derives from the
+    stored bytes at finalize.
+
+    Returns ``(pending_upload, presigned_dict)``.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from .models import PendingUpload
+    from .storage import generate_storage_key, presign_upload
+    from .validators import MAX_FILE_SIZES
+
+    max_bytes = int(MAX_FILE_SIZES.get(requested_media_type, MAX_FILE_SIZES["image"]))
+    storage_key = generate_storage_key(declared_filename)
+    expires_in = int(getattr(settings, "MEDIA_LIBRARY_PRESIGN_EXPIRE", 900))
+    presigned = presign_upload(
+        storage_key,
+        content_type=content_type or "application/octet-stream",
+        max_bytes=max_bytes,
+        expires_in=expires_in,
+    )
+    pending = PendingUpload.objects.create(
+        organization=organization,
+        workspace=workspace,
+        created_by=created_by,
+        storage_key=storage_key,
+        declared_content_type=content_type or "",
+        declared_filename=declared_filename,
+        max_bytes=max_bytes,
+        expires_at=timezone.now() + timedelta(seconds=expires_in),
+    )
+    return pending, presigned
+
+
+class _HeadProbe:
+    """File-like over head bytes plus a ``size`` attribute.
+
+    Lets ``validate_file`` — which sniffs via ``read``/``seek`` and size-checks via
+    ``.size`` — validate an object whose real size came from a storage HEAD rather
+    than a local upload, so the presigned path reuses the exact allowlist + per-type
+    size policy as the REST/base64 uploads instead of duplicating it.
+    """
+
+    def __init__(self, head: bytes, size: int):
+        self._buf = io.BytesIO(head)
+        self.size = size
+
+    def read(self, n=-1):
+        return self._buf.read(n)
+
+    def seek(self, *args):
+        return self._buf.seek(*args)
+
+
+def inspect_uploaded_object(pending) -> dict:
+    """Validate an out-of-band-uploaded object SERVER-SIDE; return its metadata.
+
+    The validation chokepoint for presigned uploads, mirroring ``create_asset``'s
+    guarantees for bytes the server never received directly: it re-derives the
+    size (HEAD) and the MIME (range-GET + magic-byte sniff) from the stored
+    object — never trusting the agent's declared values — runs the same
+    ``validate_file`` allowlist + per-type size policy the REST/base64 uploads
+    use, and enforces the org storage quota. On any validation/quota failure the
+    orphaned object is deleted (best-effort, so the cleanup error can't mask the
+    real reason) before re-raising.
+
+    Does NO database writes and acquires no lock, so the caller runs it OUTSIDE
+    the finalize transaction — keeping the per-row lock off the remote round-trips.
+    Returns ``{"size": int, "media_type": str, "mime": str}``.
+    """
+    import contextlib
+
+    from .quotas import StorageQuotaExceededError, enforce_storage_quota
+    from .storage import delete_object, head_object_size, read_object_head_bytes
+    from .validators import sniff_mime
+
+    key = pending.storage_key
+    size = head_object_size(key)
+    if not size:
+        # None → object missing (upload never completed); 0 → empty/incomplete.
+        # Guarding 0 here also avoids a 416 InvalidRange on the range-GET below.
+        raise FileNotFoundError("Uploaded object not found or empty; the upload may not have completed.")
+
+    try:
+        head = read_object_head_bytes(key, 32)
+        # Reuse the shared validate_file chokepoint (allowlist + per-type cap) so
+        # the presigned path can't drift from REST/base64 uploads. ``.size`` is the
+        # real HEAD-derived size, so the cap is enforced on the actual object.
+        file_type, errors = validate_file(_HeadProbe(head, size))
+        if errors:
+            raise ValidationError(errors)
+        mime = sniff_mime(io.BytesIO(head)) or ""
+        enforce_storage_quota(pending.organization, size)
+    except (ValidationError, StorageQuotaExceededError):
+        with contextlib.suppress(Exception):
+            delete_object(key)
+        raise
+
+    return {"size": size, "media_type": file_type, "mime": mime}
+
+
+def register_uploaded_asset(*, pending, inspected, uploaded_by, folder=None, alt_text: str = "", title: str = "", tags=None):
+    """Create a ``MediaAsset`` for an already-stored object from validated metadata.
+
+    ``inspected`` is the dict returned by :func:`inspect_uploaded_object`. This
+    does only DB work (no remote I/O), so the caller can wrap it in a short row
+    lock. The asset points at the existing key WITHOUT re-uploading: assigning a
+    *string* to the FileField leaves it committed, so ``save()`` writes only the
+    path column — ``storage.save()`` (a re-upload of bytes) is never called.
+    """
+    asset = MediaAsset(
+        organization=pending.organization,
+        workspace=pending.workspace,
+        folder=folder,
+        filename=pending.declared_filename,
+        media_type=inspected["media_type"],
+        mime_type=inspected["mime"],
+        file_size=inspected["size"],
+        uploaded_by=uploaded_by,
+        processing_status=MediaAsset.ProcessingStatus.PENDING,
+        alt_text=alt_text or "",
+        title=title or "",
+        tags=list(tags) if tags else [],
+    )
+    asset.file = pending.storage_key
+    asset.save()
+    return asset
+
+
 def create_version(asset, file, change_description, created_by):
     """Create a new version of an asset."""
     latest = asset.versions.order_by("-version_number").first()
