@@ -9,7 +9,7 @@ Context: account (with prefetched posting_slots), workspace_id.
 
 <div id="slots-grid-{{ account.id }}"
      hx-get="{% url 'calendar:account_slots_partial' workspace_id=workspace_id %}?social_account_id={{ account.id }}"
-     hx-trigger="slotsUpdated[accountId=='{{ account.id }}'] from:body"
+     hx-trigger="slotsUpdated[detail.accountId=='{{ account.id }}'] from:body"
      hx-swap="outerHTML">
 
     <div class="overflow-x-auto">
@@ -57,6 +57,7 @@ Context: account (with prefetched posting_slots), workspace_id.
                                     <form hx-post="{% url 'calendar:delete_posting_slot' workspace_id=workspace_id slot_id=slot.id %}"
                                           hx-swap="none" class="inline">
                                         {% csrf_token %}
+                                        <input type="hidden" name="social_account_id" value="{{ account.id }}">
                                         <button type="submit"
                                                 x-show="hovered" x-transition.opacity
                                                 class="w-4 h-4 flex items-center justify-center text-stone-300 hover:text-red-500 transition-all cursor-pointer"
@@ -72,6 +73,7 @@ Context: account (with prefetched posting_slots), workspace_id.
                                       @htmx:after-request="editing = false"
                                       class="flex items-center gap-1">
                                     {% csrf_token %}
+                                    <input type="hidden" name="social_account_id" value="{{ account.id }}">
                                     <input type="time" name="time" value="{{ slot.time|time:'H:i' }}"
                                            class="w-[90px] text-xs px-1.5 py-1 rounded border border-stone-200 outline-none focus:border-orange-400"
                                            @keydown.escape="editing = false">

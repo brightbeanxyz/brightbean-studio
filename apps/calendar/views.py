@@ -56,6 +56,22 @@ def _slots_updated_response(account_id):
     )
 
 
+def _missing_slot_response(request, payload):
+    """Idempotent no-op response for a slot that is already gone.
+
+    Reached on a stale page, a concurrent delete, or a double-click. The
+    workspace-scoped lookup found no slot, so nothing is mutated here. For htmx
+    we refresh the caller's grid via the ``slotsUpdated`` trigger so the phantom
+    row clears; we fall back to a bare 204 only when no ``social_account_id`` was
+    posted (the real forms always post it, so the grid can be targeted).
+    Non-htmx callers get *payload*.
+    """
+    if request.htmx:
+        account_id = request.POST.get("social_account_id")
+        return _slots_updated_response(account_id) if account_id else HttpResponse(status=204)
+    return JsonResponse(payload)
+
+
 def _get_workspace(request, workspace_id):
     """Resolve workspace and enforce membership check."""
     workspace = get_object_or_404(Workspace, id=workspace_id)
@@ -846,6 +862,7 @@ def posting_slots(request, workspace_id):
 
 @login_required
 @require_POST
+@require_permission("manage_social_accounts")
 def save_posting_slot(request, workspace_id):
     """Create or update a posting slot."""
     workspace = _get_workspace(request, workspace_id)
@@ -881,14 +898,21 @@ def save_posting_slot(request, workspace_id):
 
 @login_required
 @require_POST
+@require_permission("manage_social_accounts")
 def delete_posting_slot(request, workspace_id, slot_id):
-    """Delete a posting slot."""
+    """Delete a posting slot.
+
+    Idempotent: a slot that is already gone (stale page, concurrent delete, or a
+    double-click) still returns the grid-refresh trigger so the phantom row
+    clears instead of 404ing.
+    """
     workspace = _get_workspace(request, workspace_id)
-    slot = get_object_or_404(
-        PostingSlot,
+    slot = PostingSlot.objects.filter(
         id=slot_id,
         social_account__workspace=workspace,
-    )
+    ).first()
+    if slot is None:
+        return _missing_slot_response(request, {"deleted": False})
 
     account_id = str(slot.social_account_id)
     slot.delete()
@@ -898,6 +922,7 @@ def delete_posting_slot(request, workspace_id, slot_id):
 
 
 @login_required
+@require_permission("manage_social_accounts")
 def account_posting_slots_partial(request, workspace_id):
     """Return the posting slots grid partial for a single account (HTMX)."""
     workspace = _get_workspace(request, workspace_id)
@@ -916,8 +941,14 @@ def account_posting_slots_partial(request, workspace_id):
 
 @login_required
 @require_POST
+@require_permission("manage_social_accounts")
 def toggle_posting_slot_day(request, workspace_id):
-    """Toggle is_active for all posting slots of an account on a given day."""
+    """Toggle is_active for all posting slots of an account on a given day.
+
+    Account-level op: unlike delete/update (which self-heal a vanished *slot*),
+    this acts on the *account*, so a 404 on a missing account is intentional —
+    if the account itself is gone the whole card is stale, not just the grid.
+    """
     workspace = _get_workspace(request, workspace_id)
     account_id = request.POST.get("social_account_id")
     day = request.POST.get("day_of_week")
@@ -946,14 +977,20 @@ def toggle_posting_slot_day(request, workspace_id):
 
 @login_required
 @require_POST
+@require_permission("manage_social_accounts")
 def update_posting_slot(request, workspace_id, slot_id):
-    """Update a posting slot's time."""
+    """Update a posting slot's time.
+
+    Idempotent: a slot that is already gone refreshes the grid (clearing the
+    phantom row) instead of 404ing.
+    """
     workspace = _get_workspace(request, workspace_id)
-    slot = get_object_or_404(
-        PostingSlot,
+    slot = PostingSlot.objects.filter(
         id=slot_id,
         social_account__workspace=workspace,
-    )
+    ).first()
+    if slot is None:
+        return _missing_slot_response(request, {"updated": False})
 
     time_str = request.POST.get("time")
     if not time_str:

@@ -43,10 +43,13 @@ class PostingSlotModelTest(TestCase):
 
 
 class PostingSlotCrossWorkspaceTests(TestCase):
-    """Slot endpoints must scope to the requesting workspace.
+    """Slot endpoints must scope every mutation to the requesting workspace.
 
-    Regression for permission-timing leak: a 404 must come from the workspace-
-    scoped query, not from a post-lookup membership check.
+    The workspace-scoped query is the single authority: a slot outside the
+    caller's workspace (or already gone) is a uniform no-op that never mutates
+    and never leaks existence via a post-lookup membership check. Treating the
+    miss as a no-op also makes delete/update idempotent, so a stale grid
+    self-heals instead of 404ing.
     """
 
     def setUp(self):
@@ -99,11 +102,9 @@ class PostingSlotCrossWorkspaceTests(TestCase):
             workspace_role=WorkspaceMembership.WorkspaceRole.OWNER,
         )
 
-    def test_delete_slot_from_own_workspace_returns_404_for_slot_in_other_workspace(self):
-        """User A scopes the delete URL to workspace A but passes B's slot id."""
+    def test_delete_own_workspace_slot_succeeds(self):
+        """Happy path: an owner deletes a slot in their own workspace."""
         self.client.force_login(self.user_a)
-        # workspace A in URL but slot belongs to workspace A — sanity check happy path
-        # (deletes a slot the user is allowed to delete)
         url = reverse(
             "calendar:delete_posting_slot",
             kwargs={"workspace_id": self.workspace_a.id, "slot_id": self.slot_a.id},
@@ -112,8 +113,12 @@ class PostingSlotCrossWorkspaceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(PostingSlot.objects.filter(id=self.slot_a.id).exists())
 
-    def test_delete_slot_belonging_to_different_workspace_returns_404(self):
-        """A new slot in workspace A; user B (different workspace) tries to delete via /workspace/<B>/."""
+    def test_delete_slot_belonging_to_different_workspace_is_noop(self):
+        """A slot outside the caller's workspace must never be deleted.
+
+        The workspace-scoped query finds nothing, so the endpoint is a uniform
+        no-op: it never mutates and never 404-leaks the foreign slot's existence.
+        """
         slot_a2 = PostingSlot.objects.create(
             social_account=self.account_a,
             day_of_week=1,
@@ -121,19 +126,18 @@ class PostingSlotCrossWorkspaceTests(TestCase):
         )
         self.client.force_login(self.user_b)
         # User B uses their OWN workspace_id in the URL (auth passes), but the
-        # slot_id is from workspace A. Pre-fix this leaked existence via 404
-        # only AFTER the lookup; post-fix the workspace-scoped query never
-        # finds it.
+        # slot_id is from workspace A — the scoped query never finds it.
         url = reverse(
             "calendar:delete_posting_slot",
             kwargs={"workspace_id": self.workspace_b.id, "slot_id": slot_a2.id},
         )
         response = self.client.post(url)
-        self.assertEqual(response.status_code, 404)
-        # Slot must still exist
+        self.assertEqual(response.status_code, 200)
+        # Load-bearing invariant (not the 200 status): the foreign slot is untouched.
         self.assertTrue(PostingSlot.objects.filter(id=slot_a2.id).exists())
 
-    def test_update_slot_belonging_to_different_workspace_returns_404(self):
+    def test_update_slot_belonging_to_different_workspace_is_noop(self):
+        """A slot outside the caller's workspace must never be modified."""
         slot_a2 = PostingSlot.objects.create(
             social_account=self.account_a,
             day_of_week=2,
@@ -145,6 +149,91 @@ class PostingSlotCrossWorkspaceTests(TestCase):
             kwargs={"workspace_id": self.workspace_b.id, "slot_id": slot_a2.id},
         )
         response = self.client.post(url, data={"time": "13:30"})
-        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.status_code, 200)
+        # Load-bearing invariant (not the 200 status): the foreign slot is unchanged.
         slot_a2.refresh_from_db()
         self.assertEqual(slot_a2.time, time(11, 0))
+
+    def test_delete_already_gone_slot_is_idempotent_self_heal(self):
+        """Re-deleting an own-workspace slot that is already gone refreshes the
+        grid (HX-Trigger) instead of 404ing — the stale-page / double-click fix.
+        """
+        url = reverse(
+            "calendar:delete_posting_slot",
+            kwargs={"workspace_id": self.workspace_a.id, "slot_id": self.slot_a.id},
+        )
+        self.client.force_login(self.user_a)
+        first = self.client.post(url, HTTP_HX_REQUEST="true")
+        self.assertEqual(first.status_code, 204)
+        self.assertIn("slotsUpdated", first.headers.get("HX-Trigger", ""))
+        self.assertFalse(PostingSlot.objects.filter(id=self.slot_a.id).exists())
+        # Second delete of the now-missing slot must NOT 404; with the posted
+        # account id it still emits the grid-refresh trigger so the stale row clears.
+        second = self.client.post(
+            url, data={"social_account_id": str(self.account_a.id)}, HTTP_HX_REQUEST="true"
+        )
+        self.assertEqual(second.status_code, 204)
+        self.assertIn(str(self.account_a.id), second.headers.get("HX-Trigger", ""))
+
+    def test_delete_real_slot_emits_account_scoped_trigger(self):
+        """The happy-path HX-Trigger carries the account id under ``detail`` so the
+        grid's ``slotsUpdated[detail.accountId==...]`` filter matches and refreshes.
+        """
+        import json
+
+        url = reverse(
+            "calendar:delete_posting_slot",
+            kwargs={"workspace_id": self.workspace_a.id, "slot_id": self.slot_a.id},
+        )
+        self.client.force_login(self.user_a)
+        resp = self.client.post(url, HTTP_HX_REQUEST="true")
+        self.assertEqual(resp.status_code, 204)
+        payload = json.loads(resp.headers["HX-Trigger"])
+        self.assertEqual(payload["slotsUpdated"]["accountId"], str(self.account_a.id))
+
+    def test_update_already_gone_slot_is_idempotent_self_heal(self):
+        """Editing the time of an own-workspace slot that is already gone refreshes
+        the grid (HX-Trigger) instead of 404ing — mirrors the delete self-heal.
+        """
+        url = reverse(
+            "calendar:update_posting_slot",
+            kwargs={"workspace_id": self.workspace_a.id, "slot_id": self.slot_a.id},
+        )
+        self.client.force_login(self.user_a)
+        self.slot_a.delete()
+        resp = self.client.post(
+            url,
+            data={"time": "08:15", "social_account_id": str(self.account_a.id)},
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(resp.status_code, 204)
+        self.assertIn(str(self.account_a.id), resp.headers.get("HX-Trigger", ""))
+
+    def test_slot_mutation_denied_for_member_without_manage_permission(self):
+        """A workspace member whose role lacks manage_social_accounts cannot mutate
+        posting slots, even though they pass the membership check.
+        """
+        viewer = User.objects.create_user(
+            email="viewer@example.com",
+            password="testpass123",
+            tos_accepted_at=timezone.now(),
+        )
+        OrgMembership.objects.create(
+            user=viewer,
+            organization=self.org_a,
+            org_role=OrgMembership.OrgRole.MEMBER,
+        )
+        WorkspaceMembership.objects.create(
+            user=viewer,
+            workspace=self.workspace_a,
+            workspace_role=WorkspaceMembership.WorkspaceRole.VIEWER,
+        )
+        self.client.force_login(viewer)
+        url = reverse(
+            "calendar:delete_posting_slot",
+            kwargs={"workspace_id": self.workspace_a.id, "slot_id": self.slot_a.id},
+        )
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, 403)
+        # The slot must survive an unauthorized delete attempt.
+        self.assertTrue(PostingSlot.objects.filter(id=self.slot_a.id).exists())
