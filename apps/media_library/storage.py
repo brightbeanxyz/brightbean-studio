@@ -43,7 +43,9 @@ def _normalize(storage_key: str) -> str:
     """
     from storages.utils import clean_name
 
-    return default_storage._normalize_name(clean_name(storage_key))
+    # ``_normalize_name`` lives on the S3 backend (this is only called when
+    # ``is_s3_backend()``), not on the base ``Storage`` type mypy infers here.
+    return default_storage._normalize_name(clean_name(storage_key))  # type: ignore[attr-defined]
 
 
 def generate_storage_key(declared_filename: str) -> str:

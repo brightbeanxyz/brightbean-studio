@@ -1,6 +1,9 @@
 [tool.ruff]
 target-version = "py312"
 line-length = 120
+# Django generates migrations with its own import ordering/formatting; don't
+# lint or format generated schema migrations.
+extend-exclude = ["*/migrations/*"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]

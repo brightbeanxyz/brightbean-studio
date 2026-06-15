@@ -876,6 +876,10 @@ def _finalize_media_upload(args: dict, context: dict[str, Any]) -> dict:
                 locked.media_asset = asset
                 locked.save(update_fields=["finalized_at", "media_asset"])
 
+    # ``asset`` is non-None in both branches above (the replay branch is guarded
+    # by ``media_asset_id``); assert it so mypy narrows the nullable FK.
+    assert asset is not None
+
     # Ensure processing is queued — for a fresh asset, or to self-heal a replay
     # whose original enqueue was lost (asset still stuck at 'pending').
     if asset.processing_status == MediaAsset.ProcessingStatus.PENDING:

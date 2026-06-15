@@ -142,9 +142,7 @@ def create_post(
                 return None
 
         resolved = [(mid, _to_uuid(mid)) for mid in media_ids]
-        found = list(
-            MediaAsset.objects.filter(id__in=[u for _, u in resolved if u is not None], workspace=workspace)
-        )
+        found = list(MediaAsset.objects.filter(id__in=[u for _, u in resolved if u is not None], workspace=workspace))
         asset_map = {a.id: a for a in found}
         missing = [mid for mid, u in resolved if u is None or u not in asset_map]
         if missing:
@@ -175,6 +173,9 @@ def create_post(
             platform_specific_first_comment=override.get("first_comment"),
         )
         for position, (_mid, u) in enumerate(resolved):
+            # ``u`` is validated non-None and present in ``asset_map`` above
+            # (the ``missing`` check raises otherwise); narrow for mypy.
+            assert u is not None
             PostMedia.objects.create(
                 post=post,
                 media_asset=asset_map[u],

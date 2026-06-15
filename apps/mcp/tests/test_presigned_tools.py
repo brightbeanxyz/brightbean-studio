@@ -94,9 +94,7 @@ class TestRequestMediaUpload:
     def test_disabled_on_local_storage(self):
         # No s3_seam fixture → is_s3_backend() is the real (local) value.
         user, _ws, _sa = _make_user_with_workspace("req-local@example.com", OWNER)
-        _status, body = _call(
-            _client(user), "request_media_upload", {"filename": "clip.mp4", "media_type": "video"}
-        )
+        _status, body = _call(_client(user), "request_media_upload", {"filename": "clip.mp4", "media_type": "video"})
         assert body["error"]["code"] == INVALID_PARAMS
         assert "local mode" in body["error"]["message"].lower()
 
