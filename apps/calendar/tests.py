@@ -1,13 +1,18 @@
 """Tests for the Content Calendar app (T-1A.2)."""
 
-from datetime import time
+import zoneinfo
+from datetime import date, datetime, time
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
-from apps.calendar.models import PostingSlot
+from apps.calendar.models import PostingSlot, Queue, QueueEntry, RecurrenceRule
+from apps.calendar.services import add_to_queue
+from apps.calendar.tasks import generate_recurring_posts
+from apps.composer.models import PlatformPost, Post
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.social_accounts.models import SocialAccount
@@ -235,3 +240,149 @@ class PostingSlotCrossWorkspaceTests(TestCase):
         self.assertEqual(response.status_code, 403)
         # The slot must survive an unauthorized delete attempt.
         self.assertTrue(PostingSlot.objects.filter(id=self.slot_a.id).exists())
+
+
+class QueueSlotTimezoneTests(TestCase):
+    """Queue slot assignment must resolve PostingSlot times in the workspace
+    timezone (which falls back to the org's default_timezone), not UTC.
+
+    Regression for the bug where ``assign_queue_slots`` passed ``timezone.now()``
+    (UTC) as the baseline, so a "09:00" slot was scheduled at 09:00 UTC instead
+    of 09:00 in the org's local zone.
+    """
+
+    def setUp(self):
+        self.org = Organization.objects.create(name="TZ Org", default_timezone="America/New_York")
+        self.workspace = Workspace.objects.create(organization=self.org, name="TZ WS")
+        self.account = SocialAccount.objects.create(
+            workspace=self.workspace,
+            platform="instagram",
+            account_platform_id="ig-tz",
+            account_name="TZ",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        self.queue = Queue.objects.create(
+            workspace=self.workspace,
+            name="TZ Queue",
+            social_account=self.account,
+        )
+        # A 09:00 slot on every weekday, so "the next available slot" is always
+        # a 09:00 local time no matter what day/time the test actually runs.
+        for day in range(7):
+            PostingSlot.objects.create(social_account=self.account, day_of_week=day, time=time(9, 0))
+
+    def test_queue_slot_resolved_in_workspace_timezone(self):
+        post = Post.objects.create(workspace=self.workspace, caption="queued")
+        PlatformPost.objects.create(post=post, social_account=self.account)
+
+        add_to_queue(post, self.queue)
+
+        ny = zoneinfo.ZoneInfo("America/New_York")
+        entry = QueueEntry.objects.get(queue=self.queue, post=post)
+        self.assertIsNotNone(entry.assigned_slot_datetime)
+
+        local = entry.assigned_slot_datetime.astimezone(ny)
+        self.assertEqual((local.hour, local.minute), (9, 0))
+        # The stored instant is 09:00 NY expressed in UTC (13:00 EST / 14:00
+        # EDT) — never a literal 09:00 UTC, which is the pre-fix bug.
+        utc = entry.assigned_slot_datetime.astimezone(zoneinfo.ZoneInfo("UTC"))
+        self.assertIn(utc.hour, (13, 14))
+
+        # The per-platform scheduled_at (what the publisher fires on) matches.
+        pp = PlatformPost.objects.get(post=post, social_account=self.account)
+        self.assertEqual(pp.scheduled_at, entry.assigned_slot_datetime)
+
+    def test_workspace_override_takes_precedence_over_org(self):
+        # An explicit workspace timezone overrides the org default.
+        self.workspace.timezone = "Asia/Tokyo"
+        self.workspace.save(update_fields=["timezone"])
+        post = Post.objects.create(workspace=self.workspace, caption="queued-tokyo")
+        PlatformPost.objects.create(post=post, social_account=self.account)
+
+        add_to_queue(post, self.queue)
+
+        entry = QueueEntry.objects.get(queue=self.queue, post=post)
+        local = entry.assigned_slot_datetime.astimezone(zoneinfo.ZoneInfo("Asia/Tokyo"))
+        self.assertEqual((local.hour, local.minute), (9, 0))
+
+
+class RecurringPostTimezoneTests(TestCase):
+    """``generate_recurring_posts`` must preserve the source post's *local*
+    wall-clock time across DST boundaries, not drift by the UTC offset.
+
+    The task is not yet wired to run in production, but its time math must be
+    correct for when recurrence generation is enabled.
+    """
+
+    def test_recurrence_preserves_local_time_across_dst(self):
+        org = Organization.objects.create(name="DST Org", default_timezone="America/New_York")
+        ws = Workspace.objects.create(organization=org, name="DST WS")
+        ny = zoneinfo.ZoneInfo("America/New_York")
+
+        # Source scheduled 09:00 NY on 2026-03-02 (EST, before the 2026-03-08
+        # spring-forward). Every weekly recurrence then lands in EDT.
+        source = Post.objects.create(
+            workspace=ws,
+            caption="dst-recurrence",
+            scheduled_at=datetime(2026, 3, 2, 9, 0, tzinfo=ny),
+        )
+        RecurrenceRule.objects.create(
+            post=source,
+            frequency=RecurrenceRule.Frequency.WEEKLY,
+            interval=1,
+            end_date=date(2026, 4, 30),
+        )
+
+        fixed_now = datetime(2026, 3, 1, 12, 0, tzinfo=zoneinfo.ZoneInfo("UTC"))
+        with patch("apps.calendar.tasks.timezone.now", return_value=fixed_now):
+            generated = generate_recurring_posts()
+
+        self.assertGreater(generated, 0)
+        clones = list(Post.objects.filter(workspace=ws, caption="dst-recurrence").exclude(id=source.id))
+        self.assertTrue(clones)
+        for clone in clones:
+            local = clone.scheduled_at.astimezone(ny)
+            self.assertEqual(
+                (local.hour, local.minute),
+                (9, 0),
+                msg=f"clone on {local.date()} drifted to {local.time()} (expected 09:00 local)",
+            )
+        # Confirms at least one recurrence is past the DST transition, so the
+        # assertion above actually exercises the boundary.
+        self.assertTrue(any(c.scheduled_at.astimezone(ny).date() >= date(2026, 3, 9) for c in clones))
+
+    def test_lookahead_horizon_uses_workspace_local_date(self):
+        # The LOOKAHEAD_DAYS horizon must be measured in the workspace's local
+        # calendar, not UTC. Otherwise a workspace whose local date differs from
+        # the UTC date at run time gets a horizon off by one local day.
+        org = Organization.objects.create(name="Horizon Org", default_timezone="Asia/Tokyo")
+        ws = Workspace.objects.create(organization=org, name="Horizon WS")
+        tokyo = zoneinfo.ZoneInfo("Asia/Tokyo")
+
+        source = Post.objects.create(
+            workspace=ws,
+            caption="horizon",
+            scheduled_at=datetime(2026, 6, 16, 9, 0, tzinfo=tokyo),
+        )
+        RecurrenceRule.objects.create(
+            post=source,
+            frequency=RecurrenceRule.Frequency.DAILY,
+            interval=1,
+        )
+
+        # 2026-06-16 20:00 UTC is already 2026-06-17 in Tokyo (UTC+9), so the
+        # workspace-local "today" is one day ahead of the UTC date. Shrink the
+        # horizon to keep the generated set tiny.
+        fixed_now = datetime(2026, 6, 16, 20, 0, tzinfo=zoneinfo.ZoneInfo("UTC"))
+        with (
+            patch("apps.calendar.tasks.timezone.now", return_value=fixed_now),
+            patch("apps.calendar.tasks.LOOKAHEAD_DAYS", 3),
+        ):
+            generate_recurring_posts()
+
+        clones = Post.objects.filter(workspace=ws, caption="horizon").exclude(id=source.id)
+        local_dates = sorted(c.scheduled_at.astimezone(tokyo).date() for c in clones)
+        self.assertTrue(local_dates)
+        # today_local = 2026-06-17, horizon +3 local days → furthest is 2026-06-20.
+        # A UTC-based cutoff (the pre-fix bug) would stop a day short at 06-19.
+        self.assertEqual(local_dates[-1], date(2026, 6, 20))

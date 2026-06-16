@@ -1,5 +1,6 @@
 """Queue scheduling services for the Content Calendar (F-2.3)."""
 
+import zoneinfo
 from datetime import datetime, time, timedelta
 
 from django.db import models
@@ -44,14 +45,23 @@ def _next_slot_datetimes(social_account, after_dt, count=30):
 
     Starting from `after_dt`, walks forward through the week to find
     upcoming slot times based on the account's PostingSlot configuration.
+
+    Slot times are naive wall-clock times in the account's workspace timezone
+    (see ``PostingSlot.time``), so they are resolved in that zone regardless of
+    the tzinfo carried by ``after_dt`` — the caller's baseline only sets the
+    "not before" instant. ``after_dt`` is always timezone-aware (callers pass
+    ``timezone.now()`` or a tz-aware floor).
     """
     slots = PostingSlot.objects.filter(social_account=social_account, is_active=True).order_by("day_of_week", "time")
     if not slots.exists():
         return []
 
+    ws_tz = zoneinfo.ZoneInfo(social_account.workspace.effective_timezone or "UTC")
+    after_local = after_dt.astimezone(ws_tz)
+
     slot_list = list(slots)
     results = []
-    current_date = after_dt.date()
+    current_date = after_local.date()
 
     # Walk up to 60 days forward to find enough slots
     for day_offset in range(60):
@@ -62,10 +72,9 @@ def _next_slot_datetimes(social_account, after_dt, count=30):
             if slot.day_of_week != weekday:
                 continue
 
-            slot_dt = datetime.combine(check_date, slot.time)
-            if after_dt.tzinfo:
-                slot_dt = slot_dt.replace(tzinfo=after_dt.tzinfo)
-
+            # Interpret the slot's wall-clock time in the workspace zone (DST
+            # offsets resolve per-date), then compare as instants (both aware).
+            slot_dt = datetime.combine(check_date, slot.time).replace(tzinfo=ws_tz)
             if slot_dt <= after_dt:
                 continue
 
