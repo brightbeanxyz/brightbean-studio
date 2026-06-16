@@ -1,0 +1,64 @@
+{% comment %}
+Delete-post confirmation modal for the Publish list tabs.
+Listens for the `open-delete-modal` window event (detail: postId, accountId),
+POSTs to composer:post_delete, then dispatches `post-deleted` so that
+publishList().reloadTab() in calendar.html refreshes the active tab (no full reload).
+Include once per tab partial that renders `_post_actions_menu.html`.
+Expects context: workspace, csrf_token.
+{% endcomment %}
+<div x-data="{ showDeleteModal: false, deletePostId: null, deleteAccountId: null, deleting: false }" style="display: contents;"
+     @open-delete-modal.window="showDeleteModal = true; deletePostId = $event.detail.postId; deleteAccountId = $event.detail.accountId || null">
+    <template x-teleport="body">
+        <div x-show="showDeleteModal" class="fixed inset-0 z-[60] flex items-center justify-center"
+             @keydown.escape.window="showDeleteModal = false"
+             style="display: none;">
+            <div class="fixed inset-0 bg-black/30 backdrop-blur-sm" @click="showDeleteModal = false"
+                 x-show="showDeleteModal"
+                 x-transition:enter="transition ease-out duration-150"
+                 x-transition:enter-start="opacity-0"
+                 x-transition:enter-end="opacity-100"
+                 x-transition:leave="transition ease-in duration-100"
+                 x-transition:leave-start="opacity-100"
+                 x-transition:leave-end="opacity-0"></div>
+            <div class="relative bg-white rounded-2xl shadow-xl border border-stone-200 p-6 w-full max-w-sm mx-4"
+                 x-show="showDeleteModal"
+                 x-transition:enter="transition ease-out duration-150"
+                 x-transition:enter-start="opacity-0 scale-95"
+                 x-transition:enter-end="opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-100"
+                 x-transition:leave-start="opacity-100 scale-100"
+                 x-transition:leave-end="opacity-0 scale-95">
+                <div class="text-center">
+                    <div class="w-12 h-12 mx-auto rounded-full bg-red-50 flex items-center justify-center mb-4">
+                        <svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    </div>
+                    <h3 class="text-base font-semibold text-stone-900 mb-1">Delete post?</h3>
+                    <p class="text-sm text-stone-500 mb-6">This action cannot be undone. The post and all associated data will be permanently removed.</p>
+                </div>
+                <div class="flex gap-3">
+                    <button @click="showDeleteModal = false"
+                            class="flex-1 px-4 py-2 text-sm font-semibold text-stone-700 bg-stone-100 rounded-full hover:bg-stone-200 transition-colors cursor-pointer">
+                        Cancel
+                    </button>
+                    <button :disabled="deleting"
+                            @click="
+                                deleting = true;
+                                const acctParam = deleteAccountId ? '?account=' + deleteAccountId : '';
+                                fetch('/workspace/{{ workspace.id }}/compose/' + deletePostId + '/delete/' + acctParam, {
+                                    method: 'POST',
+                                    headers: { 'X-CSRFToken': '{{ csrf_token }}' }
+                                }).then(() => {
+                                    showDeleteModal = false;
+                                    deleting = false;
+                                    window.dispatchEvent(new CustomEvent('post-deleted'));
+                                }).catch(() => { deleting = false; });
+                            "
+                            :class="deleting && 'opacity-50 cursor-not-allowed'"
+                            class="flex-1 px-4 py-2 text-sm font-semibold text-white bg-red-500 rounded-full hover:bg-red-600 transition-colors cursor-pointer">
+                        <span x-text="deleting ? 'Deleting...' : 'Delete'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </template>
+</div>
