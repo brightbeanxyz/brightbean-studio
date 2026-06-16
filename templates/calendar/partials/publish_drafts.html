@@ -13,6 +13,7 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
                 <th class="px-4 py-3 text-xs font-semibold text-stone-400 uppercase tracking-wider">Platform</th>
                 <th class="px-4 py-3 text-xs font-semibold text-stone-400 uppercase tracking-wider">Author</th>
                 <th class="px-4 py-3 text-xs font-semibold text-stone-400 uppercase tracking-wider">Last Updated</th>
+                <th class="px-4 py-3 w-10"></th>
             </tr>
         </thead>
         <tbody>
@@ -67,6 +68,9 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
                 <td class="px-4 py-3 text-xs text-stone-500 tabular-nums whitespace-nowrap">
                     {{ pp.post.updated_at|timesince }} ago
                 </td>
+                <td class="px-4 py-3 text-right" @click.stop>
+                    {% include "calendar/partials/_post_actions_menu.html" with post_id=pp.post_id account_id=pp.social_account_id %}
+                </td>
             </tr>
             {% endfor %}
         </tbody>
@@ -89,4 +93,5 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
     </div>
     {% endif %}
     {% endif %}
+    {% include "calendar/partials/_delete_post_modal.html" %}
 </div>

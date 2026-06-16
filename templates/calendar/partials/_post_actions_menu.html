@@ -1,0 +1,38 @@
+{% comment %}
+Per-post kebab actions menu (Edit + Delete) for the Publish list tabs.
+The dropdown is teleported to <body> with fixed positioning so it escapes any
+overflow-clipped container. Delete dispatches the `open-delete-modal` window event;
+include `_delete_post_modal.html` once in the same tab partial to handle it.
+Expects context: workspace, post_id, account_id.
+{% endcomment %}
+<div x-data="{ open: false, menuStyle: {} }" class="relative"
+     @click.outside="open = false"
+     @scroll.window="open = false"
+     @keydown.escape.window="open = false">
+    <button @click.stop="
+        open = !open;
+        if (open) {
+            const r = $el.getBoundingClientRect();
+            menuStyle = { position: 'fixed', top: (r.bottom + 4) + 'px', left: (r.right - 144) + 'px', zIndex: 9999 };
+        }
+    "
+            class="p-1.5 rounded-full border border-stone-200 text-stone-400 hover:border-stone-300 hover:text-stone-600 transition-colors cursor-pointer">
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><circle cx="10" cy="4" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="10" cy="16" r="1.5"/></svg>
+    </button>
+    <template x-teleport="body">
+        <div :style="open ? menuStyle : { display: 'none' }"
+             @click.outside="open = false"
+             class="w-36 bg-white rounded-xl border border-stone-200 shadow-lg py-1">
+            <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=post_id %}?account={{ account_id }}"
+               class="flex items-center gap-2 px-3 py-2 text-sm text-stone-700 hover:bg-stone-50 transition-colors">
+                <svg class="w-4 h-4 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                Edit
+            </a>
+            <button @click.stop="open = false; $dispatch('open-delete-modal', { postId: '{{ post_id }}', accountId: '{{ account_id }}' })"
+                    class="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors cursor-pointer">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                Delete
+            </button>
+        </div>
+    </template>
+</div>

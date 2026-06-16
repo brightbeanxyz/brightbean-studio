@@ -155,7 +155,7 @@ def inbox_feed(request, workspace_id):
 
     context = {
         "workspace": workspace,
-        "messages": messages,
+        "inbox_messages": messages,
         "sla_config": sla_config,
         "team_members": team_members,
         "social_accounts": social_accounts,
@@ -414,7 +414,7 @@ def bulk_action(request, workspace_id):
         :MESSAGES_PER_PAGE
     ]
 
-    context = {"workspace": workspace, "messages": messages}
+    context = {"workspace": workspace, "inbox_messages": messages}
     return render(request, "inbox/partials/_message_list.html", context)
 
 
