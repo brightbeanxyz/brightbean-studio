@@ -483,7 +483,7 @@ def select_account(request):
                 workspace_id=workspace_id,
                 platform=platform,
                 profile=profile,
-                access_token=page.get("access_token", user_tokens["access_token"]),
+                access_token=page.get("access_token") or user_tokens["access_token"],
                 refresh_token=user_tokens.get("refresh_token"),
                 expires_in=None,
             )

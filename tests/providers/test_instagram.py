@@ -61,3 +61,32 @@ def test_get_user_pages_returns_linked_instagram_business_accounts():
             ),
         },
     )
+
+
+def test_get_user_pages_omits_blank_page_access_token():
+    provider = InstagramProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        return_value=MagicMock(
+            json=MagicMock(
+                return_value={
+                    "data": [
+                        {
+                            "id": "page-1",
+                            "name": "Facebook Page",
+                            "access_token": "",
+                            "instagram_business_account": {
+                                "id": "17841400000000000",
+                                "username": "brightbean",
+                                "name": "Brightbean",
+                            },
+                        },
+                    ]
+                }
+            )
+        )
+    )
+
+    accounts = provider.get_user_pages("user-token")
+
+    assert len(accounts) == 1
+    assert "access_token" not in accounts[0]
