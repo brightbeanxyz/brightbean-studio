@@ -224,19 +224,20 @@ class InstagramProvider(SocialProvider):
 
             username = ig_account.get("username", "")
             name = ig_account.get("name") or username or page.get("name", "")
-            accounts.append(
-                {
-                    "id": str(ig_account["id"]),
-                    "name": name,
-                    "handle": username,
-                    "access_token": page.get("access_token", ""),
-                    "category": page.get("category", ""),
-                    "picture": picture_url,
-                    "followers_count": ig_account.get("followers_count", 0),
-                    "page_id": page.get("id"),
-                    "page_name": page.get("name", ""),
-                }
-            )
+            account = {
+                "id": str(ig_account["id"]),
+                "name": name,
+                "handle": username,
+                "category": page.get("category", ""),
+                "picture": picture_url,
+                "followers_count": ig_account.get("followers_count", 0),
+                "page_id": page.get("id"),
+                "page_name": page.get("name", ""),
+            }
+            page_token = page.get("access_token")
+            if page_token:
+                account["access_token"] = page_token
+            accounts.append(account)
         return accounts
 
     # ------------------------------------------------------------------

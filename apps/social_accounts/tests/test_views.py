@@ -162,6 +162,70 @@ class TestOAuthCallbackView:
 
 
 @pytest.mark.django_db
+class TestSelectAccountView:
+    def test_blank_page_access_token_falls_back_to_user_token(self, authenticated_client, workspace):
+        session = authenticated_client.session
+        session["oauth_page_select"] = {
+            "workspace_id": str(workspace.id),
+            "platform": "instagram",
+            "user_tokens": {
+                "access_token": "user-token",
+                "refresh_token": "refresh-token",
+            },
+            "pages": [
+                {
+                    "id": "17841400000000000",
+                    "name": "Brightbean",
+                    "handle": "brightbean",
+                    "access_token": "",
+                }
+            ],
+        }
+        session.save()
+
+        url = reverse("social_accounts:select_account")
+        response = authenticated_client.post(url, {"selected_pages": ["17841400000000000"]})
+
+        assert response.status_code == 302
+        account = SocialAccount.objects.get(
+            workspace=workspace,
+            platform="instagram",
+            account_platform_id="17841400000000000",
+        )
+        assert account.oauth_access_token == "user-token"
+        assert account.oauth_refresh_token == "refresh-token"
+
+    def test_facebook_page_without_access_token_is_not_connected(self, authenticated_client, workspace):
+        session = authenticated_client.session
+        session["oauth_page_select"] = {
+            "workspace_id": str(workspace.id),
+            "platform": "facebook",
+            "user_tokens": {
+                "access_token": "user-token",
+                "refresh_token": "refresh-token",
+            },
+            "pages": [
+                {
+                    "id": "page-1",
+                    "name": "Brightbean Page",
+                    "access_token": "",
+                }
+            ],
+        }
+        session.save()
+
+        url = reverse("social_accounts:select_account")
+        response = authenticated_client.post(url, {"selected_pages": ["page-1"]})
+
+        assert response.status_code == 302
+        assert not SocialAccount.objects.filter(
+            workspace=workspace,
+            platform="facebook",
+            account_platform_id="page-1",
+        ).exists()
+
+
+@pytest.mark.django_db
 class TestDisconnectView:
     def test_disconnect_removes_account(self, authenticated_client, workspace):
         account = SocialAccount.objects.create(
