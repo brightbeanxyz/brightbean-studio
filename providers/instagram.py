@@ -182,6 +182,65 @@ class InstagramProvider(SocialProvider):
         )
 
     # ------------------------------------------------------------------
+    # Accounts
+    # ------------------------------------------------------------------
+
+    def get_user_pages(self, access_token: str) -> list[dict]:
+        """Fetch linked Instagram Business accounts for Facebook-login OAuth.
+
+        The user authenticates through Facebook, but the connected account in
+        Brightbean should be the Instagram Business account selected from the
+        Facebook Pages the user manages.
+        """
+        resp = self._request(
+            "GET",
+            f"{BASE_URL}/me/accounts",
+            access_token=access_token,
+            params={
+                "fields": (
+                    "id,name,access_token,category,picture,"
+                    "instagram_business_account{id,username,name,profile_picture_url,followers_count}"
+                ),
+            },
+        )
+        data = resp.json()
+        if "error" in data:
+            logger.error("Instagram /me/accounts error: %s", data["error"])
+            raise APIError(
+                f"Failed to fetch Instagram accounts: {data['error'].get('message', 'Unknown error')}",
+                platform=self.platform_name,
+                raw_response=data,
+            )
+
+        accounts: list[dict] = []
+        for page in data.get("data", []):
+            ig_account = page.get("instagram_business_account")
+            if not ig_account:
+                continue
+
+            picture_url = ig_account.get("profile_picture_url")
+            if not picture_url and "picture" in page and "data" in page["picture"]:
+                picture_url = page["picture"]["data"].get("url")
+
+            username = ig_account.get("username", "")
+            name = ig_account.get("name") or username or page.get("name", "")
+            account = {
+                "id": str(ig_account["id"]),
+                "name": name,
+                "handle": username,
+                "category": page.get("category", ""),
+                "picture": picture_url,
+                "followers_count": ig_account.get("followers_count", 0),
+                "page_id": page.get("id"),
+                "page_name": page.get("name", ""),
+            }
+            page_token = page.get("access_token")
+            if page_token:
+                account["access_token"] = page_token
+            accounts.append(account)
+        return accounts
+
+    # ------------------------------------------------------------------
     # Publishing (two-step container flow)
     # ------------------------------------------------------------------
 
@@ -358,7 +417,9 @@ class InstagramProvider(SocialProvider):
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         ig_user_id = self.credentials.get("ig_user_id", "me")
-        metrics = ["impressions", "reach", "follower_count", "profile_views"]
+        since = int(date_range[0].timestamp())
+        until = int(date_range[1].timestamp())
+        metrics = ["reach", "follower_count", "profile_views"]
         resp = self._request(
             "GET",
             f"{BASE_URL}/{ig_user_id}/insights",
@@ -366,8 +427,8 @@ class InstagramProvider(SocialProvider):
             params={
                 "metric": ",".join(metrics),
                 "period": "day",
-                "since": int(date_range[0].timestamp()),
-                "until": int(date_range[1].timestamp()),
+                "since": since,
+                "until": until,
             },
         )
         data = resp.json()
@@ -377,12 +438,32 @@ class InstagramProvider(SocialProvider):
             val = entry.get("values", [{}])[0].get("value", 0)
             values[name] = val
 
+        views_resp = self._request(
+            "GET",
+            f"{BASE_URL}/{ig_user_id}/insights",
+            access_token=access_token,
+            params={
+                "metric": "views",
+                "period": "day",
+                "metric_type": "total_value",
+                "since": since,
+                "until": until,
+            },
+        )
+        views_data = views_resp.json()
+        for entry in views_data.get("data", []):
+            if entry.get("name") == "views":
+                values["views"] = entry.get("total_value", {}).get("value", 0)
+                break
+
         return AccountMetrics(
-            impressions=values.get("impressions", 0),
             reach=values.get("reach", 0),
             followers=values.get("follower_count", 0),
             profile_views=values.get("profile_views", 0),
-            extra={"raw_insights": values},
+            extra={
+                "views": values.get("views", 0),
+                "raw_insights": values,
+            },
         )
 
     # ------------------------------------------------------------------

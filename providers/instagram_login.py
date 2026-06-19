@@ -419,7 +419,9 @@ class InstagramLoginProvider(SocialProvider):
         )
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
-        metrics = ["impressions", "reach", "follower_count", "profile_views"]
+        since = int(date_range[0].timestamp())
+        until = int(date_range[1].timestamp())
+        metrics = ["reach", "follower_count", "profile_views"]
         resp = self._request(
             "GET",
             f"{API_BASE}/me/insights",
@@ -427,8 +429,8 @@ class InstagramLoginProvider(SocialProvider):
             params={
                 "metric": ",".join(metrics),
                 "period": "day",
-                "since": int(date_range[0].timestamp()),
-                "until": int(date_range[1].timestamp()),
+                "since": since,
+                "until": until,
             },
         )
         data = resp.json()
@@ -438,12 +440,32 @@ class InstagramLoginProvider(SocialProvider):
             val = entry.get("values", [{}])[0].get("value", 0)
             values[name] = val
 
+        views_resp = self._request(
+            "GET",
+            f"{API_BASE}/me/insights",
+            access_token=access_token,
+            params={
+                "metric": "views",
+                "period": "day",
+                "metric_type": "total_value",
+                "since": since,
+                "until": until,
+            },
+        )
+        views_data = views_resp.json()
+        for entry in views_data.get("data", []):
+            if entry.get("name") == "views":
+                values["views"] = entry.get("total_value", {}).get("value", 0)
+                break
+
         return AccountMetrics(
-            impressions=values.get("impressions", 0),
             reach=values.get("reach", 0),
             followers=values.get("follower_count", 0),
             profile_views=values.get("profile_views", 0),
-            extra={"raw_insights": values},
+            extra={
+                "views": values.get("views", 0),
+                "raw_insights": values,
+            },
         )
 
     # ------------------------------------------------------------------

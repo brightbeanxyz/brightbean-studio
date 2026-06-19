@@ -74,6 +74,8 @@ def _resolve_publish_credentials(account):
             )
     elif platform == "bluesky" and account.instance_url:
         credentials["pds_url"] = account.instance_url
+    elif platform == "instagram":
+        credentials["ig_user_id"] = account.account_platform_id
 
     return credentials
 
@@ -336,6 +338,10 @@ class PublishEngine:
             # Inject page_id for Facebook from the connected account.
             if platform == "facebook" and "page_id" not in extra:
                 extra["page_id"] = account.account_platform_id
+
+            # Inject Instagram user ID for Facebook-login Instagram accounts.
+            if platform == "instagram" and "ig_user_id" not in extra:
+                extra["ig_user_id"] = account.account_platform_id
 
             # Inject org author URN for LinkedIn Company Page.
             if platform == "linkedin_company" and "author" not in extra:

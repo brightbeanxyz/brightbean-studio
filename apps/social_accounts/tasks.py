@@ -46,6 +46,8 @@ def check_social_account_health(account_id: str):
             }
         except MastodonAppRegistration.DoesNotExist:
             pass
+    elif account.platform == PlatformCredential.Platform.INSTAGRAM:
+        credentials = {**credentials, "ig_user_id": account.account_platform_id}
 
     try:
         provider = get_provider(account.platform, credentials)

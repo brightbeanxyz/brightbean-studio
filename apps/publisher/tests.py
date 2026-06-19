@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
-from apps.publisher.engine import MAX_RETRIES, RETRY_BACKOFF, PublishEngine
+from apps.publisher.engine import MAX_RETRIES, RETRY_BACKOFF, PublishEngine, _resolve_publish_credentials
 from apps.publisher.models import PublishLog, RateLimitState
 from providers.types import AuthType, PostType, PublishResult
 
@@ -150,6 +150,21 @@ class DispatchExtraInjectionTest(SimpleTestCase):
 
     @patch("apps.publisher.engine.get_provider")
     @patch("apps.publisher.engine._resolve_publish_credentials", return_value={})
+    def test_injects_ig_user_id_for_instagram(self, _mock_creds, mock_get_provider):
+        engine, platform_post, mock_provider = _build_dispatch_mocks(
+            platform="instagram",
+            account_platform_id="17841400000000000",
+        )
+        mock_get_provider.return_value = mock_provider
+
+        engine._dispatch_to_provider(platform_post)
+
+        mock_provider.publish_post.assert_called_once()
+        _access_token, content = mock_provider.publish_post.call_args.args
+        self.assertEqual(content.extra.get("ig_user_id"), "17841400000000000")
+
+    @patch("apps.publisher.engine.get_provider")
+    @patch("apps.publisher.engine._resolve_publish_credentials", return_value={})
     def test_does_not_overwrite_explicit_author(self, _mock_creds, mock_get_provider):
         # When the caller has already set extra["author"], the engine must not
         # overwrite it — important for callers that pass a different URN.
@@ -179,6 +194,19 @@ class DispatchExtraInjectionTest(SimpleTestCase):
 
         _access_token, content = mock_provider.publish_post.call_args.args
         self.assertNotIn("author", content.extra)
+
+
+class ResolvePublishCredentialsTest(SimpleTestCase):
+    @patch("apps.publisher.engine.resolve_platform_credentials", return_value={"client_id": "id"})
+    def test_instagram_credentials_include_selected_ig_user_id(self, _mock_resolve):
+        account = MagicMock()
+        account.platform = "instagram"
+        account.account_platform_id = "17841400000000000"
+        account.workspace.organization_id = "org-1"
+
+        credentials = _resolve_publish_credentials(account)
+
+        self.assertEqual(credentials["ig_user_id"], "17841400000000000")
 
 
 class NonRetryableFailureTest(TestCase):
