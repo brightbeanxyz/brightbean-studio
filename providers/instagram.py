@@ -417,7 +417,9 @@ class InstagramProvider(SocialProvider):
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         ig_user_id = self.credentials.get("ig_user_id", "me")
-        metrics = ["reach", "follower_count", "profile_views", "views"]
+        since = int(date_range[0].timestamp())
+        until = int(date_range[1].timestamp())
+        metrics = ["reach", "follower_count", "profile_views"]
         resp = self._request(
             "GET",
             f"{BASE_URL}/{ig_user_id}/insights",
@@ -425,8 +427,8 @@ class InstagramProvider(SocialProvider):
             params={
                 "metric": ",".join(metrics),
                 "period": "day",
-                "since": int(date_range[0].timestamp()),
-                "until": int(date_range[1].timestamp()),
+                "since": since,
+                "until": until,
             },
         )
         data = resp.json()
@@ -435,6 +437,24 @@ class InstagramProvider(SocialProvider):
             name = entry.get("name", "")
             val = entry.get("values", [{}])[0].get("value", 0)
             values[name] = val
+
+        views_resp = self._request(
+            "GET",
+            f"{BASE_URL}/{ig_user_id}/insights",
+            access_token=access_token,
+            params={
+                "metric": "views",
+                "period": "day",
+                "metric_type": "total_value",
+                "since": since,
+                "until": until,
+            },
+        )
+        views_data = views_resp.json()
+        for entry in views_data.get("data", []):
+            if entry.get("name") == "views":
+                values["views"] = entry.get("total_value", {}).get("value", 0)
+                break
 
         return AccountMetrics(
             reach=values.get("reach", 0),
