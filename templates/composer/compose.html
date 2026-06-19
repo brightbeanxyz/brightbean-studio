@@ -1440,7 +1440,7 @@
         </div>
 
         <div id="preview-panel" class="flex-1 overflow-y-auto p-4 space-y-4 panel-scroll"
-             hx-get="{% url 'composer:preview' workspace_id=workspace.id %}"
+             hx-post="{% url 'composer:preview' workspace_id=workspace.id %}"
              hx-trigger="previewUpdate from:body"
              hx-include="#composer-form"
              hx-vals='js:{"title": document.querySelector("input[name=title]")?.value || "", "caption": document.querySelector("[name=caption]")?.value || "", "selected_accounts": document.querySelector("[name=selected_accounts]")?.value || "", "_autosave_post_id": document.querySelector("[name=_autosave_post_id]")?.value || ""}'>
