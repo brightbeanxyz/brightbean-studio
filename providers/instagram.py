@@ -416,7 +416,7 @@ class InstagramProvider(SocialProvider):
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         ig_user_id = self.credentials.get("ig_user_id", "me")
-        metrics = ["impressions", "reach", "follower_count", "profile_views"]
+        metrics = ["reach", "follower_count", "profile_views", "views"]
         resp = self._request(
             "GET",
             f"{BASE_URL}/{ig_user_id}/insights",
@@ -436,11 +436,13 @@ class InstagramProvider(SocialProvider):
             values[name] = val
 
         return AccountMetrics(
-            impressions=values.get("impressions", 0),
             reach=values.get("reach", 0),
             followers=values.get("follower_count", 0),
             profile_views=values.get("profile_views", 0),
-            extra={"raw_insights": values},
+            extra={
+                "views": values.get("views", 0),
+                "raw_insights": values,
+            },
         )
 
     # ------------------------------------------------------------------
