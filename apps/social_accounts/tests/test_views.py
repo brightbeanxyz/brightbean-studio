@@ -195,6 +195,35 @@ class TestSelectAccountView:
         assert account.oauth_access_token == "user-token"
         assert account.oauth_refresh_token == "refresh-token"
 
+    def test_facebook_page_without_access_token_is_not_connected(self, authenticated_client, workspace):
+        session = authenticated_client.session
+        session["oauth_page_select"] = {
+            "workspace_id": str(workspace.id),
+            "platform": "facebook",
+            "user_tokens": {
+                "access_token": "user-token",
+                "refresh_token": "refresh-token",
+            },
+            "pages": [
+                {
+                    "id": "page-1",
+                    "name": "Brightbean Page",
+                    "access_token": "",
+                }
+            ],
+        }
+        session.save()
+
+        url = reverse("social_accounts:select_account")
+        response = authenticated_client.post(url, {"selected_pages": ["page-1"]})
+
+        assert response.status_code == 302
+        assert not SocialAccount.objects.filter(
+            workspace=workspace,
+            platform="facebook",
+            account_platform_id="page-1",
+        ).exists()
+
 
 @pytest.mark.django_db
 class TestDisconnectView:

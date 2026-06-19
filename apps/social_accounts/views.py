@@ -472,6 +472,16 @@ def select_account(request):
 
     for page in page_data["pages"]:
         if page["id"] in selected_ids:
+            access_token = page.get("access_token")
+            if not access_token and platform == "instagram":
+                access_token = user_tokens["access_token"]
+            if not access_token:
+                messages.error(
+                    request,
+                    f"Could not connect {page['name']}: the platform did not provide an account token.",
+                )
+                continue
+
             profile = AccountProfile(
                 platform_id=page["id"],
                 name=page["name"],
@@ -483,7 +493,7 @@ def select_account(request):
                 workspace_id=workspace_id,
                 platform=platform,
                 profile=profile,
-                access_token=page.get("access_token") or user_tokens["access_token"],
+                access_token=access_token,
                 refresh_token=user_tokens.get("refresh_token"),
                 expires_in=None,
             )
