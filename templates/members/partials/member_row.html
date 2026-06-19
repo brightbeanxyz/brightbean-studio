@@ -78,7 +78,8 @@
                 <!-- Manage Workspaces -->
                 <button @click="showWorkspaces = true; showActions = false"
                         hx-get="{% url 'members:manage_workspaces' membership_id=member.membership.id %}"
-                        hx-target="#ws-modal-content"
+                        hx-target="#ws-modal-content-{{ member.membership.id }}"
+                        hx-swap="innerHTML"
                         class="btn-neutral-surface w-full text-left px-3 py-2 text-sm cursor-pointer transition-colors"
                         style="color: var(--text-primary);">
                     Manage Workspaces
@@ -136,7 +137,7 @@
                         <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                 </div>
-                <div id="ws-modal-content">
+                <div id="ws-modal-content-{{ member.membership.id }}">
                     <p class="text-sm" style="color: var(--text-tertiary);">Loading...</p>
                 </div>
             </div>
