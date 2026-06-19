@@ -336,6 +336,7 @@ def _parse_expires_at(expires_at_str: str):
         # would otherwise hand back a naive *midnight*, expiring it a day early.
         dt = datetime.combine(date_only, time.max)
 
+    assert dt is not None
     if timezone.is_naive(dt):
         dt = timezone.make_aware(dt, timezone.get_current_timezone())
     return dt, None

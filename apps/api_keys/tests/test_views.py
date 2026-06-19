@@ -513,9 +513,7 @@ class TestEditKey:
         r = member_client.post(reverse("api_keys:edit", args=[uuid4()]))
         assert r.status_code == 403
 
-    def test_success_updates_permissions_accounts_and_expiry(
-        self, admin_client, admin_user, workspace, social_account
-    ):
+    def test_success_updates_permissions_accounts_and_expiry(self, admin_client, admin_user, workspace, social_account):
         from apps.social_accounts.models import SocialAccount
 
         second = SocialAccount.objects.create(
@@ -600,9 +598,7 @@ class TestEditKey:
             name="Foreign Edit",
             tos_accepted_at=timezone.now(),
         )
-        OrgMembership.objects.create(
-            user=foreign_user, organization=other_org, org_role=OrgMembership.OrgRole.OWNER
-        )
+        OrgMembership.objects.create(user=foreign_user, organization=other_org, org_role=OrgMembership.OrgRole.OWNER)
         WorkspaceMembership.objects.create(
             user=foreign_user,
             workspace=foreign_ws,
