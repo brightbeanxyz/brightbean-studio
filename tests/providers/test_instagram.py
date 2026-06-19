@@ -1,6 +1,8 @@
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 from providers.instagram import InstagramProvider
+from providers.instagram_login import InstagramLoginProvider
 
 
 def test_get_user_pages_returns_linked_instagram_business_accounts():
@@ -61,3 +63,71 @@ def test_get_user_pages_returns_linked_instagram_business_accounts():
             ),
         },
     )
+
+
+def test_account_metrics_use_current_instagram_insights_metrics():
+    provider = InstagramProvider({"client_id": "id", "client_secret": "secret", "ig_user_id": "ig-1"})
+    provider._request = MagicMock(
+        return_value=MagicMock(
+            json=MagicMock(
+                return_value={
+                    "data": [
+                        {"name": "reach", "values": [{"value": 12}]},
+                        {"name": "follower_count", "values": [{"value": 34}]},
+                        {"name": "profile_views", "values": [{"value": 5}]},
+                        {"name": "views", "values": [{"value": 67}]},
+                    ]
+                }
+            )
+        )
+    )
+
+    metrics = provider.get_account_metrics(
+        "page-token",
+        (
+            datetime(2026, 6, 18, tzinfo=UTC),
+            datetime(2026, 6, 19, tzinfo=UTC),
+        ),
+    )
+
+    assert metrics.impressions == 0
+    assert metrics.reach == 12
+    assert metrics.followers == 34
+    assert metrics.profile_views == 5
+    assert metrics.extra["views"] == 67
+    request_kwargs = provider._request.call_args.kwargs
+    assert request_kwargs["params"]["metric"] == "reach,follower_count,profile_views,views"
+
+
+def test_instagram_login_account_metrics_use_current_insights_metrics():
+    provider = InstagramLoginProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        return_value=MagicMock(
+            json=MagicMock(
+                return_value={
+                    "data": [
+                        {"name": "reach", "values": [{"value": 12}]},
+                        {"name": "follower_count", "values": [{"value": 34}]},
+                        {"name": "profile_views", "values": [{"value": 5}]},
+                        {"name": "views", "values": [{"value": 67}]},
+                    ]
+                }
+            )
+        )
+    )
+
+    metrics = provider.get_account_metrics(
+        "ig-token",
+        (
+            datetime(2026, 6, 18, tzinfo=UTC),
+            datetime(2026, 6, 19, tzinfo=UTC),
+        ),
+    )
+
+    assert metrics.impressions == 0
+    assert metrics.reach == 12
+    assert metrics.followers == 34
+    assert metrics.profile_views == 5
+    assert metrics.extra["views"] == 67
+    request_kwargs = provider._request.call_args.kwargs
+    assert request_kwargs["params"]["metric"] == "reach,follower_count,profile_views,views"
