@@ -7,7 +7,8 @@ from django.core import signing
 from django.urls import reverse
 
 from apps.social_accounts.models import SocialAccount
-from apps.social_accounts.views import _sign_state, _unsign_state
+from apps.social_accounts.views import OAUTH_SESSION_KEY, _sign_state, _unsign_state
+from providers.types import OAuthTokens
 
 
 @pytest.fixture
@@ -129,6 +130,35 @@ class TestOAuthCallbackView:
         url = reverse("social_accounts:oauth_callback", kwargs={"platform": "facebook"})
         response = authenticated_client.get(url, {"code": "abc123", "state": "invalid_state"})
         assert response.status_code == 302
+
+    def test_instagram_redirects_to_account_selection(self, authenticated_client, workspace, user):
+        nonce = "nonce-123"
+        state = _sign_state(workspace.id, "instagram", user.id, nonce)
+        session = authenticated_client.session
+        session[OAUTH_SESSION_KEY] = {"nonce": nonce}
+        session.save()
+
+        mock_provider = MagicMock()
+        mock_provider.exchange_code.return_value = OAuthTokens(access_token="user-token", refresh_token="refresh")
+        mock_provider.get_user_pages.return_value = [
+            {
+                "id": "17841400000000000",
+                "name": "Brightbean",
+                "handle": "brightbean",
+                "access_token": "page-token",
+            }
+        ]
+        url = reverse("social_accounts:oauth_callback", kwargs={"platform": "instagram"})
+
+        with patch("apps.social_accounts.views._get_provider_for_platform", return_value=mock_provider):
+            response = authenticated_client.get(url, {"code": "abc123", "state": state})
+
+        assert response.status_code == 302
+        assert response.url == reverse("social_accounts:select_account")
+        mock_provider.get_profile.assert_not_called()
+        page_data = authenticated_client.session["oauth_page_select"]
+        assert page_data["platform"] == "instagram"
+        assert page_data["pages"][0]["id"] == "17841400000000000"
 
 
 @pytest.mark.django_db
