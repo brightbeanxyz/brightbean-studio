@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 from providers.instagram import InstagramProvider
 from providers.instagram_login import InstagramLoginProvider
@@ -68,18 +68,32 @@ def test_get_user_pages_returns_linked_instagram_business_accounts():
 def test_account_metrics_use_current_instagram_insights_metrics():
     provider = InstagramProvider({"client_id": "id", "client_secret": "secret", "ig_user_id": "ig-1"})
     provider._request = MagicMock(
-        return_value=MagicMock(
-            json=MagicMock(
-                return_value={
-                    "data": [
-                        {"name": "reach", "values": [{"value": 12}]},
-                        {"name": "follower_count", "values": [{"value": 34}]},
-                        {"name": "profile_views", "values": [{"value": 5}]},
-                        {"name": "views", "values": [{"value": 67}]},
-                    ]
-                }
-            )
-        )
+        side_effect=[
+            MagicMock(
+                json=MagicMock(
+                    return_value={
+                        "data": [
+                            {"name": "reach", "values": [{"value": 12}]},
+                            {"name": "follower_count", "values": [{"value": 34}]},
+                            {"name": "profile_views", "values": [{"value": 5}]},
+                        ]
+                    }
+                )
+            ),
+            MagicMock(
+                json=MagicMock(
+                    return_value={
+                        "data": [
+                            {
+                                "name": "views",
+                                "period": "day",
+                                "total_value": {"value": 67},
+                            }
+                        ]
+                    }
+                )
+            ),
+        ]
     )
 
     metrics = provider.get_account_metrics(
@@ -95,25 +109,64 @@ def test_account_metrics_use_current_instagram_insights_metrics():
     assert metrics.followers == 34
     assert metrics.profile_views == 5
     assert metrics.extra["views"] == 67
-    request_kwargs = provider._request.call_args.kwargs
-    assert request_kwargs["params"]["metric"] == "reach,follower_count,profile_views,views"
+    provider._request.assert_has_calls(
+        [
+            call(
+                "GET",
+                "https://graph.facebook.com/v21.0/ig-1/insights",
+                access_token="page-token",
+                params={
+                    "metric": "reach,follower_count,profile_views",
+                    "period": "day",
+                    "since": 1781740800,
+                    "until": 1781827200,
+                },
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v21.0/ig-1/insights",
+                access_token="page-token",
+                params={
+                    "metric": "views",
+                    "period": "day",
+                    "metric_type": "total_value",
+                    "since": 1781740800,
+                    "until": 1781827200,
+                },
+            ),
+        ]
+    )
 
 
 def test_instagram_login_account_metrics_use_current_insights_metrics():
     provider = InstagramLoginProvider({"client_id": "id", "client_secret": "secret"})
     provider._request = MagicMock(
-        return_value=MagicMock(
-            json=MagicMock(
-                return_value={
-                    "data": [
-                        {"name": "reach", "values": [{"value": 12}]},
-                        {"name": "follower_count", "values": [{"value": 34}]},
-                        {"name": "profile_views", "values": [{"value": 5}]},
-                        {"name": "views", "values": [{"value": 67}]},
-                    ]
-                }
-            )
-        )
+        side_effect=[
+            MagicMock(
+                json=MagicMock(
+                    return_value={
+                        "data": [
+                            {"name": "reach", "values": [{"value": 12}]},
+                            {"name": "follower_count", "values": [{"value": 34}]},
+                            {"name": "profile_views", "values": [{"value": 5}]},
+                        ]
+                    }
+                )
+            ),
+            MagicMock(
+                json=MagicMock(
+                    return_value={
+                        "data": [
+                            {
+                                "name": "views",
+                                "period": "day",
+                                "total_value": {"value": 67},
+                            }
+                        ]
+                    }
+                )
+            ),
+        ]
     )
 
     metrics = provider.get_account_metrics(
@@ -129,5 +182,30 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
     assert metrics.followers == 34
     assert metrics.profile_views == 5
     assert metrics.extra["views"] == 67
-    request_kwargs = provider._request.call_args.kwargs
-    assert request_kwargs["params"]["metric"] == "reach,follower_count,profile_views,views"
+    provider._request.assert_has_calls(
+        [
+            call(
+                "GET",
+                "https://graph.instagram.com/v21.0/me/insights",
+                access_token="ig-token",
+                params={
+                    "metric": "reach,follower_count,profile_views",
+                    "period": "day",
+                    "since": 1781740800,
+                    "until": 1781827200,
+                },
+            ),
+            call(
+                "GET",
+                "https://graph.instagram.com/v21.0/me/insights",
+                access_token="ig-token",
+                params={
+                    "metric": "views",
+                    "period": "day",
+                    "metric_type": "total_value",
+                    "since": 1781740800,
+                    "until": 1781827200,
+                },
+            ),
+        ]
+    )
