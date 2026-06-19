@@ -150,6 +150,21 @@ class DispatchExtraInjectionTest(SimpleTestCase):
 
     @patch("apps.publisher.engine.get_provider")
     @patch("apps.publisher.engine._resolve_publish_credentials", return_value={})
+    def test_injects_ig_user_id_for_instagram(self, _mock_creds, mock_get_provider):
+        engine, platform_post, mock_provider = _build_dispatch_mocks(
+            platform="instagram",
+            account_platform_id="17841400000000000",
+        )
+        mock_get_provider.return_value = mock_provider
+
+        engine._dispatch_to_provider(platform_post)
+
+        mock_provider.publish_post.assert_called_once()
+        _access_token, content = mock_provider.publish_post.call_args.args
+        self.assertEqual(content.extra.get("ig_user_id"), "17841400000000000")
+
+    @patch("apps.publisher.engine.get_provider")
+    @patch("apps.publisher.engine._resolve_publish_credentials", return_value={})
     def test_does_not_overwrite_explicit_author(self, _mock_creds, mock_get_provider):
         # When the caller has already set extra["author"], the engine must not
         # overwrite it — important for callers that pass a different URN.
