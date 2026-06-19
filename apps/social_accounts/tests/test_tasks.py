@@ -65,6 +65,30 @@ class TestCheckSocialAccountHealth:
         assert account.last_error == ""
 
     @patch("providers.get_provider")
+    def test_instagram_health_check_passes_selected_ig_user_id(self, mock_get_provider, workspace):
+        account = SocialAccount.objects.create(
+            workspace=workspace,
+            platform="instagram",
+            account_platform_id="17841400000000000",
+            account_name="Brightbean",
+            oauth_access_token="page-token",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        mock_provider = MagicMock()
+        mock_provider.get_profile.return_value = _profile(
+            platform_id="17841400000000000",
+            name="Brightbean",
+            handle="brightbean",
+        )
+        mock_get_provider.return_value = mock_provider
+
+        check_social_account_health.now(str(account.id))
+
+        _platform, credentials = mock_get_provider.call_args.args
+        assert credentials["ig_user_id"] == "17841400000000000"
+        mock_provider.get_profile.assert_called_once_with("page-token")
+
+    @patch("providers.get_provider")
     def test_failed_health_check_sets_error(self, mock_get_provider, connected_account):
         mock_provider = MagicMock()
         mock_provider.get_profile.side_effect = Exception("Token expired")

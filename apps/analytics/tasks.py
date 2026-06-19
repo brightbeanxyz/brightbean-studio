@@ -253,6 +253,8 @@ def _resolve_provider(account):
             }
         except MastodonAppRegistration.DoesNotExist:
             pass
+    elif account.platform == "instagram":
+        credentials = {**credentials, "ig_user_id": account.account_platform_id}
     return get_provider(account.platform, credentials)
 
 

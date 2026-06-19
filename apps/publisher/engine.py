@@ -74,6 +74,8 @@ def _resolve_publish_credentials(account):
             )
     elif platform == "bluesky" and account.instance_url:
         credentials["pds_url"] = account.instance_url
+    elif platform == "instagram":
+        credentials["ig_user_id"] = account.account_platform_id
 
     return credentials
 
