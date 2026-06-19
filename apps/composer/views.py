@@ -1008,7 +1008,7 @@ def autosave(request, workspace_id, post_id=None):
 
 
 @login_required
-@require_GET
+@require_POST
 def preview(request, workspace_id):
     """Live preview endpoint - renders platform-specific preview from form state.
 
@@ -1016,10 +1016,10 @@ def preview(request, workspace_id):
     Stateless - no DB queries except social account lookup.
     """
     workspace = _get_workspace(request, workspace_id)
-    title = request.GET.get("title", "")
-    caption = request.GET.get("caption", "")
-    first_comment = request.GET.get("first_comment", "")
-    selected_ids = _parse_selected_account_ids(request.GET.get("selected_accounts", ""))
+    title = request.POST.get("title", "")
+    caption = request.POST.get("caption", "")
+    first_comment = request.POST.get("first_comment", "")
+    selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
 
     # Build preview data per platform
     previews = []
@@ -1031,8 +1031,8 @@ def preview(request, workspace_id):
         for account in accounts:
             override_title_key = f"override_title_{account.id}"
             override_key = f"override_caption_{account.id}"
-            effective_title = request.GET.get(override_title_key, "") or title
-            effective_caption = request.GET.get(override_key, "") or caption
+            effective_title = request.POST.get(override_title_key, "") or title
+            effective_caption = request.POST.get(override_key, "") or caption
             char_limit = account.char_limit
             field_config = account.field_config
             previews.append(
@@ -1055,7 +1055,7 @@ def preview(request, workspace_id):
     from apps.media_library.models import MediaAsset
 
     media_items = []
-    post_id_str = request.GET.get("_autosave_post_id", "")
+    post_id_str = request.POST.get("_autosave_post_id", "")
 
     if post_id_str:
         try:
