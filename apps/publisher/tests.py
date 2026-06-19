@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
-from apps.publisher.engine import MAX_RETRIES, RETRY_BACKOFF, PublishEngine
+from apps.publisher.engine import MAX_RETRIES, RETRY_BACKOFF, PublishEngine, _resolve_publish_credentials
 from apps.publisher.models import PublishLog, RateLimitState
 from providers.types import AuthType, PostType, PublishResult
 
@@ -194,6 +194,19 @@ class DispatchExtraInjectionTest(SimpleTestCase):
 
         _access_token, content = mock_provider.publish_post.call_args.args
         self.assertNotIn("author", content.extra)
+
+
+class ResolvePublishCredentialsTest(SimpleTestCase):
+    @patch("apps.publisher.engine.resolve_platform_credentials", return_value={"client_id": "id"})
+    def test_instagram_credentials_include_selected_ig_user_id(self, _mock_resolve):
+        account = MagicMock()
+        account.platform = "instagram"
+        account.account_platform_id = "17841400000000000"
+        account.workspace.organization_id = "org-1"
+
+        credentials = _resolve_publish_credentials(account)
+
+        self.assertEqual(credentials["ig_user_id"], "17841400000000000")
 
 
 class NonRetryableFailureTest(TestCase):
