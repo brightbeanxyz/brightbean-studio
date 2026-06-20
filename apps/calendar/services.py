@@ -139,7 +139,9 @@ def add_to_queue(post, queue, priority=False):
     If *priority* is False, the post is placed at the earliest unoccupied
     position — filling any gap before appending after the last entry.
     """
-    occupied = set(queue.entries.values_list("position", flat=True))
+    # Exclude the post's own existing entry so that re-queuing an already-queued
+    # post does not treat its current position as a foreign obstacle.
+    occupied = set(queue.entries.exclude(post=post).values_list("position", flat=True))
 
     if priority:
         if 0 in occupied:
