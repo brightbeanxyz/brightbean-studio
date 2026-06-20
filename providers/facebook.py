@@ -320,7 +320,6 @@ class FacebookProvider(SocialProvider):
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
         metrics = [
             "post_impressions",
-            "post_engaged_users",
             "post_clicks",
             "post_reactions_by_type_total",
         ]
@@ -328,7 +327,7 @@ class FacebookProvider(SocialProvider):
             "GET",
             f"{BASE_URL}/{post_id}/insights",
             access_token=access_token,
-            params={"metric": ",".join(metrics)},
+            params={"metric": ",".join(metrics), "period": "lifetime"},
         )
         data = resp.json()
         values: dict = {}
@@ -342,21 +341,22 @@ class FacebookProvider(SocialProvider):
 
         return PostMetrics(
             impressions=values.get("post_impressions", 0),
-            engagements=values.get("post_engaged_users", 0),
             clicks=values.get("post_clicks", 0),
             likes=total_likes,
+            engagements=total_likes + values.get("post_clicks", 0),
             extra={"raw_insights": values},
         )
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         page_id = self.credentials.get("page_id", "me")
-        metrics = ["page_impressions", "page_engaged_users", "page_fans"]
+        metrics = ["page_impressions", "page_impressions_unique", "page_post_engagements", "page_fans"]
         resp = self._request(
             "GET",
             f"{BASE_URL}/{page_id}/insights",
             access_token=access_token,
             params={
                 "metric": ",".join(metrics),
+                "period": "day",
                 "since": int(date_range[0].timestamp()),
                 "until": int(date_range[1].timestamp()),
             },
@@ -370,9 +370,12 @@ class FacebookProvider(SocialProvider):
 
         return AccountMetrics(
             impressions=values.get("page_impressions", 0),
-            reach=values.get("page_engaged_users", 0),
+            reach=values.get("page_impressions_unique", 0),
             followers=values.get("page_fans", 0),
-            extra={"raw_insights": values},
+            extra={
+                "engagement": values.get("page_post_engagements", 0),
+                "raw_insights": values,
+            },
         )
 
     # ------------------------------------------------------------------

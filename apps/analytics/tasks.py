@@ -218,7 +218,7 @@ def _account_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
         if total_followers is not None:
             out["followers"] = float(total_followers)
     extra = getattr(metrics, "extra", {}) or {}
-    for key in ("views", "watch_time", "avg_view_pct", "subscribers", "likes", "comments", "shares"):
+    for key in ("views", "watch_time", "avg_view_pct", "subscribers", "likes", "comments", "shares", "engagement"):
         v = extra.get(key)
         if v is not None:
             with contextlib.suppress(TypeError, ValueError):
