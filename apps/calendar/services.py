@@ -16,8 +16,6 @@ DEFAULT_POSTING_SLOTS = {
     3: [time(9, 38), time(10, 52)],  # Thursday
 }
 
-TERMINAL_QUEUE_STATUSES = {"published", "failed"}
-
 
 def create_default_queue_and_slots(social_account):
     """Create a default Queue and PostingSlots for a newly connected social account.
@@ -99,10 +97,8 @@ def assign_queue_slots(queue):
     """
     from apps.composer.services import sync_post_scheduled_at
 
-    cleanup_terminal_queue_entries(queue=queue)
-
-    entries = list(queue.entries.select_related("post").order_by("position"))
-    if not entries:
+    entries = queue.entries.select_related("post").order_by("position")
+    if not entries.exists():
         return
 
     now = timezone.now()
@@ -110,21 +106,13 @@ def assign_queue_slots(queue):
 
     touched_posts = []
     for idx, entry in enumerate(entries):
-        entry_updates = []
-        if entry.position != idx:
-            entry.position = idx
-            entry_updates.append("position")
-
         slot_dt = slot_times[idx] if idx < len(slot_times) else None
-        if entry.assigned_slot_datetime != slot_dt:
-            entry.assigned_slot_datetime = slot_dt
-            entry_updates.append("assigned_slot_datetime")
-        if entry_updates:
-            entry.save(update_fields=entry_updates)
+        entry.assigned_slot_datetime = slot_dt
+        entry.save(update_fields=["assigned_slot_datetime"])
 
         # Write the per-platform scheduled_at on the matching PlatformPost.
         pp = entry.post.platform_posts.filter(social_account=queue.social_account).first()
-        if pp is not None and pp.status not in TERMINAL_QUEUE_STATUSES and pp.scheduled_at != slot_dt:
+        if pp is not None:
             pp.scheduled_at = slot_dt
             pp.save(update_fields=["scheduled_at", "updated_at"])
 
@@ -132,61 +120,6 @@ def assign_queue_slots(queue):
 
     for post in touched_posts:
         sync_post_scheduled_at(post)
-
-
-def cleanup_terminal_queue_entries(*, queue=None, social_account=None, dry_run=False):
-    """Remove completed posts from channel queues and clear stale schedules.
-
-    Queue entries are channel-specific through ``Queue.social_account`` while
-    posts can have multiple platform children. A Facebook child publishing
-    should remove only the Facebook queue entry, not the Instagram queue entry
-    for the same parent post.
-    """
-    from apps.composer.models import PlatformPost, Post
-    from apps.composer.services import sync_post_scheduled_at
-
-    queues = Queue.objects.filter(is_active=True)
-    if queue is not None:
-        queues = queues.filter(pk=queue.pk)
-    if social_account is not None:
-        queues = queues.filter(social_account=social_account)
-
-    removed_entries = 0
-    touched_post_ids: set = set()
-    for q in queues.select_related("social_account"):
-        stale_entries = QueueEntry.objects.filter(
-            queue=q,
-            post__platform_posts__social_account=q.social_account,
-            post__platform_posts__status__in=TERMINAL_QUEUE_STATUSES,
-        ).distinct()
-        touched_post_ids.update(stale_entries.values_list("post_id", flat=True))
-        if dry_run:
-            removed_entries += stale_entries.count()
-        else:
-            deleted, _ = stale_entries.delete()
-            removed_entries += deleted
-
-    terminal_posts = PlatformPost.objects.filter(status__in=TERMINAL_QUEUE_STATUSES)
-    if social_account is not None:
-        terminal_posts = terminal_posts.filter(social_account=social_account)
-    elif queue is not None:
-        terminal_posts = terminal_posts.filter(social_account=queue.social_account)
-
-    scheduled_terminal_posts = terminal_posts.exclude(scheduled_at__isnull=True)
-    touched_post_ids.update(scheduled_terminal_posts.values_list("post_id", flat=True))
-    if dry_run:
-        cleared_schedules = scheduled_terminal_posts.count()
-    else:
-        cleared_schedules = scheduled_terminal_posts.update(scheduled_at=None, updated_at=timezone.now())
-
-    if not dry_run:
-        for post in Post.objects.filter(pk__in=touched_post_ids):
-            sync_post_scheduled_at(post)
-
-    return {
-        "removed_entries": removed_entries,
-        "cleared_schedules": cleared_schedules,
-    }
 
 
 def add_to_queue(post, queue, priority=False):
