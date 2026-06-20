@@ -732,7 +732,7 @@ def save_post(request, workspace_id, post_id=None):
         # If opened from a specific calendar day (month/week/day "+" CTA), each
         # queue should use that day as its floor - re-assign slots accordingly.
         floor_date = form.cleaned_data.get("scheduled_date")
-        if floor_date:
+        if floor_date and not post_id:
             _reassign_queue_slots_from_floor(queues, post, floor_date, workspace)
         # Transition every child whose scheduled_at was filled in to "scheduled".
         _transition_post_children(post, "scheduled", only=_scoped_platform_post_ids(request, post))

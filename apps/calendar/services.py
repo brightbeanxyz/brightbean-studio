@@ -131,6 +131,10 @@ def assign_queue_slots(queue):
 def add_to_queue(post, queue, priority=False):
     """Add a post to a queue and recalculate slot assignments.
 
+    Re-adding an already queued post is idempotent unless ``priority`` is
+    requested. Editing an existing queued post should not move it into an
+    earlier gap and reshuffle the visible calendar.
+
     If *priority* is True the post is placed at position 0.  Existing entries
     are only shifted down by 1 when position 0 is already occupied, which
     preserves any gaps in the position sequence.  If position 0 is free (a
@@ -139,6 +143,11 @@ def add_to_queue(post, queue, priority=False):
     If *priority* is False, the post is placed at the earliest unoccupied
     position — filling any gap before appending after the last entry.
     """
+    existing_entry = queue.entries.filter(post=post).first()
+    if existing_entry is not None and not priority:
+        assign_queue_slots(queue)
+        return
+
     # Exclude the post's own existing entry so that re-queuing an already-queued
     # post does not treat its current position as a foreign obstacle.
     occupied = set(queue.entries.exclude(post=post).values_list("position", flat=True))
