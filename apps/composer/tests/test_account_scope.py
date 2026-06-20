@@ -6,11 +6,15 @@ autosave) deleted every sibling PlatformPost — including already-published
 ones, cascading away their PublishLog history.
 """
 
+from datetime import time, timedelta
+
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.calendar.models import PostingSlot, Queue, QueueEntry
+from apps.calendar.services import add_to_queue
 from apps.composer.models import PlatformPost, Post
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
@@ -262,3 +266,79 @@ class TikTokExtrasSyncTests(AccountScopeTestsBase):
         self.assertIn(response.status_code, (200, 204, 302))
         self.tt_pp.refresh_from_db()
         self.assertEqual(self.tt_pp.platform_extra, {"privacy_level": "SELF_ONLY"})
+
+
+class PublishOptionQueueCleanupTests(AccountScopeTestsBase):
+    def setUp(self):
+        super().setUp()
+        self.queue = Queue.objects.create(
+            workspace=self.workspace,
+            name="TikTok Queue",
+            social_account=self.tiktok,
+        )
+        for day in range(7):
+            PostingSlot.objects.create(social_account=self.tiktok, day_of_week=day, time=time(9, 0))
+
+    def test_switching_from_queue_to_manual_schedule_removes_queue_entry(self):
+        self.tt_pp.status = PlatformPost.Status.SCHEDULED
+        self.tt_pp.save(update_fields=["status"])
+        next_post = Post.objects.create(workspace=self.workspace, author=self.user, caption="next queued")
+        next_pp = PlatformPost.objects.create(
+            post=next_post,
+            social_account=self.tiktok,
+            status=PlatformPost.Status.SCHEDULED,
+        )
+        add_to_queue(self.post, self.queue)
+        add_to_queue(next_post, self.queue)
+        self.assertTrue(QueueEntry.objects.filter(queue=self.queue, post=self.post).exists())
+
+        manual_dt = timezone.localtime(timezone.now()) + timedelta(days=3)
+        response = self.client.post(
+            self.save_url,
+            data=self._payload(
+                action="schedule",
+                scheduled_date=manual_dt.date().isoformat(),
+                scheduled_time=manual_dt.strftime("%H:%M"),
+            ),
+        )
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.assertFalse(QueueEntry.objects.filter(queue=self.queue, post=self.post).exists())
+        next_entry = QueueEntry.objects.get(queue=self.queue, post=next_post)
+        self.assertEqual(next_entry.position, 0)
+        self.assertIsNotNone(next_entry.assigned_slot_datetime)
+        next_pp.refresh_from_db()
+        self.assertEqual(next_pp.scheduled_at, next_entry.assigned_slot_datetime)
+        self.tt_pp.refresh_from_db()
+        self.assertEqual(self.tt_pp.status, PlatformPost.Status.SCHEDULED)
+        self.assertIsNotNone(self.tt_pp.scheduled_at)
+
+    def test_scoped_manual_schedule_removes_only_scoped_channel_queue_entry(self):
+        youtube_queue = Queue.objects.create(
+            workspace=self.workspace,
+            name="YouTube Queue",
+            social_account=self.youtube,
+        )
+        for day in range(7):
+            PostingSlot.objects.create(social_account=self.youtube, day_of_week=day, time=time(10, 0))
+        self.yt_pp.status = PlatformPost.Status.SCHEDULED
+        self.yt_pp.published_at = None
+        self.yt_pp.save(update_fields=["status", "published_at"])
+        self.tt_pp.status = PlatformPost.Status.SCHEDULED
+        self.tt_pp.save(update_fields=["status"])
+        add_to_queue(self.post, self.queue)
+        add_to_queue(self.post, youtube_queue)
+
+        manual_dt = timezone.localtime(timezone.now()) + timedelta(days=3)
+        response = self.client.post(
+            self.save_url,
+            data=self._payload(
+                action="schedule",
+                scheduled_date=manual_dt.date().isoformat(),
+                scheduled_time=manual_dt.strftime("%H:%M"),
+            ),
+        )
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.assertFalse(QueueEntry.objects.filter(queue=self.queue, post=self.post).exists())
+        self.assertTrue(QueueEntry.objects.filter(queue=youtube_queue, post=self.post).exists())
