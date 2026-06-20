@@ -124,6 +124,26 @@ def _scoped_platform_post_ids(request, post):
     return list(post.platform_posts.filter(social_account_id=scope).values_list("id", flat=True))
 
 
+def _queue_removal_account_ids(request, post):
+    """Return channel IDs whose queue entries should be removed for this save.
+
+    Scoped composer saves only touch the scoped channel. Unscoped saves must
+    also include currently queued channels, even if the user just deselected
+    them, otherwise their QueueEntry rows survive the PlatformPost deletion.
+    """
+    scope = _get_account_scope(request)
+    if scope:
+        return [scope]
+
+    account_ids = set(_parse_selected_account_ids(request.POST.get("selected_accounts", "")))
+    queued_account_ids = post.queue_entries.filter(
+        queue__workspace=post.workspace,
+        queue__is_active=True,
+    ).values_list("queue__social_account_id", flat=True)
+    account_ids.update(str(account_id) for account_id in queued_account_ids)
+    return list(account_ids)
+
+
 def _sync_platform_posts(request, post, workspace, initial_status=None):
     """Sync platform post selections from form data.
 
@@ -691,9 +711,7 @@ def save_post(request, workspace_id, post_id=None):
             if post_id:
                 from apps.calendar.services import remove_from_queue
 
-                scope = _get_account_scope(request)
-                _acc_ids = [scope] if scope else _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
-                remove_from_queue(post, _acc_ids)
+                remove_from_queue(post, _queue_removal_account_ids(request, post))
             pending_target = "scheduled"
             initial_status = "scheduled"
         else:
@@ -711,9 +729,7 @@ def save_post(request, workspace_id, post_id=None):
         if post_id:
             from apps.calendar.services import remove_from_queue
 
-            scope = _get_account_scope(request)
-            _acc_ids = [scope] if scope else _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
-            remove_from_queue(post, _acc_ids)
+            remove_from_queue(post, _queue_removal_account_ids(request, post))
         pending_target = "scheduled"
         initial_status = "scheduled"
     elif action == "add_to_queue":
