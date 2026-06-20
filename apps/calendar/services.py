@@ -162,6 +162,23 @@ def add_to_queue(post, queue, priority=False):
     assign_queue_slots(queue)
 
 
+def remove_from_queue(post, social_account_ids):
+    """Remove *post* from queues for the given channels, preserving the freed slot as a gap.
+
+    Called when a post leaves the queue (e.g. the user switches from "next
+    available" / "prioritise" to a specific date or "publish now").
+    ``assign_queue_slots`` is intentionally NOT called so the vacated position
+    remains as an empty gap — the next "next available" placement will fill it.
+    """
+    if not social_account_ids:
+        return
+    QueueEntry.objects.filter(
+        queue__social_account_id__in=social_account_ids,
+        queue__is_active=True,
+        post=post,
+    ).delete()
+
+
 def reorder_queue(queue, ordered_entry_ids):
     """Reorder queue entries by a list of entry IDs and recalculate slots."""
     for idx, entry_id in enumerate(ordered_entry_ids):
