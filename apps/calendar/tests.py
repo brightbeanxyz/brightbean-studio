@@ -345,10 +345,11 @@ class CalendarChannelSlotViewTests(TestCase):
         context = {"display_timezone": "America/New_York"}
         _day_view_data(self.factory.get("/"), self.workspace, target, context)
 
+        hour_posts = dict((hour, posts) for hour, posts, _slots in context["day_slots"])[9]
         slot_items = dict((hour, slots) for hour, _posts, slots in context["day_slots"])[9]
-        self.assertEqual(len(slot_items), 1)
-        self.assertTrue(slot_items[0]["is_taken"])
-        self.assertEqual(slot_items[0]["time_label"], "09:30")
+        self.assertEqual(slot_items, [])
+        self.assertEqual(len(hour_posts), 1)
+        self.assertTrue(hour_posts[0].takes_calendar_slot)
 
     def test_day_view_channel_filter_limits_slot_badges(self):
         target = date(2026, 6, 15)  # Monday
