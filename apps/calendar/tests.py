@@ -1,17 +1,16 @@
 """Tests for the Content Calendar app (T-1A.2)."""
 
 import zoneinfo
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from unittest.mock import patch
 
-from django.core.management import call_command
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.calendar.models import PostingSlot, Queue, QueueEntry, RecurrenceRule
-from apps.calendar.services import add_to_queue, assign_queue_slots, cleanup_terminal_queue_entries
+from apps.calendar.services import add_to_queue
 from apps.calendar.tasks import generate_recurring_posts
 from apps.composer.models import PlatformPost, Post
 from apps.members.models import OrgMembership, WorkspaceMembership
@@ -305,115 +304,6 @@ class QueueSlotTimezoneTests(TestCase):
         entry = QueueEntry.objects.get(queue=self.queue, post=post)
         local = entry.assigned_slot_datetime.astimezone(zoneinfo.ZoneInfo("Asia/Tokyo"))
         self.assertEqual((local.hour, local.minute), (9, 0))
-
-
-class QueueTerminalCleanupTests(TestCase):
-    """Terminal platform posts should not keep consuming future queue slots."""
-
-    def setUp(self):
-        self.org = Organization.objects.create(name="Queue Org", default_timezone="America/New_York")
-        self.workspace = Workspace.objects.create(organization=self.org, name="Queue WS")
-        self.account = SocialAccount.objects.create(
-            workspace=self.workspace,
-            platform="instagram",
-            account_platform_id="ig-queue",
-            account_name="IG Queue",
-            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
-        )
-        self.queue = Queue.objects.create(
-            workspace=self.workspace,
-            name="IG Queue",
-            social_account=self.account,
-        )
-        for day in range(7):
-            PostingSlot.objects.create(social_account=self.account, day_of_week=day, time=time(9, 0))
-
-    def test_assign_queue_slots_removes_terminal_entries_before_reassigning(self):
-        published = Post.objects.create(workspace=self.workspace, caption="done")
-        published_pp = PlatformPost.objects.create(
-            post=published,
-            social_account=self.account,
-            status=PlatformPost.Status.PUBLISHED,
-            scheduled_at=timezone.now() + timedelta(days=7),
-            published_at=timezone.now(),
-        )
-        active = Post.objects.create(workspace=self.workspace, caption="next")
-        active_pp = PlatformPost.objects.create(
-            post=active,
-            social_account=self.account,
-            status=PlatformPost.Status.SCHEDULED,
-        )
-
-        QueueEntry.objects.create(
-            queue=self.queue,
-            post=published,
-            position=0,
-            assigned_slot_datetime=timezone.now() + timedelta(days=7),
-        )
-        active_entry = QueueEntry.objects.create(queue=self.queue, post=active, position=1)
-
-        assign_queue_slots(self.queue)
-
-        self.assertFalse(QueueEntry.objects.filter(queue=self.queue, post=published).exists())
-        published_pp.refresh_from_db()
-        self.assertIsNone(published_pp.scheduled_at)
-
-        active_entry.refresh_from_db()
-        active_pp.refresh_from_db()
-        self.assertEqual(active_entry.position, 0)
-        self.assertIsNotNone(active_entry.assigned_slot_datetime)
-        self.assertEqual(active_pp.scheduled_at, active_entry.assigned_slot_datetime)
-
-    def test_terminal_cleanup_is_scoped_to_the_matching_channel_queue(self):
-        facebook_account = SocialAccount.objects.create(
-            workspace=self.workspace,
-            platform="facebook",
-            account_platform_id="fb-queue",
-            account_name="FB Queue",
-            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
-        )
-        facebook_queue = Queue.objects.create(
-            workspace=self.workspace,
-            name="FB Queue",
-            social_account=facebook_account,
-        )
-        post = Post.objects.create(workspace=self.workspace, caption="multi")
-        PlatformPost.objects.create(
-            post=post,
-            social_account=self.account,
-            status=PlatformPost.Status.PUBLISHED,
-            scheduled_at=timezone.now() + timedelta(days=1),
-            published_at=timezone.now(),
-        )
-        PlatformPost.objects.create(
-            post=post,
-            social_account=facebook_account,
-            status=PlatformPost.Status.SCHEDULED,
-            scheduled_at=timezone.now() + timedelta(days=2),
-        )
-        QueueEntry.objects.create(queue=self.queue, post=post, position=0)
-        QueueEntry.objects.create(queue=facebook_queue, post=post, position=0)
-
-        cleanup_terminal_queue_entries(queue=self.queue)
-
-        self.assertFalse(QueueEntry.objects.filter(queue=self.queue, post=post).exists())
-        self.assertTrue(QueueEntry.objects.filter(queue=facebook_queue, post=post).exists())
-
-    def test_reset_queues_dry_run_reports_without_mutating(self):
-        post = Post.objects.create(workspace=self.workspace, caption="dry-run")
-        platform_post = PlatformPost.objects.create(
-            post=post,
-            social_account=self.account,
-            status=PlatformPost.Status.FAILED,
-            scheduled_at=timezone.now() + timedelta(days=3),
-        )
-        QueueEntry.objects.create(queue=self.queue, post=post, position=0)
-
-        call_command("reset_queues", "--account-id", str(self.account.id), "--dry-run")
-
-        self.assertTrue(QueueEntry.objects.filter(queue=self.queue, post=post).exists())
-        platform_post.refresh_from_db()
-        self.assertIsNotNone(platform_post.scheduled_at)
 
 
 class RecurringPostTimezoneTests(TestCase):

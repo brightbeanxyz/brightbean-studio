@@ -215,7 +215,6 @@ class PublishEngine:
                 platform_post.status = PlatformPost.Status.PUBLISHED
                 platform_post.published_at = timezone.now()
                 platform_post.save()
-                self._cleanup_terminal_queue_slot(platform_post)
 
                 # Log success
                 PublishLog.objects.create(
@@ -474,22 +473,12 @@ class PublishEngine:
         platform_post.status = PlatformPost.Status.FAILED
         platform_post.publish_error = error_msg
         platform_post.save()
-        self._cleanup_terminal_queue_slot(platform_post)
         logger.warning(
             "PlatformPost %s failed (%s): %s",
             platform_post.id,
             reason,
             error_msg,
         )
-
-    def _cleanup_terminal_queue_slot(self, platform_post):
-        """Release this account's queue slot after a terminal publish outcome."""
-        from apps.calendar.services import assign_queue_slots, cleanup_terminal_queue_entries
-
-        account = platform_post.social_account
-        cleanup_terminal_queue_entries(social_account=account)
-        for queue in account.queues.filter(is_active=True):
-            assign_queue_slots(queue)
 
     def _schedule_retry(self, platform_post, error_msg):
         """Schedule a retry with exponential backoff."""
