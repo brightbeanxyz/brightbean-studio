@@ -217,14 +217,6 @@ def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates
     last_date = max(visible_dates)
     occurrence_dates = [first_date + timedelta(days=offset) for offset in range((last_date - first_date).days + 1)]
 
-    taken_keys = set()
-    for pp in platform_posts:
-        if not pp.effective_at:
-            continue
-        local_dt = pp.effective_at.astimezone(display_tz)
-        if local_dt.date() in visible_dates:
-            taken_keys.add((pp.social_account_id, local_dt.date(), local_dt.hour, local_dt.minute))
-
     slots = PostingSlot.objects.filter(
         social_account__workspace=workspace,
         social_account__connection_status=SocialAccount.ConnectionStatus.CONNECTED,
@@ -241,6 +233,8 @@ def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates
     )
 
     slots_by_hour = defaultdict(list)
+    slot_keys = set()
+    slot_occurrences = []
     dates_by_weekday = defaultdict(list)
     for occurrence_date in occurrence_dates:
         dates_by_weekday[occurrence_date.weekday()].append(occurrence_date)
@@ -253,18 +247,37 @@ def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates
                 continue
 
             key = (slot.social_account_id, local_dt.date(), local_dt.hour, local_dt.minute)
-            slots_by_hour[(local_dt.date(), local_dt.hour)].append(
-                {
-                    "account": slot.social_account,
-                    "date": local_dt.date(),
-                    "hour": local_dt.hour,
-                    "minute": local_dt.minute,
-                    "time_label": local_dt.strftime("%H:%M"),
-                    "compose_date": workspace_dt.strftime("%Y-%m-%d"),
-                    "compose_time": workspace_dt.strftime("%H:%M"),
-                    "is_taken": key in taken_keys,
-                }
+            slot_keys.add(key)
+            slot_occurrences.append(
+                (
+                    key,
+                    {
+                        "account": slot.social_account,
+                        "date": local_dt.date(),
+                        "hour": local_dt.hour,
+                        "minute": local_dt.minute,
+                        "time_label": local_dt.strftime("%H:%M"),
+                        "compose_date": workspace_dt.strftime("%Y-%m-%d"),
+                        "compose_time": workspace_dt.strftime("%H:%M"),
+                    },
+                )
             )
+
+    taken_keys = set()
+    for pp in platform_posts:
+        pp.takes_calendar_slot = False
+        if not pp.effective_at:
+            continue
+        local_dt = pp.effective_at.astimezone(display_tz)
+        key = (pp.social_account_id, local_dt.date(), local_dt.hour, local_dt.minute)
+        if key in slot_keys:
+            pp.takes_calendar_slot = True
+            taken_keys.add(key)
+
+    for key, slot in slot_occurrences:
+        if key in taken_keys:
+            continue
+        slots_by_hour[(slot["date"], slot["hour"])].append(slot)
 
     return slots_by_hour
 
@@ -677,7 +690,7 @@ def _week_view_data(request, workspace, target_date, context):
     week_days = [monday + timedelta(days=i) for i in range(7)]
 
     # Widen query by ±1 day to handle timezone boundary shifts
-    platform_posts = (
+    platform_posts = list(
         _get_filtered_platform_posts(workspace, request)
         .filter(
             effective_at__date__gte=week_days[0] - timedelta(days=1),
@@ -740,7 +753,7 @@ def _day_view_data(request, workspace, target_date, context):
     display_tz = zoneinfo.ZoneInfo(context.get("display_timezone", "UTC"))
 
     # Widen query by ±1 day to handle timezone boundary shifts
-    platform_posts = (
+    platform_posts = list(
         _get_filtered_platform_posts(workspace, request)
         .filter(
             effective_at__date__gte=target_date - timedelta(days=1),

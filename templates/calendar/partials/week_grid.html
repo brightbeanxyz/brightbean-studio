@@ -33,15 +33,13 @@ Context: week_days, week_slots, workspace.
             {% if slot_items %}
             <div class="flex flex-col gap-1 mb-1">
                 {% for slot in slot_items %}
-                <div class="calendar-channel-slot calendar-channel-slot--week {% if slot.is_taken %}is-taken{% else %}is-open{% endif %}">
-                    <span class="w-4 h-4 rounded flex items-center justify-center pi-{{ slot.account.platform }} flex-shrink-0 text-white">
+                <div class="calendar-channel-slot calendar-channel-slot--week {% if day < today or day == today and hour < current_hour %}is-past-open{% endif %}">
+                    <span class="calendar-slot-platform-icon">
                         {% include "social_accounts/partials/_platform_icon.html" with platform=slot.account.platform size="3" %}
                     </span>
                     <span class="truncate">{{ slot.account.account_name|default:slot.account.account_handle }}</span>
                     <span class="tabular-nums text-stone-500">{{ slot.time_label }}</span>
-                    {% if slot.is_taken %}
-                    <span class="calendar-slot-state">Taken</span>
-                    {% elif day > today or day == today and hour >= current_hour %}
+                    {% if day > today or day == today and hour >= current_hour %}
                     <a href="{% url 'composer:compose' workspace_id=workspace.id %}?account={{ slot.account.id }}&scheduled_date={{ slot.compose_date }}&scheduled_time={{ slot.compose_time }}"
                        class="calendar-slot-add"
                        title="Schedule post for {{ slot.account.account_name|default:slot.account.account_handle }} at {{ slot.time_label }}">
@@ -74,6 +72,11 @@ Context: week_days, week_slots, workspace.
                 {% endif %}
                 {% endwith %}
                 <span class="truncate">{{ pp.post.title|default:pp.post.caption_snippet|truncatechars:28 }}</span>
+                {% if pp.takes_calendar_slot %}
+                <span class="calendar-post-slot-check" title="Scheduled in a channel slot">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                </span>
+                {% endif %}
             </a>
             {% endfor %}
         </div>

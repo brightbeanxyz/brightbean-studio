@@ -245,32 +245,29 @@
         border-radius: 6px;
         font-size: 11px;
         font-weight: 600;
-        border: 1px solid #E7E5E4;
-        background: #FAFAF9;
-        color: #44403C;
+        border: 1px dashed #E7E5E4;
+        background: #FFFFFF;
+        color: #78716C;
     }
     .calendar-channel-slot--week {
         width: 100%;
         font-size: 10px;
         gap: 4px;
     }
-    .calendar-channel-slot.is-open {
-        border-color: #FED7AA;
-        background: #FFF7ED;
+    .calendar-channel-slot.is-past-open {
+        opacity: 0.45;
+        background: #FAFAF9;
     }
-    .calendar-channel-slot.is-taken {
-        border-color: #BBF7D0;
-        background: #F0FDF4;
-    }
-    .calendar-slot-state {
+    .calendar-slot-platform-icon {
         flex-shrink: 0;
-        padding: 1px 5px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
         border-radius: 9999px;
-        background: rgba(255,255,255,0.72);
-        color: #57534E;
-        font-size: 9px;
-        text-transform: uppercase;
-        letter-spacing: 0;
+        background: #F5F5F4;
+        color: #78716C;
     }
     .calendar-slot-add {
         flex-shrink: 0;
@@ -280,13 +277,24 @@
         width: 18px;
         height: 18px;
         border-radius: 9999px;
-        background: #F97316;
-        color: white;
-        box-shadow: 0 1px 4px rgba(249,115,22,0.25);
+        background: #FFEDD5;
+        color: #C2410C;
     }
     .calendar-slot-add:hover {
-        background: #EA580C;
+        background: #FED7AA;
         transform: scale(1.05);
+    }
+    .calendar-post-slot-check {
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        border-radius: 9999px;
+        background: rgba(255,255,255,0.72);
+        color: #15803D;
+        margin-left: auto;
     }
 
     /* Draggable feedback */
