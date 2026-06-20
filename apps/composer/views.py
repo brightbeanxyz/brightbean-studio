@@ -124,43 +124,6 @@ def _scoped_platform_post_ids(request, post):
     return list(post.platform_posts.filter(social_account_id=scope).values_list("id", flat=True))
 
 
-def _selected_or_scoped_account_ids(request):
-    """Return account IDs affected by this composer save.
-
-    Scoped composer saves only represent one account even if sibling
-    PlatformPosts exist, so queue cleanup must stay inside that scope.
-    """
-    scope = _get_account_scope(request)
-    if scope:
-        return [scope]
-    return _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
-
-
-def _clear_queue_entries_for_accounts(post, account_ids):
-    """Remove stale queue placement for this post on the affected channels."""
-    if not account_ids:
-        return
-
-    from apps.calendar.models import Queue, QueueEntry
-    from apps.calendar.services import assign_queue_slots
-
-    queues = list(
-        Queue.objects.filter(
-            entries__post=post,
-            social_account_id__in=account_ids,
-            is_active=True,
-        )
-        .select_related("social_account")
-        .distinct()
-    )
-    if not queues:
-        return
-
-    QueueEntry.objects.filter(queue__in=queues, post=post).delete()
-    for queue in queues:
-        assign_queue_slots(queue)
-
-
 def _sync_platform_posts(request, post, workspace, initial_status=None):
     """Sync platform post selections from form data.
 
@@ -723,8 +686,6 @@ def save_post(request, workspace_id, post_id=None):
             # Propagate the manually chosen time to every PlatformPost so all
             # selected platforms publish at the same moment.
             post._schedule_propagate_dt = aware_dt  # handled after post.save()
-            if post_id:
-                _clear_queue_entries_for_accounts(post, _selected_or_scoped_account_ids(request))
             pending_target = "scheduled"
             initial_status = "scheduled"
         else:
@@ -738,8 +699,6 @@ def save_post(request, workspace_id, post_id=None):
         now_dt = timezone.now()
         post.scheduled_at = now_dt
         post._schedule_propagate_dt = now_dt  # handled after post.save()
-        if post_id:
-            _clear_queue_entries_for_accounts(post, _selected_or_scoped_account_ids(request))
         pending_target = "scheduled"
         initial_status = "scheduled"
     elif action == "add_to_queue":
@@ -753,7 +712,6 @@ def save_post(request, workspace_id, post_id=None):
         # Ensure PlatformPost rows exist for every selected account before the
         # queue service writes per-platform scheduled_at values.
         _sync_platform_posts(request, post, workspace, initial_status="draft")
-        _clear_queue_entries_for_accounts(post, _selected_or_scoped_account_ids(request))
         for q in queues:
             add_to_queue(post, q)
         # If opened from a specific calendar day (month/week/day "+" CTA), each
@@ -782,7 +740,6 @@ def save_post(request, workspace_id, post_id=None):
             return JsonResponse({"errors": {"queue": "No active queue found for the selected channel."}}, status=400)
         post.save()
         _sync_platform_posts(request, post, workspace, initial_status="draft")
-        _clear_queue_entries_for_accounts(post, _selected_or_scoped_account_ids(request))
         for q in queues:
             add_to_queue(post, q, priority=True)
         _transition_post_children(post, "scheduled", only=_scoped_platform_post_ids(request, post))
