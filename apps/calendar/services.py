@@ -88,27 +88,33 @@ def _next_slot_datetimes(social_account, after_dt, count=30):
 def assign_queue_slots(queue):
     """Recalculate assigned_slot_datetime for all entries in a queue.
 
-    Iterates entries in position order and assigns each to the next
-    available PostingSlot datetime for the queue's social account. For each
-    entry, writes the slot datetime to the matching ``PlatformPost`` (the one
-    whose ``social_account`` equals ``queue.social_account``) and keeps
-    ``QueueEntry.assigned_slot_datetime`` in sync. ``Post.scheduled_at`` is
-    then refreshed via ``sync_post_scheduled_at`` as min-of-children.
+    Each entry's ``position`` is treated as a direct index into the upcoming
+    slot sequence, so intentional gaps between positions (created by manual
+    deletes or prioritise operations) are preserved as empty slots in the
+    schedule.  Positions are never normalised here — callers that want compact
+    ordering must set positions explicitly (e.g. ``reorder_queue``).
+
+    For each entry, writes the slot datetime to the matching ``PlatformPost``
+    (the one whose ``social_account`` equals ``queue.social_account``) and
+    keeps ``QueueEntry.assigned_slot_datetime`` in sync.  ``Post.scheduled_at``
+    is then refreshed via ``sync_post_scheduled_at`` as min-of-children.
     """
     from apps.composer.services import sync_post_scheduled_at
 
-    entries = queue.entries.select_related("post").order_by("position")
-    if not entries.exists():
+    entries = list(queue.entries.select_related("post").order_by("position"))
+    if not entries:
         return
 
     now = timezone.now()
-    slot_times = _next_slot_datetimes(queue.social_account, now, count=len(entries) + 10)
+    max_pos = max(e.position for e in entries)
+    slot_times = _next_slot_datetimes(queue.social_account, now, count=max_pos + 10)
 
     touched_posts = []
-    for idx, entry in enumerate(entries):
-        slot_dt = slot_times[idx] if idx < len(slot_times) else None
-        entry.assigned_slot_datetime = slot_dt
-        entry.save(update_fields=["assigned_slot_datetime"])
+    for entry in entries:
+        slot_dt = slot_times[entry.position] if entry.position < len(slot_times) else None
+        if entry.assigned_slot_datetime != slot_dt:
+            entry.assigned_slot_datetime = slot_dt
+            entry.save(update_fields=["assigned_slot_datetime"])
 
         # Write the per-platform scheduled_at on the matching PlatformPost.
         pp = entry.post.platform_posts.filter(social_account=queue.social_account).first()
@@ -125,19 +131,36 @@ def assign_queue_slots(queue):
 def add_to_queue(post, queue, priority=False):
     """Add a post to a queue and recalculate slot assignments.
 
-    If *priority* is True the post is inserted at position 0 (top of the
-    queue) and all existing entries are shifted down.  Otherwise it is
-    appended at the end.
+    Re-adding an already queued post is idempotent unless ``priority`` is
+    requested. Editing an existing queued post should not move it into an
+    earlier gap and reshuffle the visible calendar.
+
+    If *priority* is True the post is placed at position 0.  Existing entries
+    are only shifted down by 1 when position 0 is already occupied, which
+    preserves any gaps in the position sequence.  If position 0 is free (a
+    gap), the new post fills it with no shifting needed.
+
+    If *priority* is False, the post is placed at the earliest unoccupied
+    position — filling any gap before appending after the last entry.
     """
-    from django.db.models import Max
+    existing_entry = queue.entries.filter(post=post).first()
+    if existing_entry is not None and not priority:
+        assign_queue_slots(queue)
+        return
+
+    # Exclude the post's own existing entry so that re-queuing an already-queued
+    # post does not treat its current position as a foreign obstacle.
+    occupied = set(queue.entries.exclude(post=post).values_list("position", flat=True))
 
     if priority:
-        # Shift all existing entries down by 1
-        queue.entries.update(position=models.F("position") + 1)
+        if 0 in occupied:
+            # Shift all existing entries down by 1, preserving relative gaps.
+            queue.entries.update(position=models.F("position") + 1)
         position = 0
     else:
-        max_pos = queue.entries.aggregate(max_pos=Max("position"))["max_pos"]
-        position = (max_pos or 0) + 1
+        position = 0
+        while position in occupied:
+            position += 1
 
     QueueEntry.objects.update_or_create(
         queue=queue,
@@ -146,6 +169,23 @@ def add_to_queue(post, queue, priority=False):
     )
 
     assign_queue_slots(queue)
+
+
+def remove_from_queue(post, social_account_ids):
+    """Remove *post* from queues for the given channels, preserving the freed slot as a gap.
+
+    Called when a post leaves the queue (e.g. the user switches from "next
+    available" / "prioritise" to a specific date or "publish now").
+    ``assign_queue_slots`` is intentionally NOT called so the vacated position
+    remains as an empty gap — the next "next available" placement will fill it.
+    """
+    if not social_account_ids:
+        return
+    QueueEntry.objects.filter(
+        queue__social_account_id__in=social_account_ids,
+        queue__is_active=True,
+        post=post,
+    ).delete()
 
 
 def reorder_queue(queue, ordered_entry_ids):

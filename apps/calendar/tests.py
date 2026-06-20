@@ -293,6 +293,26 @@ class QueueSlotTimezoneTests(TestCase):
         pp = PlatformPost.objects.get(post=post, social_account=self.account)
         self.assertEqual(pp.scheduled_at, entry.assigned_slot_datetime)
 
+    def test_readding_existing_queued_post_keeps_position(self):
+        fixed_now = datetime(2026, 6, 15, 8, 0, tzinfo=zoneinfo.ZoneInfo("America/New_York"))
+        post = Post.objects.create(workspace=self.workspace, caption="already queued")
+        pp = PlatformPost.objects.create(
+            post=post,
+            social_account=self.account,
+            status=PlatformPost.Status.SCHEDULED,
+        )
+        QueueEntry.objects.create(queue=self.queue, post=post, position=1)
+
+        with patch("apps.calendar.services.timezone.now", return_value=fixed_now):
+            add_to_queue(post, self.queue)
+
+        entry = QueueEntry.objects.get(queue=self.queue, post=post)
+        pp.refresh_from_db()
+        local = pp.scheduled_at.astimezone(zoneinfo.ZoneInfo("America/New_York"))
+        self.assertEqual(entry.position, 1)
+        self.assertEqual(local.date(), date(2026, 6, 16))
+        self.assertEqual((local.hour, local.minute), (9, 0))
+
     def test_workspace_override_takes_precedence_over_org(self):
         # An explicit workspace timezone overrides the org default.
         self.workspace.timezone = "Asia/Tokyo"

@@ -124,6 +124,26 @@ def _scoped_platform_post_ids(request, post):
     return list(post.platform_posts.filter(social_account_id=scope).values_list("id", flat=True))
 
 
+def _queue_removal_account_ids(request, post):
+    """Return channel IDs whose queue entries should be removed for this save.
+
+    Scoped composer saves only touch the scoped channel. Unscoped saves must
+    also include currently queued channels, even if the user just deselected
+    them, otherwise their QueueEntry rows survive the PlatformPost deletion.
+    """
+    scope = _get_account_scope(request)
+    if scope:
+        return [scope]
+
+    account_ids = set(_parse_selected_account_ids(request.POST.get("selected_accounts", "")))
+    queued_account_ids = post.queue_entries.filter(
+        queue__workspace=post.workspace,
+        queue__is_active=True,
+    ).values_list("queue__social_account_id", flat=True)
+    account_ids.update(str(account_id) for account_id in queued_account_ids)
+    return list(account_ids)
+
+
 def _sync_platform_posts(request, post, workspace, initial_status=None):
     """Sync platform post selections from form data.
 
@@ -688,6 +708,12 @@ def save_post(request, workspace_id, post_id=None):
             # Propagate the manually chosen time to every PlatformPost so all
             # selected platforms publish at the same moment.
             post._schedule_propagate_dt = aware_dt  # handled after post.save()
+            # If the post was previously in a queue, free that slot as a gap so
+            # other "next available" placements can fill it.
+            if post_id:
+                from apps.calendar.services import remove_from_queue
+
+                remove_from_queue(post, _queue_removal_account_ids(request, post))
             pending_target = "scheduled"
             initial_status = "scheduled"
         else:
@@ -701,6 +727,11 @@ def save_post(request, workspace_id, post_id=None):
         now_dt = timezone.now()
         post.scheduled_at = now_dt
         post._schedule_propagate_dt = now_dt  # handled after post.save()
+        # If the post was previously in a queue, free that slot as a gap.
+        if post_id:
+            from apps.calendar.services import remove_from_queue
+
+            remove_from_queue(post, _queue_removal_account_ids(request, post))
         pending_target = "scheduled"
         initial_status = "scheduled"
     elif action == "add_to_queue":
@@ -719,7 +750,7 @@ def save_post(request, workspace_id, post_id=None):
         # If opened from a specific calendar day (month/week/day "+" CTA), each
         # queue should use that day as its floor - re-assign slots accordingly.
         floor_date = form.cleaned_data.get("scheduled_date")
-        if floor_date:
+        if floor_date and not post_id:
             _reassign_queue_slots_from_floor(queues, post, floor_date, workspace)
         # Transition every child whose scheduled_at was filled in to "scheduled".
         _transition_post_children(post, "scheduled", only=_scoped_platform_post_ids(request, post))

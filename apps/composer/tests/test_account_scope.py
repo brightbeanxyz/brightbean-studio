@@ -6,11 +6,16 @@ autosave) deleted every sibling PlatformPost — including already-published
 ones, cascading away their PublishLog history.
 """
 
+import zoneinfo
+from datetime import date, datetime, time
+from unittest.mock import patch
+
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.calendar.models import PostingSlot, Queue, QueueEntry
 from apps.composer.models import PlatformPost, Post
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
@@ -197,6 +202,98 @@ class ScopedSaveTests(AccountScopeTestsBase):
         self.yt_pp.refresh_from_db()
         self.assertEqual(self.yt_pp.status, PlatformPost.Status.PUBLISHED)
         self.assertIsNone(self.yt_pp.scheduled_at)
+
+    def test_existing_queued_post_update_keeps_queue_position(self):
+        fixed_now = datetime(2026, 6, 15, 8, 0, tzinfo=zoneinfo.ZoneInfo("UTC"))
+        queue = Queue.objects.create(
+            workspace=self.workspace,
+            name="TikTok Queue",
+            social_account=self.tiktok,
+        )
+        PostingSlot.objects.create(social_account=self.tiktok, day_of_week=0, time=time(9, 0))
+        PostingSlot.objects.create(social_account=self.tiktok, day_of_week=1, time=time(9, 0))
+        self.tt_pp.status = PlatformPost.Status.SCHEDULED
+        self.tt_pp.scheduled_at = datetime(2026, 6, 16, 9, 0, tzinfo=zoneinfo.ZoneInfo("UTC"))
+        self.tt_pp.save(update_fields=["status", "scheduled_at"])
+        QueueEntry.objects.create(queue=queue, post=self.post, position=1, assigned_slot_datetime=self.tt_pp.scheduled_at)
+
+        payload = self._payload(
+            action="add_to_queue",
+            scheduled_date=date(2026, 6, 15).isoformat(),
+            scheduled_time="09:00",
+        )
+        with patch("apps.calendar.services.timezone.now", return_value=fixed_now):
+            response = self.client.post(self.save_url, data=payload)
+        self.assertIn(response.status_code, (200, 204, 302))
+
+        entry = QueueEntry.objects.get(queue=queue, post=self.post)
+        self.tt_pp.refresh_from_db()
+        self.assertEqual(entry.position, 1)
+        self.assertEqual(self.tt_pp.scheduled_at, datetime(2026, 6, 16, 9, 0, tzinfo=zoneinfo.ZoneInfo("UTC")))
+
+    def test_unscoped_schedule_removes_queue_entry_for_deselected_channel(self):
+        youtube_queue = Queue.objects.create(
+            workspace=self.workspace,
+            name="YouTube Queue",
+            social_account=self.youtube,
+        )
+        tiktok_queue = Queue.objects.create(
+            workspace=self.workspace,
+            name="TikTok Queue",
+            social_account=self.tiktok,
+        )
+        self.yt_pp.status = PlatformPost.Status.SCHEDULED
+        self.yt_pp.published_at = None
+        self.yt_pp.save(update_fields=["status", "published_at"])
+        self.tt_pp.status = PlatformPost.Status.SCHEDULED
+        self.tt_pp.save(update_fields=["status"])
+        QueueEntry.objects.create(queue=youtube_queue, post=self.post, position=0)
+        QueueEntry.objects.create(queue=tiktok_queue, post=self.post, position=0)
+
+        payload = self._payload(
+            action="schedule",
+            selected_accounts=str(self.tiktok.id),
+            scheduled_date=date(2026, 6, 22).isoformat(),
+            scheduled_time="09:00",
+        )
+        del payload["account_scope"]
+        response = self.client.post(self.save_url, data=payload)
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.assertFalse(QueueEntry.objects.filter(queue=youtube_queue, post=self.post).exists())
+        self.assertFalse(QueueEntry.objects.filter(queue=tiktok_queue, post=self.post).exists())
+
+    def test_scoped_schedule_only_removes_scoped_channel_queue_entry(self):
+        youtube_queue = Queue.objects.create(
+            workspace=self.workspace,
+            name="YouTube Queue",
+            social_account=self.youtube,
+        )
+        tiktok_queue = Queue.objects.create(
+            workspace=self.workspace,
+            name="TikTok Queue",
+            social_account=self.tiktok,
+        )
+        self.yt_pp.status = PlatformPost.Status.SCHEDULED
+        self.yt_pp.published_at = None
+        self.yt_pp.save(update_fields=["status", "published_at"])
+        self.tt_pp.status = PlatformPost.Status.SCHEDULED
+        self.tt_pp.save(update_fields=["status"])
+        QueueEntry.objects.create(queue=youtube_queue, post=self.post, position=0)
+        QueueEntry.objects.create(queue=tiktok_queue, post=self.post, position=0)
+
+        response = self.client.post(
+            self.save_url,
+            data=self._payload(
+                action="schedule",
+                scheduled_date=date(2026, 6, 22).isoformat(),
+                scheduled_time="09:00",
+            ),
+        )
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.assertTrue(QueueEntry.objects.filter(queue=youtube_queue, post=self.post).exists())
+        self.assertFalse(QueueEntry.objects.filter(queue=tiktok_queue, post=self.post).exists())
 
 
 class TikTokExtrasSyncTests(AccountScopeTestsBase):
