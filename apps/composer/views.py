@@ -686,6 +686,14 @@ def save_post(request, workspace_id, post_id=None):
             # Propagate the manually chosen time to every PlatformPost so all
             # selected platforms publish at the same moment.
             post._schedule_propagate_dt = aware_dt  # handled after post.save()
+            # If the post was previously in a queue, free that slot as a gap so
+            # other "next available" placements can fill it.
+            if post_id:
+                from apps.calendar.services import remove_from_queue
+
+                scope = _get_account_scope(request)
+                _acc_ids = [scope] if scope else _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
+                remove_from_queue(post, _acc_ids)
             pending_target = "scheduled"
             initial_status = "scheduled"
         else:
@@ -699,6 +707,13 @@ def save_post(request, workspace_id, post_id=None):
         now_dt = timezone.now()
         post.scheduled_at = now_dt
         post._schedule_propagate_dt = now_dt  # handled after post.save()
+        # If the post was previously in a queue, free that slot as a gap.
+        if post_id:
+            from apps.calendar.services import remove_from_queue
+
+            scope = _get_account_scope(request)
+            _acc_ids = [scope] if scope else _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
+            remove_from_queue(post, _acc_ids)
         pending_target = "scheduled"
         initial_status = "scheduled"
     elif action == "add_to_queue":
