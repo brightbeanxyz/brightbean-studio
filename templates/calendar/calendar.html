@@ -235,6 +235,60 @@
         transform: scale(1.1);
     }
 
+    .calendar-channel-slot {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        max-width: 100%;
+        min-height: 24px;
+        padding: 3px 5px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        border: 1px solid #E7E5E4;
+        background: #FAFAF9;
+        color: #44403C;
+    }
+    .calendar-channel-slot--week {
+        width: 100%;
+        font-size: 10px;
+        gap: 4px;
+    }
+    .calendar-channel-slot.is-open {
+        border-color: #FED7AA;
+        background: #FFF7ED;
+    }
+    .calendar-channel-slot.is-taken {
+        border-color: #BBF7D0;
+        background: #F0FDF4;
+    }
+    .calendar-slot-state {
+        flex-shrink: 0;
+        padding: 1px 5px;
+        border-radius: 9999px;
+        background: rgba(255,255,255,0.72);
+        color: #57534E;
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0;
+    }
+    .calendar-slot-add {
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 9999px;
+        background: #F97316;
+        color: white;
+        box-shadow: 0 1px 4px rgba(249,115,22,0.25);
+    }
+    .calendar-slot-add:hover {
+        background: #EA580C;
+        transform: scale(1.05);
+    }
+
     /* Draggable feedback */
     .post-chip.dragging { opacity: 0.5; transform: rotate(2deg); }
 

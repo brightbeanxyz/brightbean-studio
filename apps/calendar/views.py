@@ -171,6 +171,11 @@ def _get_filtered_platform_posts(workspace, request):
     if platforms:
         qs = qs.filter(social_account__platform__in=platforms)
 
+    # Channel filter (calendar toolbar sends the selected SocialAccount id).
+    channel = request.GET.get("channel")
+    if channel:
+        qs = qs.filter(social_account_id=channel)
+
     # Author filter
     authors = request.GET.getlist("author")
     if authors:
@@ -192,6 +197,76 @@ def _get_filtered_platform_posts(workspace, request):
         qs = qs.filter(tag_q)
 
     return qs
+
+
+def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates, platform_posts):
+    """Return PostingSlot occurrences grouped by display date/hour.
+
+    PostingSlot times are defined in the workspace timezone. Convert concrete
+    occurrences into the active display timezone before placing them in the
+    day/week timeline, so timezone changes move slots and posts together.
+    """
+    import zoneinfo
+
+    workspace_tz = zoneinfo.ZoneInfo(workspace.effective_timezone or "UTC")
+    visible_dates = set(visible_dates)
+    if not visible_dates:
+        return defaultdict(list)
+
+    first_date = min(visible_dates)
+    last_date = max(visible_dates)
+    occurrence_dates = [first_date + timedelta(days=offset) for offset in range((last_date - first_date).days + 1)]
+
+    taken_keys = set()
+    for pp in platform_posts:
+        if not pp.effective_at:
+            continue
+        local_dt = pp.effective_at.astimezone(display_tz)
+        if local_dt.date() in visible_dates:
+            taken_keys.add((pp.social_account_id, local_dt.date(), local_dt.hour, local_dt.minute))
+
+    slots = PostingSlot.objects.filter(
+        social_account__workspace=workspace,
+        social_account__connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        is_active=True,
+    )
+    channel = request.GET.get("channel")
+    if channel:
+        slots = slots.filter(social_account_id=channel)
+
+    slots = slots.select_related("social_account").order_by(
+        "time",
+        "social_account__platform",
+        "social_account__account_name",
+    )
+
+    slots_by_hour = defaultdict(list)
+    dates_by_weekday = defaultdict(list)
+    for occurrence_date in occurrence_dates:
+        dates_by_weekday[occurrence_date.weekday()].append(occurrence_date)
+
+    for slot in slots:
+        for occurrence_date in dates_by_weekday.get(slot.day_of_week, []):
+            workspace_dt = datetime.combine(occurrence_date, slot.time, tzinfo=workspace_tz)
+            local_dt = workspace_dt.astimezone(display_tz)
+            if local_dt.date() not in visible_dates:
+                continue
+
+            key = (slot.social_account_id, local_dt.date(), local_dt.hour, local_dt.minute)
+            slots_by_hour[(local_dt.date(), local_dt.hour)].append(
+                {
+                    "account": slot.social_account,
+                    "date": local_dt.date(),
+                    "hour": local_dt.hour,
+                    "minute": local_dt.minute,
+                    "time_label": local_dt.strftime("%H:%M"),
+                    "compose_date": workspace_dt.strftime("%Y-%m-%d"),
+                    "compose_time": workspace_dt.strftime("%H:%M"),
+                    "is_taken": key in taken_keys,
+                }
+            )
+
+    return slots_by_hour
 
 
 def _get_publish_context(workspace, request):
@@ -621,16 +696,17 @@ def _week_view_data(request, workspace, target_date, context):
                 key = (local_dt.date(), local_dt.hour)
                 posts_by_slot[key].append(pp)
 
+    slots_by_hour = _get_calendar_slot_occurrences(workspace, request, display_tz, week_days, platform_posts)
     hours = list(range(0, 24))
 
     # Build a grid structure the template can iterate:
-    # week_slots = [(hour, [(day, posts), ...]), ...]
+    # week_slots = [(hour, [(day, posts, slots), ...]), ...]
     week_slots = []
     for hour in hours:
         day_slots = []
         for day in week_days:
             key = (day, hour)
-            day_slots.append((day, posts_by_slot.get(key, [])))
+            day_slots.append((day, posts_by_slot.get(key, []), slots_by_hour.get(key, [])))
         week_slots.append((hour, day_slots))
 
     from django.utils import timezone as _tz
@@ -681,10 +757,11 @@ def _day_view_data(request, workspace, target_date, context):
             if local_dt.date() == target_date:
                 posts_by_hour[local_dt.hour].append(pp)
 
+    slots_by_hour = _get_calendar_slot_occurrences(workspace, request, display_tz, [target_date], platform_posts)
     hours = list(range(0, 24))
 
-    # Build a list of (hour, posts) tuples for easy template iteration
-    day_slots = [(hour, posts_by_hour.get(hour, [])) for hour in hours]
+    # Build a list of (hour, posts, slots) tuples for easy template iteration
+    day_slots = [(hour, posts_by_hour.get(hour, []), slots_by_hour.get((target_date, hour), [])) for hour in hours]
 
     from django.utils import timezone as _tz
 

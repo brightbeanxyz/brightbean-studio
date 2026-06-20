@@ -4,7 +4,7 @@ import zoneinfo
 from datetime import date, datetime, time
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -12,6 +12,7 @@ from apps.accounts.models import User
 from apps.calendar.models import PostingSlot, Queue, QueueEntry, RecurrenceRule
 from apps.calendar.services import add_to_queue
 from apps.calendar.tasks import generate_recurring_posts
+from apps.calendar.views import _day_view_data
 from apps.composer.models import PlatformPost, Post
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
@@ -304,6 +305,62 @@ class QueueSlotTimezoneTests(TestCase):
         entry = QueueEntry.objects.get(queue=self.queue, post=post)
         local = entry.assigned_slot_datetime.astimezone(zoneinfo.ZoneInfo("Asia/Tokyo"))
         self.assertEqual((local.hour, local.minute), (9, 0))
+
+
+class CalendarChannelSlotViewTests(TestCase):
+    """Day/week calendar data should expose channel posting slots."""
+
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.org = Organization.objects.create(name="Calendar Slots Org", default_timezone="America/New_York")
+        self.workspace = Workspace.objects.create(organization=self.org, name="Calendar Slots WS")
+        self.account = SocialAccount.objects.create(
+            workspace=self.workspace,
+            platform="instagram",
+            account_platform_id="ig-calendar-slots",
+            account_name="Instagram",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        self.other_account = SocialAccount.objects.create(
+            workspace=self.workspace,
+            platform="linkedin_company",
+            account_platform_id="li-calendar-slots",
+            account_name="LinkedIn",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+
+    def test_day_view_marks_exact_channel_slot_taken(self):
+        target = date(2026, 6, 15)  # Monday
+        ny = zoneinfo.ZoneInfo("America/New_York")
+        scheduled_at = datetime(2026, 6, 15, 9, 30, tzinfo=ny)
+        PostingSlot.objects.create(social_account=self.account, day_of_week=0, time=time(9, 30))
+        post = Post.objects.create(workspace=self.workspace, caption="scheduled", scheduled_at=scheduled_at)
+        PlatformPost.objects.create(
+            post=post,
+            social_account=self.account,
+            status="scheduled",
+            scheduled_at=scheduled_at,
+        )
+
+        context = {"display_timezone": "America/New_York"}
+        _day_view_data(self.factory.get("/"), self.workspace, target, context)
+
+        slot_items = dict((hour, slots) for hour, _posts, slots in context["day_slots"])[9]
+        self.assertEqual(len(slot_items), 1)
+        self.assertTrue(slot_items[0]["is_taken"])
+        self.assertEqual(slot_items[0]["time_label"], "09:30")
+
+    def test_day_view_channel_filter_limits_slot_badges(self):
+        target = date(2026, 6, 15)  # Monday
+        PostingSlot.objects.create(social_account=self.account, day_of_week=0, time=time(9, 0))
+        PostingSlot.objects.create(social_account=self.other_account, day_of_week=0, time=time(9, 0))
+
+        request = self.factory.get("/", {"channel": str(self.account.id)})
+        context = {"display_timezone": "America/New_York"}
+        _day_view_data(request, self.workspace, target, context)
+
+        slot_items = dict((hour, slots) for hour, _posts, slots in context["day_slots"])[9]
+        self.assertEqual([slot["account"] for slot in slot_items], [self.account])
 
 
 class RecurringPostTimezoneTests(TestCase):
