@@ -32,31 +32,30 @@ def sync_post_scheduled_at(post):
       kept appearing as scheduled in the UI.
     * No children, parent already null → no-op.
 
-    A post committed to publishing also drops any draft-stage
-    ``proposed_publish_at``. This is the single chokepoint every scheduling
-    path flows through — ``create_post``, ``transition_platform_post`` (the
-    service used by the REST ``/schedule`` route and the MCP ``schedule_draft``
-    tool), the composer's per-account chip endpoint, and the PATCH re-time —
-    so the suggestion and a committed schedule never coexist. The clear is
-    keyed on child *status*, not ``scheduled_at``, so a status-only transition
-    (the chip menu sets ``scheduled`` without a ``scheduled_at``) still drops
-    it; this mirrors ``_capture_proposed_publish_at``'s guard.
+    A post that gains a committed schedule also drops any draft-stage
+    ``proposed_publish_at``: this is the chokepoint the scheduling paths flow
+    through (``create_post``, ``transition_platform_post`` for the REST
+    ``/schedule`` route and the MCP ``schedule_draft`` tool, and the PATCH
+    re-time which calls this after saving), so the suggestion and a real
+    schedule never coexist. The ``scheduled_at`` aggregate logic is unchanged —
+    the publisher's ``Coalesce(scheduled_at, post__scheduled_at)`` fallback
+    depends on it — so only the proposal clear is added here. The one path that
+    commits a child WITHOUT a ``scheduled_at`` (the composer's per-account chip
+    endpoint) clears the proposal itself rather than routing through here, to
+    avoid disturbing that aggregate.
     """
     times = list(post.platform_posts.exclude(scheduled_at__isnull=True).values_list("scheduled_at", flat=True))
-    update_fields = []
     if not times:
         if post.scheduled_at is not None:
             post.scheduled_at = None
-            update_fields.append("scheduled_at")
-    else:
-        earliest = min(times)
-        if post.scheduled_at != earliest:
-            post.scheduled_at = earliest
-            update_fields.append("scheduled_at")
-    if (
-        post.proposed_publish_at is not None
-        and post.platform_posts.filter(status__in=["scheduled", "publishing", "published"]).exists()
-    ):
+            post.save(update_fields=["scheduled_at", "updated_at"])
+        return
+    earliest = min(times)
+    update_fields = []
+    if post.scheduled_at != earliest:
+        post.scheduled_at = earliest
+        update_fields.append("scheduled_at")
+    if post.proposed_publish_at is not None:
         post.proposed_publish_at = None
         update_fields.append("proposed_publish_at")
     if update_fields:
