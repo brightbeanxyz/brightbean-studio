@@ -78,25 +78,6 @@ class ProposedPublishAtServiceTests(TestCase):
         self.assertIsNotNone(post.scheduled_at)
         self.assertIsNone(post.proposed_publish_at)
 
-    def test_sync_clears_proposed_on_status_only_committed_child(self):
-        # The composer chip endpoint commits a child to 'scheduled' WITHOUT a
-        # scheduled_at; the status-keyed clear must still drop the proposal.
-        from apps.composer.services import sync_post_scheduled_at
-
-        post = create_post(
-            workspace=self.ws,
-            social_account=self.sa,
-            caption="hi",
-            status="draft",
-            proposed_publish_at=PROPOSED_LOCAL,
-        )
-        pp = post.platform_posts.get()
-        pp.status = "scheduled"
-        pp.save(update_fields=["status"])
-        sync_post_scheduled_at(post)
-        post.refresh_from_db()
-        self.assertIsNone(post.proposed_publish_at)
-
 
 class ProposedPublishAtSaveTests(TestCase):
     """POST /workspace/<id>/composer/compose/save/ proposed-time handling."""
@@ -300,5 +281,20 @@ class ProposedPublishAtSaveTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         post.refresh_from_db()
         self.assertIsNone(post.proposed_publish_at)
+        # The clear must not disturb the scheduling aggregate the publisher reads.
+        self.assertIsNone(post.scheduled_at)
         pp.refresh_from_db()
         self.assertEqual(pp.status, "scheduled")
+
+    def test_publisher_fallback_still_picks_up_scheduled_post(self):
+        # Regression guard for the publish path: a scheduled child with NULL
+        # scheduled_at must stay "due" via the Post.scheduled_at Coalesce
+        # fallback. The proposal handling must never disturb that aggregate,
+        # else such a post would silently never publish.
+        from apps.publisher.engine import PublishEngine
+
+        past = timezone.now() - timedelta(minutes=5)
+        post = Post.objects.create(workspace=self.ws, author=self.user, caption="x", scheduled_at=past)
+        pp = PlatformPost.objects.create(post=post, social_account=self.sa, status="scheduled", scheduled_at=None)
+        due_ids = {d.id for d in PublishEngine()._get_due_platform_posts()}
+        self.assertIn(pp.id, due_ids)

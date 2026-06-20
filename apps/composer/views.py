@@ -1005,13 +1005,14 @@ def transition_platform_post(request, workspace_id, post_id, platform_post_id):
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     pp.save(update_fields=["status", "published_at", "updated_at"])
-    # This view mutates a single child directly (no service call), so reconcile
-    # the parent the same way the service-layer transition does: keep
-    # Post.scheduled_at in sync and drop any now-obsolete proposed_publish_at
-    # when this transition commits the post to publishing.
-    from apps.composer.services import sync_post_scheduled_at
-
-    sync_post_scheduled_at(pp.post)
+    # Committing a child to publishing obsoletes any draft-stage proposal.
+    # Clear it directly rather than via sync_post_scheduled_at: this view sets
+    # ``scheduled`` WITHOUT a ``scheduled_at``, and the publisher relies on the
+    # ``Coalesce(scheduled_at, post__scheduled_at)`` fallback — recomputing the
+    # Post.scheduled_at aggregate here could strand a post that depends on it.
+    if target in ("scheduled", "publishing", "published") and pp.post.proposed_publish_at is not None:
+        pp.post.proposed_publish_at = None
+        pp.post.save(update_fields=["proposed_publish_at", "updated_at"])
     return JsonResponse({"ok": True, "status": pp.status, "platform_post_id": str(pp.id)})
 
 
