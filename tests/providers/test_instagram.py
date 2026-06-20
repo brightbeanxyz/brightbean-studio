@@ -105,7 +105,6 @@ def test_account_metrics_use_current_instagram_insights_metrics():
                         "data": [
                             {"name": "reach", "values": [{"value": 12}]},
                             {"name": "follower_count", "values": [{"value": 34}]},
-                            {"name": "profile_views", "values": [{"value": 5}]},
                         ]
                     }
                 )
@@ -115,10 +114,15 @@ def test_account_metrics_use_current_instagram_insights_metrics():
                     return_value={
                         "data": [
                             {
+                                "name": "profile_views",
+                                "period": "day",
+                                "total_value": {"value": 5},
+                            },
+                            {
                                 "name": "views",
                                 "period": "day",
                                 "total_value": {"value": 67},
-                            }
+                            },
                         ]
                     }
                 )
@@ -146,7 +150,7 @@ def test_account_metrics_use_current_instagram_insights_metrics():
                 "https://graph.facebook.com/v21.0/ig-1/insights",
                 access_token="page-token",
                 params={
-                    "metric": "reach,follower_count,profile_views",
+                    "metric": "reach,follower_count",
                     "period": "day",
                     "since": 1781740800,
                     "until": 1781827200,
@@ -157,7 +161,7 @@ def test_account_metrics_use_current_instagram_insights_metrics():
                 "https://graph.facebook.com/v21.0/ig-1/insights",
                 access_token="page-token",
                 params={
-                    "metric": "views",
+                    "metric": "profile_views,views",
                     "period": "day",
                     "metric_type": "total_value",
                     "since": 1781740800,
@@ -178,7 +182,6 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
                         "data": [
                             {"name": "reach", "values": [{"value": 12}]},
                             {"name": "follower_count", "values": [{"value": 34}]},
-                            {"name": "profile_views", "values": [{"value": 5}]},
                         ]
                     }
                 )
@@ -188,10 +191,15 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
                     return_value={
                         "data": [
                             {
+                                "name": "profile_views",
+                                "period": "day",
+                                "total_value": {"value": 5},
+                            },
+                            {
                                 "name": "views",
                                 "period": "day",
                                 "total_value": {"value": 67},
-                            }
+                            },
                         ]
                     }
                 )
@@ -219,7 +227,7 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
                 "https://graph.instagram.com/v21.0/me/insights",
                 access_token="ig-token",
                 params={
-                    "metric": "reach,follower_count,profile_views",
+                    "metric": "reach,follower_count",
                     "period": "day",
                     "since": 1781740800,
                     "until": 1781827200,
@@ -230,7 +238,7 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
                 "https://graph.instagram.com/v21.0/me/insights",
                 access_token="ig-token",
                 params={
-                    "metric": "views",
+                    "metric": "profile_views,views",
                     "period": "day",
                     "metric_type": "total_value",
                     "since": 1781740800,
@@ -238,4 +246,66 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
                 },
             ),
         ]
+    )
+
+
+def test_instagram_post_metrics_use_total_interactions():
+    provider = InstagramProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        return_value=MagicMock(
+            json=MagicMock(
+                return_value={
+                    "data": [
+                        {"name": "impressions", "values": [{"value": 100}]},
+                        {"name": "reach", "values": [{"value": 80}]},
+                        {"name": "total_interactions", "values": [{"value": 9}]},
+                        {"name": "saved", "values": [{"value": 3}]},
+                    ]
+                }
+            )
+        )
+    )
+
+    metrics = provider.get_post_metrics("page-token", "ig-media-1")
+
+    assert metrics.impressions == 100
+    assert metrics.reach == 80
+    assert metrics.engagements == 9
+    assert metrics.saves == 3
+    provider._request.assert_called_once_with(
+        "GET",
+        "https://graph.facebook.com/v21.0/ig-media-1/insights",
+        access_token="page-token",
+        params={"metric": "impressions,reach,total_interactions,saved"},
+    )
+
+
+def test_instagram_login_post_metrics_use_total_interactions():
+    provider = InstagramLoginProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        return_value=MagicMock(
+            json=MagicMock(
+                return_value={
+                    "data": [
+                        {"name": "impressions", "values": [{"value": 100}]},
+                        {"name": "reach", "values": [{"value": 80}]},
+                        {"name": "total_interactions", "values": [{"value": 9}]},
+                        {"name": "saved", "values": [{"value": 3}]},
+                    ]
+                }
+            )
+        )
+    )
+
+    metrics = provider.get_post_metrics("ig-token", "ig-media-1")
+
+    assert metrics.impressions == 100
+    assert metrics.reach == 80
+    assert metrics.engagements == 9
+    assert metrics.saves == 3
+    provider._request.assert_called_once_with(
+        "GET",
+        "https://graph.instagram.com/v21.0/ig-media-1/insights",
+        access_token="ig-token",
+        params={"metric": "impressions,reach,total_interactions,saved"},
     )
