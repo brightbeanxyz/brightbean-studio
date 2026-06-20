@@ -2,6 +2,7 @@
 
 import calendar as cal_mod
 import json
+import uuid
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 
@@ -96,6 +97,17 @@ def _parse_date(date_str, default=None):
     return default or date.today()
 
 
+def _get_valid_channel_filter(request):
+    """Return a UUID-safe channel filter value, or blank when malformed."""
+    channel = request.GET.get("channel", "").strip()
+    if not channel:
+        return ""
+    try:
+        return str(uuid.UUID(channel))
+    except (TypeError, ValueError, AttributeError):
+        return ""
+
+
 def _get_filtered_posts(workspace, request):
     """Apply calendar filters from query params."""
     qs = (
@@ -172,7 +184,7 @@ def _get_filtered_platform_posts(workspace, request):
         qs = qs.filter(social_account__platform__in=platforms)
 
     # Channel filter (calendar toolbar sends the selected SocialAccount id).
-    channel = request.GET.get("channel")
+    channel = _get_valid_channel_filter(request)
     if channel:
         qs = qs.filter(social_account_id=channel)
 
@@ -213,8 +225,8 @@ def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates
     if not visible_dates:
         return defaultdict(list)
 
-    first_date = min(visible_dates)
-    last_date = max(visible_dates)
+    first_date = min(visible_dates) - timedelta(days=1)
+    last_date = max(visible_dates) + timedelta(days=1)
     occurrence_dates = [first_date + timedelta(days=offset) for offset in range((last_date - first_date).days + 1)]
 
     slots = PostingSlot.objects.filter(
@@ -222,7 +234,7 @@ def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates
         social_account__connection_status=SocialAccount.ConnectionStatus.CONNECTED,
         is_active=True,
     )
-    channel = request.GET.get("channel")
+    channel = _get_valid_channel_filter(request)
     if channel:
         slots = slots.filter(social_account_id=channel)
 

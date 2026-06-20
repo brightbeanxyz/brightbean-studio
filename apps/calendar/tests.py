@@ -363,6 +363,41 @@ class CalendarChannelSlotViewTests(TestCase):
         slot_items = dict((hour, slots) for hour, _posts, slots in context["day_slots"])[9]
         self.assertEqual([slot["account"] for slot in slot_items], [self.account])
 
+    def test_day_view_ignores_malformed_channel_filter(self):
+        target = date(2026, 6, 15)  # Monday
+        PostingSlot.objects.create(social_account=self.account, day_of_week=0, time=time(9, 0))
+
+        request = self.factory.get("/", {"channel": "not-a-uuid"})
+        context = {"display_timezone": "America/New_York"}
+        _day_view_data(request, self.workspace, target, context)
+
+        slot_items = dict((hour, slots) for hour, _posts, slots in context["day_slots"])[9]
+        self.assertEqual([slot["account"] for slot in slot_items], [self.account])
+
+    def test_day_view_includes_workspace_slot_from_adjacent_display_date(self):
+        self.workspace.timezone = "America/Los_Angeles"
+        self.workspace.save(update_fields=["timezone"])
+        target = date(2026, 6, 16)  # Tuesday in Tokyo
+        la = zoneinfo.ZoneInfo("America/Los_Angeles")
+        scheduled_at = datetime(2026, 6, 15, 9, 0, tzinfo=la)
+        PostingSlot.objects.create(social_account=self.account, day_of_week=0, time=time(9, 0))
+        post = Post.objects.create(workspace=self.workspace, caption="tokyo-boundary", scheduled_at=scheduled_at)
+        PlatformPost.objects.create(
+            post=post,
+            social_account=self.account,
+            status="scheduled",
+            scheduled_at=scheduled_at,
+        )
+
+        context = {"display_timezone": "Asia/Tokyo"}
+        _day_view_data(self.factory.get("/"), self.workspace, target, context)
+
+        hour_posts = dict((hour, posts) for hour, posts, _slots in context["day_slots"])[1]
+        slot_items = dict((hour, slots) for hour, _posts, slots in context["day_slots"])[1]
+        self.assertEqual(slot_items, [])
+        self.assertEqual(len(hour_posts), 1)
+        self.assertTrue(hour_posts[0].takes_calendar_slot)
+
 
 class RecurringPostTimezoneTests(TestCase):
     """``generate_recurring_posts`` must preserve the source post's *local*
