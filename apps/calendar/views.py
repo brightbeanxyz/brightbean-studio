@@ -761,9 +761,7 @@ def _day_view_data(request, workspace, target_date, context):
     hours = list(range(0, 24))
 
     # Build a list of (hour, posts, slots) tuples for easy template iteration
-    day_slots = [
-        (hour, posts_by_hour.get(hour, []), slots_by_hour.get((target_date, hour), [])) for hour in hours
-    ]
+    day_slots = [(hour, posts_by_hour.get(hour, []), slots_by_hour.get((target_date, hour), [])) for hour in hours]
 
     from django.utils import timezone as _tz
 
