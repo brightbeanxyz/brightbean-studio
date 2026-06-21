@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from apps.analytics.tasks import _resolve_provider
+from providers.exceptions import APIError
 from providers.facebook import FacebookProvider
 
 
@@ -13,7 +14,6 @@ def test_account_metrics_use_current_page_insights_metrics():
             json=MagicMock(
                 return_value={
                     "data": [
-                        {"name": "page_impressions_unique", "values": [{"value": 12}]},
                         {"name": "page_post_engagements", "values": [{"value": 34}]},
                         {"name": "page_daily_follows", "values": [{"value": 5}]},
                     ]
@@ -30,7 +30,7 @@ def test_account_metrics_use_current_page_insights_metrics():
         ),
     )
 
-    assert metrics.reach == 12
+    assert metrics.reach == 0
     assert metrics.followers_gained == 5
     assert metrics.extra["raw_insights"]["page_post_engagements"] == 34
     provider._request.assert_called_once_with(
@@ -38,11 +38,39 @@ def test_account_metrics_use_current_page_insights_metrics():
         "https://graph.facebook.com/v21.0/page-1/insights",
         access_token="page-token",
         params={
-            "metric": "page_impressions_unique,page_post_engagements,page_daily_follows",
+            "metric": "page_post_engagements,page_daily_follows",
             "since": 1781740800,
             "until": 1781827200,
         },
     )
+
+
+def test_post_metrics_falls_back_for_objects_without_insights_edge():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            APIError('Facebook API error 400: {"error":{"message":"(#100) Tried accessing nonexisting field (insights)"}}'),
+            MagicMock(
+                json=MagicMock(
+                    return_value={
+                        "id": "reel-1",
+                        "permalink_url": "/reel/reel-1/",
+                        "likes": {"summary": {"total_count": 7}},
+                        "comments": {"summary": {"total_count": 3}},
+                    }
+                )
+            ),
+        ]
+    )
+
+    metrics = provider.get_post_metrics("page-token", "reel-1")
+
+    assert metrics.likes == 7
+    assert metrics.comments == 3
+    assert metrics.extra["raw_fallback"]["permalink_url"] == "/reel/reel-1/"
+    assert provider._request.call_args_list[1].kwargs["params"] == {
+        "fields": "id,permalink_url,likes.summary(true),comments.summary(true)"
+    }
 
 
 def test_facebook_analytics_provider_uses_connected_page_id(monkeypatch):

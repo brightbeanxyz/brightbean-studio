@@ -376,12 +376,17 @@ class FacebookProvider(SocialProvider):
             "post_clicks",
             "post_reactions_by_type_total",
         ]
-        resp = self._request(
-            "GET",
-            f"{BASE_URL}/{post_id}/insights",
-            access_token=access_token,
-            params={"metric": ",".join(metrics)},
-        )
+        try:
+            resp = self._request(
+                "GET",
+                f"{BASE_URL}/{post_id}/insights",
+                access_token=access_token,
+                params={"metric": ",".join(metrics)},
+            )
+        except APIError as exc:
+            if "nonexisting field (insights)" not in str(exc).lower():
+                raise
+            return self._get_basic_post_metrics(access_token, post_id)
         data = resp.json()
         values: dict = {}
         for entry in data.get("data", []):
@@ -400,9 +405,26 @@ class FacebookProvider(SocialProvider):
             extra={"raw_insights": values},
         )
 
+    def _get_basic_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
+        """Fallback for Facebook objects, such as Reels, without an insights edge."""
+        resp = self._request(
+            "GET",
+            f"{BASE_URL}/{post_id}",
+            access_token=access_token,
+            params={"fields": "id,permalink_url,likes.summary(true),comments.summary(true)"},
+        )
+        data = resp.json()
+        likes = data.get("likes", {}).get("summary", {}).get("total_count", 0)
+        comments = data.get("comments", {}).get("summary", {}).get("total_count", 0)
+        return PostMetrics(
+            likes=likes,
+            comments=comments,
+            extra={"raw_fallback": data},
+        )
+
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         page_id = self.credentials.get("page_id", "me")
-        metrics = ["page_impressions_unique", "page_post_engagements", "page_daily_follows"]
+        metrics = ["page_post_engagements", "page_daily_follows"]
         resp = self._request(
             "GET",
             f"{BASE_URL}/{page_id}/insights",
@@ -421,7 +443,6 @@ class FacebookProvider(SocialProvider):
             values[name] = val
 
         return AccountMetrics(
-            reach=values.get("page_impressions_unique", 0),
             followers_gained=values.get("page_daily_follows", 0),
             extra={"raw_insights": values},
         )
