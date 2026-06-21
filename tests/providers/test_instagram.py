@@ -105,7 +105,6 @@ def test_account_metrics_use_current_instagram_insights_metrics():
                         "data": [
                             {"name": "reach", "values": [{"value": 12}]},
                             {"name": "follower_count", "values": [{"value": 34}]},
-                            {"name": "profile_views", "values": [{"value": 5}]},
                         ]
                     }
                 )
@@ -114,11 +113,8 @@ def test_account_metrics_use_current_instagram_insights_metrics():
                 json=MagicMock(
                     return_value={
                         "data": [
-                            {
-                                "name": "views",
-                                "period": "day",
-                                "total_value": {"value": 67},
-                            }
+                            {"name": "views", "period": "day", "total_value": {"value": 67}},
+                            {"name": "profile_views", "period": "day", "total_value": {"value": 5}},
                         ]
                     }
                 )
@@ -146,7 +142,7 @@ def test_account_metrics_use_current_instagram_insights_metrics():
                 "https://graph.facebook.com/v21.0/ig-1/insights",
                 access_token="page-token",
                 params={
-                    "metric": "reach,follower_count,profile_views",
+                    "metric": "reach,follower_count",
                     "period": "day",
                     "since": 1781740800,
                     "until": 1781827200,
@@ -157,7 +153,7 @@ def test_account_metrics_use_current_instagram_insights_metrics():
                 "https://graph.facebook.com/v21.0/ig-1/insights",
                 access_token="page-token",
                 params={
-                    "metric": "views",
+                    "metric": "views,profile_views",
                     "period": "day",
                     "metric_type": "total_value",
                     "since": 1781740800,
@@ -165,6 +161,41 @@ def test_account_metrics_use_current_instagram_insights_metrics():
                 },
             ),
         ]
+    )
+
+
+def test_instagram_post_metrics_use_valid_metric_names():
+    provider = InstagramProvider({"client_id": "id", "client_secret": "secret", "ig_user_id": "ig-1"})
+    provider._request = MagicMock(
+        return_value=MagicMock(
+            json=MagicMock(
+                return_value={
+                    "data": [
+                        {"name": "impressions", "values": [{"value": 1000}]},
+                        {"name": "reach", "values": [{"value": 800}]},
+                        {"name": "saved", "values": [{"value": 25}]},
+                        {"name": "likes", "values": [{"value": 120}]},
+                        {"name": "comments", "values": [{"value": 10}]},
+                        {"name": "shares", "values": [{"value": 5}]},
+                    ]
+                }
+            )
+        )
+    )
+
+    metrics = provider.get_post_metrics("page-token", "post-1")
+
+    assert metrics.impressions == 1000
+    assert metrics.reach == 800
+    assert metrics.saves == 25
+    assert metrics.likes == 120
+    assert metrics.comments == 10
+    assert metrics.shares == 5
+    provider._request.assert_called_once_with(
+        "GET",
+        "https://graph.facebook.com/v21.0/post-1/insights",
+        access_token="page-token",
+        params={"metric": "impressions,reach,saved,likes,comments,shares"},
     )
 
 
@@ -178,7 +209,6 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
                         "data": [
                             {"name": "reach", "values": [{"value": 12}]},
                             {"name": "follower_count", "values": [{"value": 34}]},
-                            {"name": "profile_views", "values": [{"value": 5}]},
                         ]
                     }
                 )
@@ -187,11 +217,8 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
                 json=MagicMock(
                     return_value={
                         "data": [
-                            {
-                                "name": "views",
-                                "period": "day",
-                                "total_value": {"value": 67},
-                            }
+                            {"name": "views", "period": "day", "total_value": {"value": 67}},
+                            {"name": "profile_views", "period": "day", "total_value": {"value": 5}},
                         ]
                     }
                 )
@@ -219,7 +246,7 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
                 "https://graph.instagram.com/v21.0/me/insights",
                 access_token="ig-token",
                 params={
-                    "metric": "reach,follower_count,profile_views",
+                    "metric": "reach,follower_count",
                     "period": "day",
                     "since": 1781740800,
                     "until": 1781827200,
@@ -230,7 +257,7 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
                 "https://graph.instagram.com/v21.0/me/insights",
                 access_token="ig-token",
                 params={
-                    "metric": "views",
+                    "metric": "views,profile_views",
                     "period": "day",
                     "metric_type": "total_value",
                     "since": 1781740800,
