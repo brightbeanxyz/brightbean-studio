@@ -454,9 +454,11 @@ def compose(request, workspace_id, post_id=None):
         .order_by("platform", "account_name")
     )
 
-    # When opening from calendar with a specific account, show only that account
-    if account_filter and post_id:
+    # When opening from calendar with a specific account, show only that account.
+    if account_filter:
         social_accounts = social_accounts.filter(id=account_filter)
+        if not post_id and social_accounts.exists():
+            selected_account_ids = [account_filter]
 
     # Platform character limits for JS
     char_limits = {}
