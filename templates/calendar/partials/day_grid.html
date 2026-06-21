@@ -7,7 +7,7 @@ Context: day_slots, target_date, workspace.
 {% for cell in day_slots %}
     <div class="flex border-b border-stone-100 min-h-[64px] cal-add-cell {% if cell.posts or cell.slots %}has-posts{% endif %} {% if is_today and cell.hour == current_hour %}bg-orange-50/50{% endif %}"
          @dragover.prevent="allowDrop($event)"
-         @drop="dropOnSlot($event, '{{ target_date|date:'Y-m-d' }}', {{ cell.hour }})">
+         @drop="dropOnSlot($event, '{{ cell.compose_date }}', '{{ cell.compose_time }}')">
         <!-- Time label -->
         <div class="w-20 flex-shrink-0 border-r border-stone-200 px-3 py-2 text-right">
             <span class="text-xs font-medium tabular-nums {% if is_today and cell.hour == current_hour %}text-orange-600 font-semibold{% else %}text-stone-400{% endif %}">

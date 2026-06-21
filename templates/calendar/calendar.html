@@ -363,7 +363,7 @@ function calendarApp() {
             event.dataTransfer.dropEffect = 'move';
         },
 
-        dropOnSlot(event, dateStr, hour) {
+        dropOnSlot(event, dateStr, timeStr) {
             event.preventDefault();
             const platformPostId = this.draggedPlatformPostId;
             if (!platformPostId) return;
@@ -384,7 +384,11 @@ function calendarApp() {
             }
             this.draggedPlatformPostId = null;
 
-            const newDatetime = dateStr + 'T' + String(hour).padStart(2, '0') + ':00:00';
+            // dateStr/timeStr are the target cell's workspace-tz wall date/time
+            // (see _cell_compose_params); reschedule_post interprets the naive
+            // value in the workspace timezone, so the drop lands on the right
+            // instant even when the calendar display timezone differs from it.
+            const newDatetime = dateStr + 'T' + timeStr + ':00';
 
             const csrfToken =
                 (document.querySelector('[name=csrfmiddlewaretoken]') || {}).value ||
