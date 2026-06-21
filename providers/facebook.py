@@ -72,6 +72,7 @@ class FacebookProvider(SocialProvider):
         scopes = [
             "business_management",
             "pages_show_list",
+            "pages_manage_engagement",
             "pages_manage_posts",
             "pages_read_engagement",
             "pages_read_user_content",
@@ -279,9 +280,10 @@ class FacebookProvider(SocialProvider):
             json=payload,
         )
         data = resp.json()
+        post_id = data.get("post_id", data["id"])
         return PublishResult(
-            platform_post_id=data["id"],
-            url=f"https://www.facebook.com/{data.get('post_id', data['id'])}",
+            platform_post_id=post_id,
+            url=f"https://www.facebook.com/{post_id}",
             extra=data,
         )
 

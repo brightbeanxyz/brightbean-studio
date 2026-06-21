@@ -149,3 +149,7 @@ class TestProviderMetadata:
     def test_facebook_auth_type_is_oauth2(self):
         p = get_provider("facebook")
         assert p.auth_type == AuthType.OAUTH2
+
+    def test_facebook_scopes_include_comment_permission(self):
+        p = get_provider("facebook")
+        assert "pages_manage_engagement" in p.required_scopes
