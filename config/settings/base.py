@@ -369,6 +369,10 @@ _INSTAGRAM_LOGIN_CREDENTIALS = {
     "app_id": env("PLATFORM_INSTAGRAM_APP_ID", default=""),
     "app_secret": env("PLATFORM_INSTAGRAM_APP_SECRET", default=""),
 }
+_THREADS_CREDENTIALS = {
+    "app_id": env("PLATFORM_THREADS_APP_ID", default="") or _META_CREDENTIALS["app_id"],
+    "app_secret": env("PLATFORM_THREADS_APP_SECRET", default="") or _META_CREDENTIALS["app_secret"],
+}
 _LINKEDIN_LEGACY_CLIENT_ID = env("PLATFORM_LINKEDIN_CLIENT_ID", default="")
 _LINKEDIN_LEGACY_CLIENT_SECRET = env("PLATFORM_LINKEDIN_CLIENT_SECRET", default="")
 
@@ -406,10 +410,12 @@ else:
     _LINKEDIN_PERSONAL_CREDENTIALS = {"client_id": "", "client_secret": ""}
 
 PLATFORM_CREDENTIALS_FROM_ENV = {
-    # Meta platforms - Facebook, Instagram, and Threads share the same app
+    # Meta platforms - Facebook and Instagram share the same app.
+    # Threads may use a separate App ID assigned by Meta's "Access the Threads API"
+    # use case; falls back to the shared Meta credentials when not set.
     "facebook": _META_CREDENTIALS,
     "instagram": _META_CREDENTIALS,
-    "threads": _META_CREDENTIALS,
+    "threads": _THREADS_CREDENTIALS,
     # Instagram (Direct) - uses Instagram Login with separate Instagram App credentials.
     # Despite the platform key, this targets Professional (Business/Creator) IG accounts
     # without requiring a linked Facebook Page. See providers/instagram_login.py.
