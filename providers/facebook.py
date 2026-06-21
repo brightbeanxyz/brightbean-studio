@@ -266,6 +266,9 @@ class FacebookProvider(SocialProvider):
         )
 
     def _publish_photo(self, access_token: str, page_id: str, content: PublishContent) -> PublishResult:
+        if len(content.media_urls) > 1:
+            return self._publish_multi_photo(access_token, page_id, content)
+
         payload: dict = {"url": content.media_urls[0]}
         if content.text:
             payload["message"] = content.text
@@ -280,6 +283,53 @@ class FacebookProvider(SocialProvider):
             platform_post_id=data["id"],
             url=f"https://www.facebook.com/{data.get('post_id', data['id'])}",
             extra=data,
+        )
+
+    def _publish_multi_photo(self, access_token: str, page_id: str, content: PublishContent) -> PublishResult:
+        photo_ids: list[str] = []
+
+        for url in content.media_urls:
+            resp = self._request(
+                "POST",
+                f"{BASE_URL}/{page_id}/photos",
+                access_token=access_token,
+                json={"url": url, "published": False},
+            )
+            data = resp.json()
+            photo_id = data.get("id")
+            if not photo_id:
+                raise PublishError(
+                    "Failed to stage Facebook photo for multi-photo post",
+                    platform=self.platform_name,
+                    raw_response=data,
+                )
+            photo_ids.append(photo_id)
+
+        payload: dict = {
+            "attached_media": [{"media_fbid": photo_id} for photo_id in photo_ids],
+        }
+        if content.text:
+            payload["message"] = content.text
+
+        resp = self._request(
+            "POST",
+            f"{BASE_URL}/{page_id}/feed",
+            access_token=access_token,
+            json=payload,
+        )
+        data = resp.json()
+        post_id = data.get("id")
+        if not post_id:
+            raise PublishError(
+                "Failed to publish Facebook multi-photo post",
+                platform=self.platform_name,
+                raw_response=data,
+            )
+
+        return PublishResult(
+            platform_post_id=post_id,
+            url=f"https://www.facebook.com/{post_id}",
+            extra={**data, "photo_ids": photo_ids},
         )
 
     def _publish_video(self, access_token: str, page_id: str, content: PublishContent) -> PublishResult:
