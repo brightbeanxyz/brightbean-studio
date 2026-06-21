@@ -279,9 +279,10 @@ class FacebookProvider(SocialProvider):
             json=payload,
         )
         data = resp.json()
+        post_id = data.get("post_id", data["id"])
         return PublishResult(
-            platform_post_id=data["id"],
-            url=f"https://www.facebook.com/{data.get('post_id', data['id'])}",
+            platform_post_id=post_id,
+            url=f"https://www.facebook.com/{post_id}",
             extra=data,
         )
 
