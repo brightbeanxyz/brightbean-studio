@@ -255,6 +255,8 @@ def _resolve_provider(account):
             pass
     elif account.platform == "instagram":
         credentials = {**credentials, "ig_user_id": account.account_platform_id}
+    elif account.platform == "facebook":
+        credentials = {**credentials, "page_id": account.account_platform_id}
     return get_provider(account.platform, credentials)
 
 
