@@ -345,8 +345,9 @@ class CalendarChannelSlotViewTests(TestCase):
         context = {"display_timezone": "America/New_York"}
         _day_view_data(self.factory.get("/"), self.workspace, target, context)
 
-        hour_posts = dict((hour, posts) for hour, posts, _slots in context["day_slots"])[9]
-        slot_items = dict((hour, slots) for hour, _posts, slots in context["day_slots"])[9]
+        cells = {cell["hour"]: cell for cell in context["day_slots"]}
+        hour_posts = cells[9]["posts"]
+        slot_items = cells[9]["slots"]
         self.assertEqual(slot_items, [])
         self.assertEqual(len(hour_posts), 1)
         self.assertTrue(hour_posts[0].takes_calendar_slot)
@@ -360,7 +361,8 @@ class CalendarChannelSlotViewTests(TestCase):
         context = {"display_timezone": "America/New_York"}
         _day_view_data(request, self.workspace, target, context)
 
-        slot_items = dict((hour, slots) for hour, _posts, slots in context["day_slots"])[9]
+        cells = {cell["hour"]: cell for cell in context["day_slots"]}
+        slot_items = cells[9]["slots"]
         self.assertEqual([slot["account"] for slot in slot_items], [self.account])
 
     def test_day_view_ignores_malformed_channel_filter(self):
@@ -371,7 +373,8 @@ class CalendarChannelSlotViewTests(TestCase):
         context = {"display_timezone": "America/New_York"}
         _day_view_data(request, self.workspace, target, context)
 
-        slot_items = dict((hour, slots) for hour, _posts, slots in context["day_slots"])[9]
+        cells = {cell["hour"]: cell for cell in context["day_slots"]}
+        slot_items = cells[9]["slots"]
         self.assertEqual([slot["account"] for slot in slot_items], [self.account])
 
     def test_day_view_includes_workspace_slot_from_adjacent_display_date(self):
@@ -392,8 +395,9 @@ class CalendarChannelSlotViewTests(TestCase):
         context = {"display_timezone": "Asia/Tokyo"}
         _day_view_data(self.factory.get("/"), self.workspace, target, context)
 
-        hour_posts = dict((hour, posts) for hour, posts, _slots in context["day_slots"])[1]
-        slot_items = dict((hour, slots) for hour, _posts, slots in context["day_slots"])[1]
+        cells = {cell["hour"]: cell for cell in context["day_slots"]}
+        hour_posts = cells[1]["posts"]
+        slot_items = cells[1]["slots"]
         self.assertEqual(slot_items, [])
         self.assertEqual(len(hour_posts), 1)
         self.assertTrue(hour_posts[0].takes_calendar_slot)

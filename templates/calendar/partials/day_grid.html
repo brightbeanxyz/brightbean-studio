@@ -4,33 +4,33 @@ Context: day_slots, target_date, workspace.
 {% endcomment %}
 
 <div class="bg-white mx-auto" style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both; max-height: calc(100vh - 200px); overflow-y: auto;">
-{% for hour, hour_posts, slot_items in day_slots %}
-    <div class="flex border-b border-stone-100 min-h-[64px] cal-add-cell {% if hour_posts or slot_items %}has-posts{% endif %} {% if is_today and hour == current_hour %}bg-orange-50/50{% endif %}"
+{% for cell in day_slots %}
+    <div class="flex border-b border-stone-100 min-h-[64px] cal-add-cell {% if cell.posts or cell.slots %}has-posts{% endif %} {% if is_today and cell.hour == current_hour %}bg-orange-50/50{% endif %}"
          @dragover.prevent="allowDrop($event)"
-         @drop="dropOnSlot($event, '{{ target_date|date:'Y-m-d' }}', {{ hour }})">
+         @drop="dropOnSlot($event, '{{ target_date|date:'Y-m-d' }}', {{ cell.hour }})">
         <!-- Time label -->
         <div class="w-20 flex-shrink-0 border-r border-stone-200 px-3 py-2 text-right">
-            <span class="text-xs font-medium tabular-nums {% if is_today and hour == current_hour %}text-orange-600 font-semibold{% else %}text-stone-400{% endif %}">
-                {% if hour < 10 %}0{% endif %}{{ hour }}:00
+            <span class="text-xs font-medium tabular-nums {% if is_today and cell.hour == current_hour %}text-orange-600 font-semibold{% else %}text-stone-400{% endif %}">
+                {% if cell.hour < 10 %}0{% endif %}{{ cell.hour }}:00
             </span>
         </div>
         <!-- Slots and posts in this hour -->
         <div class="flex-1 p-2 flex flex-col justify-center gap-1">
-            {% if not is_past_day and not is_today or not is_past_day and hour >= current_hour %}
-            <a href="{% url 'composer:compose' workspace_id=workspace.id %}?scheduled_date={{ target_date|date:'Y-m-d' }}&scheduled_time={{ hour }}:00" class="cal-add-btn cal-add-btn--inline" style="position:static; margin:0 auto;" title="Create post">
+            {% if not is_past_day and not is_today or not is_past_day and cell.hour >= current_hour %}
+            <a href="{% url 'composer:compose' workspace_id=workspace.id %}?scheduled_date={{ cell.compose_date }}&scheduled_time={{ cell.compose_time }}" class="cal-add-btn cal-add-btn--inline" style="position:static; margin:0 auto;" title="Create post">
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
             </a>
             {% endif %}
-            {% if slot_items %}
+            {% if cell.slots %}
             <div class="flex flex-wrap gap-1.5">
-                {% for slot in slot_items %}
-                <div class="calendar-channel-slot {% if is_past_day or is_today and hour < current_hour %}is-past-open{% endif %}">
+                {% for slot in cell.slots %}
+                <div class="calendar-channel-slot {% if slot.is_past %}is-past-open{% endif %}">
                     <span class="calendar-slot-platform-icon">
                         {% include "social_accounts/partials/_platform_icon.html" with platform=slot.account.platform size="3" %}
                     </span>
                     <span class="truncate">{{ slot.account.account_name|default:slot.account.account_handle }}</span>
                     <span class="tabular-nums text-stone-500">{{ slot.time_label }}</span>
-                    {% if not is_past_day and not is_today or not is_past_day and hour >= current_hour %}
+                    {% if not slot.is_past %}
                     <a href="{% url 'composer:compose' workspace_id=workspace.id %}?account={{ slot.account.id }}&scheduled_date={{ slot.compose_date }}&scheduled_time={{ slot.compose_time }}"
                        class="calendar-slot-add"
                        title="Schedule post for {{ slot.account.account_name|default:slot.account.account_handle }} at {{ slot.time_label }}">
@@ -43,7 +43,7 @@ Context: day_slots, target_date, workspace.
                 {% endfor %}
             </div>
             {% endif %}
-            {% for pp in hour_posts %}
+            {% for pp in cell.posts %}
             <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}"
                class="post-chip status-{{ pp.status }}"
                {% if pp.status == "draft" or pp.status == "approved" or pp.status == "scheduled" %}draggable="true"
