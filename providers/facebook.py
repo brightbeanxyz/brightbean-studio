@@ -394,12 +394,12 @@ class FacebookProvider(SocialProvider):
             values[name] = val
 
         reactions = values.get("post_reactions_by_type_total", {})
-        total_likes = reactions.get("like", 0) + reactions.get("love", 0) if isinstance(reactions, dict) else 0
+        total_reactions = sum(v for v in reactions.values() if isinstance(v, (int, float))) if isinstance(reactions, dict) else 0
         basic = self._get_basic_post_metrics(access_token, post_id)
 
         return PostMetrics(
             clicks=values.get("post_clicks", 0),
-            likes=total_likes or basic.likes,
+            likes=total_reactions or basic.likes,
             comments=basic.comments,
             shares=basic.shares,
             video_views=values.get("post_video_views", 0),

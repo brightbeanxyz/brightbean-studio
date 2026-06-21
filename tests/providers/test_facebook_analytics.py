@@ -54,7 +54,10 @@ def test_post_metrics_use_supported_facebook_insights_and_basic_counts():
                     return_value={
                         "data": [
                             {"name": "post_clicks", "values": [{"value": 4}]},
-                            {"name": "post_reactions_by_type_total", "values": [{"value": {"like": 5, "love": 2}}]},
+                            {
+                                "name": "post_reactions_by_type_total",
+                                "values": [{"value": {"like": 5, "love": 2, "sorry": 3}}],
+                            },
                             {"name": "post_video_views", "values": [{"value": 11}]},
                         ]
                     }
@@ -83,7 +86,7 @@ def test_post_metrics_use_supported_facebook_insights_and_basic_counts():
     metrics = provider.get_post_metrics("page-token", "post-1")
 
     assert metrics.clicks == 4
-    assert metrics.likes == 7
+    assert metrics.likes == 10
     assert metrics.comments == 3
     assert metrics.shares == 2
     assert metrics.video_views == 11
@@ -129,10 +132,11 @@ def test_facebook_post_metrics_persist_reactions_key():
 def test_facebook_catalog_uses_supported_metrics():
     from apps.analytics.metrics import PLATFORM_METRICS, PLATFORM_PRIMARY
 
-    assert PLATFORM_PRIMARY["facebook"] == "views"
+    assert PLATFORM_PRIMARY["facebook"] == "reactions"
+    assert "views" not in PLATFORM_METRICS["facebook"]
     assert "reach" not in PLATFORM_METRICS["facebook"]
     assert "impressions" not in PLATFORM_METRICS["facebook"]
-    assert {"views", "reactions", "comments", "shares", "clicks", "follows"} <= set(PLATFORM_METRICS["facebook"])
+    assert {"reactions", "comments", "shares", "clicks", "follows"} <= set(PLATFORM_METRICS["facebook"])
 
 
 def test_post_metrics_falls_back_for_objects_without_insights_edge():
