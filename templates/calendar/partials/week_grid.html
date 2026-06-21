@@ -21,14 +21,36 @@ Context: week_days, week_slots, workspace.
         <div class="border-r border-stone-200 px-2 py-1 text-right">
             <span class="text-[11px] font-medium text-stone-400 tabular-nums">{{ hour }}:00</span>
         </div>
-        {% for day, slot_posts in day_slots %}
-        <div class="border-r border-stone-100 last:border-r-0 p-1 cal-add-cell {% if slot_posts %}has-posts{% endif %} {% if day == today %}bg-orange-50/30{% endif %}"
+        {% for day, slot_posts, slot_items in day_slots %}
+        <div class="border-r border-stone-100 last:border-r-0 p-1 cal-add-cell {% if slot_posts or slot_items %}has-posts{% endif %} {% if day == today %}bg-orange-50/30{% endif %}"
              @dragover.prevent="allowDrop($event)"
              @drop="dropOnSlot($event, '{{ day|date:'Y-m-d' }}', {{ hour }})">
             {% if day > today or day == today and hour >= current_hour %}
             <a href="{% url 'composer:compose' workspace_id=workspace.id %}?scheduled_date={{ day|date:'Y-m-d' }}&scheduled_time={{ hour }}:00" class="cal-add-btn" title="Create post">
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
             </a>
+            {% endif %}
+            {% if slot_items %}
+            <div class="flex flex-col gap-1 mb-1">
+                {% for slot in slot_items %}
+                <div class="calendar-channel-slot calendar-channel-slot--week {% if day < today or day == today and hour < current_hour %}is-past-open{% endif %}">
+                    <span class="calendar-slot-platform-icon">
+                        {% include "social_accounts/partials/_platform_icon.html" with platform=slot.account.platform size="3" %}
+                    </span>
+                    <span class="truncate">{{ slot.account.account_name|default:slot.account.account_handle }}</span>
+                    <span class="tabular-nums text-stone-500">{{ slot.time_label }}</span>
+                    {% if day > today or day == today and hour >= current_hour %}
+                    <a href="{% url 'composer:compose' workspace_id=workspace.id %}?account={{ slot.account.id }}&scheduled_date={{ slot.compose_date }}&scheduled_time={{ slot.compose_time }}"
+                       class="calendar-slot-add"
+                       title="Schedule post for {{ slot.account.account_name|default:slot.account.account_handle }} at {{ slot.time_label }}">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                    </a>
+                    {% else %}
+                    <span class="calendar-slot-state">Open</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
             {% endif %}
             {% for pp in slot_posts %}
             <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}"
@@ -50,6 +72,11 @@ Context: week_days, week_slots, workspace.
                 {% endif %}
                 {% endwith %}
                 <span class="truncate">{{ pp.post.title|default:pp.post.caption_snippet|truncatechars:28 }}</span>
+                {% if pp.takes_calendar_slot %}
+                <span class="calendar-post-slot-check" title="Scheduled in a channel slot">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                </span>
+                {% endif %}
             </a>
             {% endfor %}
         </div>
