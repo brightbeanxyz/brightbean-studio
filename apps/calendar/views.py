@@ -220,7 +220,10 @@ def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates
     """
     import zoneinfo
 
+    from django.utils import timezone
+
     workspace_tz = zoneinfo.ZoneInfo(workspace.effective_timezone or "UTC")
+    now = timezone.now()
     visible_dates = set(visible_dates)
     if not visible_dates:
         return defaultdict(list)
@@ -271,6 +274,11 @@ def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates
                         "time_label": local_dt.strftime("%H:%M"),
                         "compose_date": workspace_dt.strftime("%Y-%m-%d"),
                         "compose_time": workspace_dt.strftime("%H:%M"),
+                        # Precise per-occurrence gate: a slot earlier in the
+                        # current hour is already past, so the template must show
+                        # "Open" (faded) rather than an actionable "+" that the
+                        # composer would then reject as a past schedule time.
+                        "is_past": workspace_dt <= now,
                     },
                 )
             )
@@ -292,6 +300,21 @@ def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates
         slots_by_hour[(slot["date"], slot["hour"])].append(slot)
 
     return slots_by_hour
+
+
+def _cell_compose_params(display_date, hour, display_tz, workspace_tz):
+    """Workspace-tz wall-clock (date, time) strings for a display-tz grid cell.
+
+    The composer reads ``?scheduled_date``/``?scheduled_time`` in the *workspace*
+    timezone (see ``apps.composer.views.save_post``), so a calendar "+" must hand
+    it the workspace-tz wall time of the instant the cell represents. Passing the
+    raw display-tz hour would schedule at the wrong moment whenever the active
+    display timezone differs from the workspace timezone. (Channel-slot "+" links
+    already do this via the slot's ``compose_date``/``compose_time``.)
+    """
+    cell_dt = datetime.combine(display_date, time(hour), tzinfo=display_tz)
+    workspace_dt = cell_dt.astimezone(workspace_tz)
+    return workspace_dt.strftime("%Y-%m-%d"), workspace_dt.strftime("%H:%M")
 
 
 def _get_publish_context(workspace, request):
@@ -748,14 +771,26 @@ def _week_view_data(request, workspace, target_date, context):
     hours = list(range(0, 24))
 
     # Build a grid structure the template can iterate:
-    # week_slots = [(hour, [(day, posts, slots), ...]), ...]
+    # week_slots = [(hour, [cell, ...]), ...] where each cell is a dict with
+    # day/posts/slots plus the workspace-tz compose_date/compose_time used by the
+    # "Create post" CTA (so it schedules correctly under a non-workspace display tz).
+    workspace_tz = zoneinfo.ZoneInfo(workspace.effective_timezone or "UTC")
     week_slots = []
     for hour in hours:
-        day_slots = []
+        day_cells = []
         for day in week_days:
             key = (day, hour)
-            day_slots.append((day, posts_by_slot.get(key, []), slots_by_hour.get(key, [])))
-        week_slots.append((hour, day_slots))
+            compose_date, compose_time = _cell_compose_params(day, hour, display_tz, workspace_tz)
+            day_cells.append(
+                {
+                    "day": day,
+                    "posts": posts_by_slot.get(key, []),
+                    "slots": slots_by_hour.get(key, []),
+                    "compose_date": compose_date,
+                    "compose_time": compose_time,
+                }
+            )
+        week_slots.append((hour, day_cells))
 
     from django.utils import timezone as _tz
 
@@ -808,8 +843,22 @@ def _day_view_data(request, workspace, target_date, context):
     slots_by_hour = _get_calendar_slot_occurrences(workspace, request, display_tz, [target_date], platform_posts)
     hours = list(range(0, 24))
 
-    # Build a list of (hour, posts, slots) tuples for easy template iteration
-    day_slots = [(hour, posts_by_hour.get(hour, []), slots_by_hour.get((target_date, hour), [])) for hour in hours]
+    # One cell per hour. ``compose_date``/``compose_time`` are the workspace-tz
+    # wall time of the cell so the "Create post" CTA schedules at the right
+    # instant even when the display timezone differs from the workspace one.
+    workspace_tz = zoneinfo.ZoneInfo(workspace.effective_timezone or "UTC")
+    day_slots = []
+    for hour in hours:
+        compose_date, compose_time = _cell_compose_params(target_date, hour, display_tz, workspace_tz)
+        day_slots.append(
+            {
+                "hour": hour,
+                "posts": posts_by_hour.get(hour, []),
+                "slots": slots_by_hour.get((target_date, hour), []),
+                "compose_date": compose_date,
+                "compose_time": compose_time,
+            }
+        )
 
     from django.utils import timezone as _tz
 
