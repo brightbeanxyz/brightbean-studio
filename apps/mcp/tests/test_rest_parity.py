@@ -120,6 +120,7 @@ def scheduled_post(db, user, workspace, social_account):
         title="Parity title",
         caption="Parity caption",
         first_comment="Parity first comment",
+        internal_notes="Parity internal note",
         scheduled_at=when,
     )
     PlatformPost.objects.create(
@@ -178,6 +179,40 @@ class TestRestMcpPostParity:
         assert "created_at" in body
         assert "updated_at" in body
         assert body["platform_posts"][0]["platform_post_id"] == "upstream-abc-123"
+
+    def test_internal_notes_round_trips_through_mcp_create_draft(self, client_with_token, social_account):
+        """internal_notes set via MCP ``create_draft`` must come back on the MCP
+        response *and* match what REST returns for the same post — proving the
+        field threads through the shared ``create_post`` service and
+        ``PostResponse`` rather than a surface-specific code path.
+        """
+        note = "Cleared with the client on the 2pm call."
+        mcp = client_with_token.post(
+            MCP_URL,
+            data=json.dumps(
+                _rpc(
+                    "tools/call",
+                    {
+                        "name": "create_draft",
+                        "arguments": {
+                            "social_account_id": str(social_account.id),
+                            "caption": "draft with a note",
+                            "internal_notes": note,
+                        },
+                    },
+                )
+            ),
+            content_type="application/json",
+        )
+        assert mcp.status_code == 200
+        envelope = mcp.json()
+        assert "error" not in envelope, envelope
+        mcp_body = json.loads(envelope["result"]["content"][0]["text"])
+        assert mcp_body["internal_notes"] == note
+
+        rest = client_with_token.get(f"/api/v1/posts/{mcp_body['id']}")
+        assert rest.status_code == 200, rest.content
+        assert rest.json()["internal_notes"] == note
 
     def test_mcp_scheduled_at_uses_z_suffix_for_utc(self, client_with_token, scheduled_post):
         """Gap 5: MCP used to emit ``+00:00``; both surfaces now emit ``Z``."""

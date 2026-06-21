@@ -363,6 +363,19 @@ class TestPatchRouteHappyPaths:
         assert draft_post.title == "new title"
         assert draft_post.first_comment == "first!"
 
+    def test_internal_notes_update_persists(self, client_with_token, draft_post):
+        r = client_with_token.patch(
+            f"/api/v1/posts/{draft_post.id}",
+            data=json.dumps({"internal_notes": "needs a second pass before publish"}),
+            content_type="application/json",
+        )
+        assert r.status_code == 200, r.content
+        assert r.json()["internal_notes"] == "needs a second pass before publish"
+        draft_post.refresh_from_db()
+        assert draft_post.internal_notes == "needs a second pass before publish"
+        # Untouched fields preserved.
+        assert draft_post.caption == "initial"
+
 
 # ===========================================================================
 # Audit-log action labels
