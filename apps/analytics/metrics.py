@@ -43,8 +43,10 @@ PLATFORM_METRICS: dict[str, list[str]] = {
     # comments, saved, shares, total_interactions; follower growth at account level.
     "instagram": ["reach", "views", "likes", "comments", "saves", "shares", "follows", "engagement"],
     "instagram_login": ["reach", "views", "likes", "comments", "saves", "shares", "follows", "engagement"],
-    # FB post insights: impressions, reach (unique), reactions, comments, shares, clicks.
-    "facebook": ["impressions", "reach", "reactions", "comments", "shares", "clicks", "follows", "engagement"],
+    # FB Graph v21 rejects the old page/post reach + impressions metrics for
+    # the production page/post objects we sync today. Keep only metrics backed
+    # by confirmed-valid post insights or basic Graph object fields.
+    "facebook": ["reactions", "comments", "shares", "clicks", "follows"],
     # LinkedIn share statistics: impressions, reactions, comments, reposts, clicks, engagement.
     "linkedin_company": ["impressions", "reactions", "comments", "reposts", "clicks", "follows", "engagement"],
     # LinkedIn Personal: only socialActions counts (no impressions/reach per API).
@@ -75,7 +77,7 @@ PLATFORM_METRICS: dict[str, list[str]] = {
 PLATFORM_PRIMARY: dict[str, str] = {
     "instagram": "reach",
     "instagram_login": "reach",
-    "facebook": "reach",
+    "facebook": "reactions",
     "linkedin_company": "impressions",
     "linkedin_personal": "likes",
     "youtube": "views",

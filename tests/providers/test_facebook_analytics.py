@@ -99,6 +99,30 @@ def test_post_metrics_use_supported_facebook_insights_and_basic_counts():
     )
 
 
+def test_facebook_post_metrics_persist_reactions_key():
+    from apps.analytics.tasks import _post_metrics_to_dict
+    from providers.types import PostMetrics
+
+    metrics = PostMetrics(likes=7, comments=3, shares=2, clicks=4)
+
+    out = _post_metrics_to_dict(metrics, "facebook")
+
+    assert out["reactions"] == 7.0
+    assert "likes" not in out
+    assert out["comments"] == 3.0
+    assert out["shares"] == 2.0
+    assert out["clicks"] == 4.0
+
+
+def test_facebook_catalog_uses_supported_metrics():
+    from apps.analytics.metrics import PLATFORM_METRICS, PLATFORM_PRIMARY
+
+    assert PLATFORM_PRIMARY["facebook"] == "reactions"
+    assert "reach" not in PLATFORM_METRICS["facebook"]
+    assert "impressions" not in PLATFORM_METRICS["facebook"]
+    assert {"reactions", "comments", "shares", "clicks", "follows"} <= set(PLATFORM_METRICS["facebook"])
+
+
 def test_post_metrics_falls_back_for_objects_without_insights_edge():
     provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
     provider._request = MagicMock(

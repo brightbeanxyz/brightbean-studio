@@ -104,6 +104,11 @@ _POST_FIELD_OVERRIDES: dict[str, dict[str, str]] = {
         "likes": "reactions",
         "shares": "reposts",
     },
+    "facebook": {
+        # providers/facebook.py collapses reaction types into PostMetrics.likes;
+        # the Facebook catalog labels that aggregate as reactions.
+        "likes": "reactions",
+    },
     "mastodon": {
         # providers/mastodon.py:313-316: favourites→likes (ok), reblogs→shares,
         # replies→comments. Catalog wants reposts/replies.
