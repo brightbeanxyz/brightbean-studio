@@ -204,6 +204,27 @@ class TestCreatePost:
         assert Post.objects.count() == 1
         assert PlatformPost.objects.filter(status="draft").count() == 1
 
+    def test_create_draft_with_internal_notes(self, client_with_token, social_account):
+        r = client_with_token.post(
+            "/api/v1/posts/",
+            data=json.dumps(
+                {
+                    "social_account_id": str(social_account.id),
+                    "caption": "Has a private note.",
+                    "internal_notes": "Approved by legal; ship Monday.",
+                    "action": "draft",
+                }
+            ),
+            content_type="application/json",
+        )
+        assert r.status_code == 201, r.content
+        body = r.json()
+        assert body["internal_notes"] == "Approved by legal; ship Monday."
+        # Persisted on the model; the team note never leaks into the public caption.
+        post = Post.objects.get(id=body["id"])
+        assert post.internal_notes == "Approved by legal; ship Monday."
+        assert post.caption == "Has a private note."
+
     def test_create_scheduled_requires_scheduled_at(self, client_with_token, social_account):
         r = client_with_token.post(
             "/api/v1/posts/",
@@ -250,6 +271,49 @@ class TestCreatePost:
         )
         assert r.status_code == 403
         assert "allowlist" in r.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# internal_notes visibility
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestInternalNotesVisibility:
+    """``internal_notes`` is a team-only field. The shared ``PostResponse``
+    serializer must redact it for callers without ``create_posts`` — the API
+    analogue of the composer hiding it from client/viewer roles — even though
+    reads aren't otherwise permission-gated.
+    """
+
+    def _post_with_note(self, workspace, user, social_account, note="eyes only"):
+        post = Post.objects.create(workspace=workspace, author=user, caption="public", internal_notes=note)
+        PlatformPost.objects.create(post=post, social_account=social_account, status="draft")
+        return post
+
+    def test_create_posts_caller_sees_internal_notes(self, client_with_token, workspace, user, social_account):
+        post = self._post_with_note(workspace, user, social_account)
+        r = client_with_token.get(f"/api/v1/posts/{post.id}")
+        assert r.status_code == 200, r.content
+        assert r.json()["internal_notes"] == "eyes only"
+
+    def test_caller_without_create_posts_gets_redacted_notes(self, user, owner_memberships, workspace, social_account):
+        # A key that can read posts (allowlisted) but lacks create_posts — the
+        # API analogue of a client/viewer-role member.
+        readonly = services.issue_api_key(
+            workspace=workspace,
+            social_accounts=[social_account],
+            issued_by=user,
+            name="readonly",
+            permissions=["view_analytics"],  # deliberately omits create_posts
+        )
+        client = _SecureClient(HTTP_AUTHORIZATION=f"Bearer {readonly.plaintext_token}")
+        post = self._post_with_note(workspace, user, social_account)
+        r = client.get(f"/api/v1/posts/{post.id}")
+        assert r.status_code == 200, r.content
+        body = r.json()
+        assert body["internal_notes"] == ""  # redacted
+        assert body["caption"] == "public"  # other fields unaffected
 
 
 # ---------------------------------------------------------------------------

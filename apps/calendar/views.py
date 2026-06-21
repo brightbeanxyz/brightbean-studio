@@ -2,6 +2,7 @@
 
 import calendar as cal_mod
 import json
+import uuid
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 
@@ -96,6 +97,17 @@ def _parse_date(date_str, default=None):
     return default or date.today()
 
 
+def _get_valid_channel_filter(request):
+    """Return a UUID-safe channel filter value, or blank when malformed."""
+    channel = request.GET.get("channel", "").strip()
+    if not channel:
+        return ""
+    try:
+        return str(uuid.UUID(channel))
+    except (TypeError, ValueError, AttributeError):
+        return ""
+
+
 def _get_filtered_posts(workspace, request):
     """Apply calendar filters from query params."""
     qs = (
@@ -171,6 +183,11 @@ def _get_filtered_platform_posts(workspace, request):
     if platforms:
         qs = qs.filter(social_account__platform__in=platforms)
 
+    # Channel filter (calendar toolbar sends the selected SocialAccount id).
+    channel = _get_valid_channel_filter(request)
+    if channel:
+        qs = qs.filter(social_account_id=channel)
+
     # Author filter
     authors = request.GET.getlist("author")
     if authors:
@@ -192,6 +209,112 @@ def _get_filtered_platform_posts(workspace, request):
         qs = qs.filter(tag_q)
 
     return qs
+
+
+def _get_calendar_slot_occurrences(workspace, request, display_tz, visible_dates, platform_posts):
+    """Return PostingSlot occurrences grouped by display date/hour.
+
+    PostingSlot times are defined in the workspace timezone. Convert concrete
+    occurrences into the active display timezone before placing them in the
+    day/week timeline, so timezone changes move slots and posts together.
+    """
+    import zoneinfo
+
+    from django.utils import timezone
+
+    workspace_tz = zoneinfo.ZoneInfo(workspace.effective_timezone or "UTC")
+    now = timezone.now()
+    visible_dates = set(visible_dates)
+    if not visible_dates:
+        return defaultdict(list)
+
+    first_date = min(visible_dates) - timedelta(days=1)
+    last_date = max(visible_dates) + timedelta(days=1)
+    occurrence_dates = [first_date + timedelta(days=offset) for offset in range((last_date - first_date).days + 1)]
+
+    slots = PostingSlot.objects.filter(
+        social_account__workspace=workspace,
+        social_account__connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        is_active=True,
+    )
+    channel = _get_valid_channel_filter(request)
+    if channel:
+        slots = slots.filter(social_account_id=channel)
+
+    slots = slots.select_related("social_account").order_by(
+        "time",
+        "social_account__platform",
+        "social_account__account_name",
+    )
+
+    slots_by_hour = defaultdict(list)
+    slot_keys = set()
+    slot_occurrences = []
+    dates_by_weekday = defaultdict(list)
+    for occurrence_date in occurrence_dates:
+        dates_by_weekday[occurrence_date.weekday()].append(occurrence_date)
+
+    for slot in slots:
+        for occurrence_date in dates_by_weekday.get(slot.day_of_week, []):
+            workspace_dt = datetime.combine(occurrence_date, slot.time, tzinfo=workspace_tz)
+            local_dt = workspace_dt.astimezone(display_tz)
+            if local_dt.date() not in visible_dates:
+                continue
+
+            key = (slot.social_account_id, local_dt.date(), local_dt.hour, local_dt.minute)
+            slot_keys.add(key)
+            slot_occurrences.append(
+                (
+                    key,
+                    {
+                        "account": slot.social_account,
+                        "date": local_dt.date(),
+                        "hour": local_dt.hour,
+                        "minute": local_dt.minute,
+                        "time_label": local_dt.strftime("%H:%M"),
+                        "compose_date": workspace_dt.strftime("%Y-%m-%d"),
+                        "compose_time": workspace_dt.strftime("%H:%M"),
+                        # Precise per-occurrence gate: a slot earlier in the
+                        # current hour is already past, so the template must show
+                        # "Open" (faded) rather than an actionable "+" that the
+                        # composer would then reject as a past schedule time.
+                        "is_past": workspace_dt <= now,
+                    },
+                )
+            )
+
+    taken_keys = set()
+    for pp in platform_posts:
+        pp.takes_calendar_slot = False
+        if not pp.effective_at:
+            continue
+        local_dt = pp.effective_at.astimezone(display_tz)
+        key = (pp.social_account_id, local_dt.date(), local_dt.hour, local_dt.minute)
+        if key in slot_keys:
+            pp.takes_calendar_slot = True
+            taken_keys.add(key)
+
+    for key, slot in slot_occurrences:
+        if key in taken_keys:
+            continue
+        slots_by_hour[(slot["date"], slot["hour"])].append(slot)
+
+    return slots_by_hour
+
+
+def _cell_compose_params(display_date, hour, display_tz, workspace_tz):
+    """Workspace-tz wall-clock (date, time) strings for a display-tz grid cell.
+
+    The composer reads ``?scheduled_date``/``?scheduled_time`` in the *workspace*
+    timezone (see ``apps.composer.views.save_post``), so a calendar "+" must hand
+    it the workspace-tz wall time of the instant the cell represents. Passing the
+    raw display-tz hour would schedule at the wrong moment whenever the active
+    display timezone differs from the workspace timezone. (Channel-slot "+" links
+    already do this via the slot's ``compose_date``/``compose_time``.)
+    """
+    cell_dt = datetime.combine(display_date, time(hour), tzinfo=display_tz)
+    workspace_dt = cell_dt.astimezone(workspace_tz)
+    return workspace_dt.strftime("%Y-%m-%d"), workspace_dt.strftime("%H:%M")
 
 
 def _get_publish_context(workspace, request):
@@ -625,7 +748,7 @@ def _week_view_data(request, workspace, target_date, context):
     week_days = [monday + timedelta(days=i) for i in range(7)]
 
     # Widen query by ±1 day to handle timezone boundary shifts
-    platform_posts = (
+    platform_posts = list(
         _get_filtered_platform_posts(workspace, request)
         .filter(
             effective_at__date__gte=week_days[0] - timedelta(days=1),
@@ -644,17 +767,30 @@ def _week_view_data(request, workspace, target_date, context):
                 key = (local_dt.date(), local_dt.hour)
                 posts_by_slot[key].append(pp)
 
+    slots_by_hour = _get_calendar_slot_occurrences(workspace, request, display_tz, week_days, platform_posts)
     hours = list(range(0, 24))
 
     # Build a grid structure the template can iterate:
-    # week_slots = [(hour, [(day, posts), ...]), ...]
+    # week_slots = [(hour, [cell, ...]), ...] where each cell is a dict with
+    # day/posts/slots plus the workspace-tz compose_date/compose_time used by the
+    # "Create post" CTA (so it schedules correctly under a non-workspace display tz).
+    workspace_tz = zoneinfo.ZoneInfo(workspace.effective_timezone or "UTC")
     week_slots = []
     for hour in hours:
-        day_slots = []
+        day_cells = []
         for day in week_days:
             key = (day, hour)
-            day_slots.append((day, posts_by_slot.get(key, [])))
-        week_slots.append((hour, day_slots))
+            compose_date, compose_time = _cell_compose_params(day, hour, display_tz, workspace_tz)
+            day_cells.append(
+                {
+                    "day": day,
+                    "posts": posts_by_slot.get(key, []),
+                    "slots": slots_by_hour.get(key, []),
+                    "compose_date": compose_date,
+                    "compose_time": compose_time,
+                }
+            )
+        week_slots.append((hour, day_cells))
 
     from django.utils import timezone as _tz
 
@@ -687,7 +823,7 @@ def _day_view_data(request, workspace, target_date, context):
     display_tz = zoneinfo.ZoneInfo(context.get("display_timezone", "UTC"))
 
     # Widen query by ±1 day to handle timezone boundary shifts
-    platform_posts = (
+    platform_posts = list(
         _get_filtered_platform_posts(workspace, request)
         .filter(
             effective_at__date__gte=target_date - timedelta(days=1),
@@ -704,10 +840,25 @@ def _day_view_data(request, workspace, target_date, context):
             if local_dt.date() == target_date:
                 posts_by_hour[local_dt.hour].append(pp)
 
+    slots_by_hour = _get_calendar_slot_occurrences(workspace, request, display_tz, [target_date], platform_posts)
     hours = list(range(0, 24))
 
-    # Build a list of (hour, posts) tuples for easy template iteration
-    day_slots = [(hour, posts_by_hour.get(hour, [])) for hour in hours]
+    # One cell per hour. ``compose_date``/``compose_time`` are the workspace-tz
+    # wall time of the cell so the "Create post" CTA schedules at the right
+    # instant even when the display timezone differs from the workspace one.
+    workspace_tz = zoneinfo.ZoneInfo(workspace.effective_timezone or "UTC")
+    day_slots = []
+    for hour in hours:
+        compose_date, compose_time = _cell_compose_params(target_date, hour, display_tz, workspace_tz)
+        day_slots.append(
+            {
+                "hour": hour,
+                "posts": posts_by_hour.get(hour, []),
+                "slots": slots_by_hour.get((target_date, hour), []),
+                "compose_date": compose_date,
+                "compose_time": compose_time,
+            }
+        )
 
     from django.utils import timezone as _tz
 

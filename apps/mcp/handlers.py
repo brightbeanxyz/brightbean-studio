@@ -103,13 +103,29 @@ def _parse_media_tags(args: dict) -> list:
     return tags
 
 
-def _serialize_post(post: Post) -> dict:
+def _can_view_internal_notes(context: dict[str, Any]) -> bool:
+    """Whether this MCP caller may see a post's team-only ``internal_notes``.
+
+    Mirrors the REST router's check: visibility is gated on ``create_posts``,
+    the permission held by exactly the workspace roles the composer lets view
+    internal notes (i.e. not client/viewer). ``get_post`` isn't permission-
+    gated, so without this an OAuth client/viewer could read team notes.
+    """
+    membership = context.get("membership")
+    return bool(membership and membership.effective_permissions.get("create_posts", False))
+
+
+def _serialize_post(post: Post, context: dict[str, Any]) -> dict:
     """Serialize a Post for an MCP tool response.
 
     Delegates to the same Pydantic schema the REST router returns so
     the two surfaces cannot drift in either field set or wire format.
+    ``internal_notes`` is redacted unless the caller may view it (see
+    ``_can_view_internal_notes``).
     """
-    return PostResponse.from_post(post).model_dump(mode="json")
+    return PostResponse.from_post(post, include_internal_notes=_can_view_internal_notes(context)).model_dump(
+        mode="json"
+    )
 
 
 def _get_post_for_key(api_key, post_id_str: str) -> Post:
@@ -202,6 +218,7 @@ def _create_draft(args: dict, context: dict[str, Any]) -> dict:
             caption=args["caption"],
             title=args.get("title", ""),
             first_comment=args.get("first_comment", ""),
+            internal_notes=args.get("internal_notes", ""),
             media_asset_ids=args.get("media_asset_ids") or [],
             proposed_publish_at=proposed_publish_at,
             author=api_key.issued_by if api_key.issued_by_id else None,
@@ -209,7 +226,7 @@ def _create_draft(args: dict, context: dict[str, Any]) -> dict:
         )
     except ValueError as exc:
         raise JsonRpcError(INVALID_PARAMS, str(exc)) from exc
-    return _wrap_text(_serialize_post(post))
+    return _wrap_text(_serialize_post(post, context))
 
 
 register_tool(
@@ -234,6 +251,12 @@ register_tool(
                     "type": "string",
                     "default": "",
                     "description": "Optional comment auto-posted after the main post.",
+                },
+                "internal_notes": {
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 10000,
+                    "description": "Private team-only note. Never published to any platform.",
                 },
                 "media_asset_ids": {
                     "type": "array",
@@ -296,6 +319,7 @@ def _schedule_post(args: dict, context: dict[str, Any]) -> dict:
             caption=args["caption"],
             title=args.get("title", ""),
             first_comment=args.get("first_comment", ""),
+            internal_notes=args.get("internal_notes", ""),
             media_asset_ids=args.get("media_asset_ids") or [],
             scheduled_at=scheduled_at,
             author=api_key.issued_by if api_key.issued_by_id else None,
@@ -303,7 +327,7 @@ def _schedule_post(args: dict, context: dict[str, Any]) -> dict:
         )
     except ValueError as exc:
         raise JsonRpcError(INVALID_PARAMS, str(exc)) from exc
-    return _wrap_text(_serialize_post(post))
+    return _wrap_text(_serialize_post(post, context))
 
 
 register_tool(
@@ -324,6 +348,12 @@ register_tool(
                 },
                 "title": {"type": "string", "default": "", "maxLength": 255},
                 "first_comment": {"type": "string", "default": ""},
+                "internal_notes": {
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 10000,
+                    "description": "Private team-only note. Never published to any platform.",
+                },
                 "media_asset_ids": {
                     "type": "array",
                     "items": {"type": "string", "format": "uuid"},
@@ -348,7 +378,7 @@ def _get_post(args: dict, context: dict[str, Any]) -> dict:
         raise JsonRpcError(INVALID_PARAMS, "post_id is required")
     api_key = context["api_key"]
     post = _get_post_for_key(api_key, args["post_id"])
-    return _wrap_text(_serialize_post(post))
+    return _wrap_text(_serialize_post(post, context))
 
 
 register_tool(
@@ -400,7 +430,7 @@ def _cancel_post(args: dict, context: dict[str, Any]) -> dict:
             except ValueError as exc:
                 raise JsonRpcError(INVALID_PARAMS, str(exc)) from exc
     post.refresh_from_db()
-    return _wrap_text(_serialize_post(post))
+    return _wrap_text(_serialize_post(post, context))
 
 
 register_tool(
@@ -477,7 +507,7 @@ def _schedule_draft(args: dict, context: dict[str, Any]) -> dict:
             except ValueError as exc:
                 raise JsonRpcError(INVALID_PARAMS, str(exc)) from exc
     post.refresh_from_db()
-    return _wrap_text(_serialize_post(post))
+    return _wrap_text(_serialize_post(post, context))
 
 
 register_tool(

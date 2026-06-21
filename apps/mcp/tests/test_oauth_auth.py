@@ -264,3 +264,38 @@ class TestOAuthShimCoversToolSurface:
         assert status == 200
         assert body["error"]["code"] == INVALID_PARAMS
         assert "not found" in body["error"]["message"].lower()
+
+
+@pytest.mark.django_db
+class TestOAuthInternalNotesVisibility:
+    """``internal_notes`` is team-only. ``get_post`` isn't permission-gated, so
+    the shared ``PostResponse`` serializer must redact the field for
+    client/viewer-role OAuth callers (whom the composer also blocks from seeing
+    internal notes) while internal roles keep seeing it.
+    """
+
+    def _post_with_note(self, ws, user, sa, note="board-only context"):
+        from apps.composer.models import PlatformPost, Post
+
+        post = Post.objects.create(workspace=ws, author=user, caption="public", internal_notes=note)
+        PlatformPost.objects.create(post=post, social_account=sa, status="draft")
+        return post
+
+    def test_viewer_get_post_redacts_internal_notes(self):
+        user, ws, sa = _make_user_with_workspace("viewer-notes@example.com", WorkspaceMembership.WorkspaceRole.VIEWER)
+        post = self._post_with_note(ws, user, sa)
+        c = _SecureClient(HTTP_AUTHORIZATION=f"Bearer {_mint_oauth_token(user)}")
+        status, body = _post(c, _rpc("tools/call", {"name": "get_post", "arguments": {"post_id": str(post.id)}}))
+        assert status == 200
+        payload = json.loads(body["result"]["content"][0]["text"])
+        assert payload["internal_notes"] == ""  # redacted for a viewer
+        assert payload["caption"] == "public"  # other fields intact
+
+    def test_owner_get_post_includes_internal_notes(self):
+        user, ws, sa = _make_user_with_workspace("owner-notes@example.com", WorkspaceMembership.WorkspaceRole.OWNER)
+        post = self._post_with_note(ws, user, sa)
+        c = _SecureClient(HTTP_AUTHORIZATION=f"Bearer {_mint_oauth_token(user)}")
+        status, body = _post(c, _rpc("tools/call", {"name": "get_post", "arguments": {"post_id": str(post.id)}}))
+        assert status == 200
+        payload = json.loads(body["result"]["content"][0]["text"])
+        assert payload["internal_notes"] == "board-only context"

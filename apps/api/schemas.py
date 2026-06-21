@@ -165,6 +165,14 @@ class CreatePostRequest(Schema):
             "Bluesky, Google Business; LinkedIn Personal in OIDC mode)."
         ),
     )
+    internal_notes: str = Field(
+        "",
+        max_length=10_000,
+        description=(
+            "Private team-only note. Never published to any platform; surfaced only "
+            "to your team via the API and the composer."
+        ),
+    )
     media_asset_ids: list[uuid.UUID] = Field(
         default_factory=list,
         description="MediaAsset IDs already uploaded to the workspace's media library. Position-ordered.",
@@ -208,6 +216,11 @@ class UpdatePostRequest(Schema):
     caption: str | None = Field(None, max_length=10_000)
     title: str | None = Field(None, max_length=255)
     first_comment: str | None = Field(None, max_length=10_000)
+    internal_notes: str | None = Field(
+        None,
+        max_length=10_000,
+        description="Private team-only note. Omit (or send null) to leave it unchanged.",
+    )
     media_asset_ids: list[uuid.UUID] | None = None
     scheduled_at: dt.datetime | None = Field(
         None,
@@ -262,6 +275,7 @@ class PostResponse(Schema):
     title: str
     caption: str
     first_comment: str
+    internal_notes: str
     scheduled_at: dt.datetime | None
     published_at: dt.datetime | None
     proposed_publish_at: dt.datetime | None
@@ -275,12 +289,20 @@ class PostResponse(Schema):
         return _serialize_utc_z(value)
 
     @classmethod
-    def from_post(cls, post: Post) -> PostResponse:
+    def from_post(cls, post: Post, *, include_internal_notes: bool = False) -> PostResponse:
         """Single source of truth for Post → API response shape.
 
         Used by both the REST router and MCP handlers so the two surfaces
         cannot drift. ``post.platform_posts`` should be prefetched with
         ``social_account`` to avoid an N+1.
+
+        ``internal_notes`` is a team-only field. The composer hides it from
+        ``client`` / ``viewer`` workspace roles, so the API/MCP mirror that by
+        redacting it to ``""`` unless ``include_internal_notes`` is set. Call
+        sites derive that flag from the caller's ``create_posts`` permission
+        (see ``_can_view_internal_notes`` in the REST router and MCP handlers).
+        It defaults to ``False`` so a new, unconverted call site fails closed —
+        redacted — rather than leaking notes.
         """
         platform_posts = [
             PlatformPostSummary.from_platform_post(pp) for pp in post.platform_posts.select_related("social_account")
@@ -291,6 +313,7 @@ class PostResponse(Schema):
             title=post.title,
             caption=post.caption,
             first_comment=post.first_comment,
+            internal_notes=post.internal_notes if include_internal_notes else "",
             scheduled_at=post.scheduled_at,
             published_at=post.published_at,
             proposed_publish_at=post.proposed_publish_at,

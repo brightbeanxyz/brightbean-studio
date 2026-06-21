@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, PublishError
@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://graph.facebook.com/v21.0"
 OAUTH_URL = "https://www.facebook.com/v21.0/dialog/oauth"
 TOKEN_URL = f"{BASE_URL}/oauth/access_token"
+
+# Facebook caps the ``attached_media`` array on a single feed post. Larger sets
+# must use the album-creation flow, which this provider does not implement.
+FACEBOOK_MAX_ATTACHED_MEDIA = 10
+# Extension heuristic for spotting video URLs, mirroring the per-item checks in
+# the Instagram / Threads carousel providers.
+VIDEO_URL_SUFFIXES = (".mp4", ".mov")
 
 
 class FacebookProvider(SocialProvider):
@@ -267,6 +274,9 @@ class FacebookProvider(SocialProvider):
         )
 
     def _publish_photo(self, access_token: str, page_id: str, content: PublishContent) -> PublishResult:
+        if len(content.media_urls) > 1:
+            return self._publish_multi_photo(access_token, page_id, content)
+
         payload: dict = {"url": content.media_urls[0]}
         if content.text:
             payload["message"] = content.text
@@ -283,6 +293,92 @@ class FacebookProvider(SocialProvider):
             url=f"https://www.facebook.com/{post_id}",
             extra=data,
         )
+
+    def _publish_multi_photo(self, access_token: str, page_id: str, content: PublishContent) -> PublishResult:
+        urls = content.media_urls
+
+        # Pre-staging guards: fail before any network call so we never leave
+        # orphaned unpublished photos behind for an obviously invalid request.
+        if len(urls) > FACEBOOK_MAX_ATTACHED_MEDIA:
+            raise PublishError(
+                f"Facebook multi-photo posts support at most {FACEBOOK_MAX_ATTACHED_MEDIA} photos (got {len(urls)})",
+                platform=self.platform_name,
+            )
+        if any(self._is_video_url(url) for url in urls):
+            raise PublishError(
+                "Facebook multi-photo posts support images only; post videos separately",
+                platform=self.platform_name,
+            )
+
+        photo_ids: list[str] = []
+        try:
+            for url in urls:
+                data = self._request(
+                    "POST",
+                    f"{BASE_URL}/{page_id}/photos",
+                    access_token=access_token,
+                    json={"url": url, "published": False},
+                ).json()
+                photo_id = data.get("id")
+                if not photo_id:
+                    raise PublishError(
+                        "Failed to stage Facebook photo for multi-photo post",
+                        platform=self.platform_name,
+                        raw_response=data,
+                    )
+                photo_ids.append(photo_id)
+
+            payload: dict = {
+                "attached_media": [{"media_fbid": photo_id} for photo_id in photo_ids],
+            }
+            if content.text:
+                payload["message"] = content.text
+
+            data = self._request(
+                "POST",
+                f"{BASE_URL}/{page_id}/feed",
+                access_token=access_token,
+                json=payload,
+            ).json()
+            post_id = data.get("id")
+            if not post_id:
+                raise PublishError(
+                    "Failed to publish Facebook multi-photo post",
+                    platform=self.platform_name,
+                    raw_response=data,
+                )
+        except Exception:
+            # Best-effort: remove any photos already staged as unpublished so a
+            # partial failure (or a retry by the publisher) doesn't accumulate
+            # orphaned media on the page.
+            self._delete_staged_photos(access_token, photo_ids)
+            raise
+
+        return PublishResult(
+            platform_post_id=post_id,
+            url=f"https://www.facebook.com/{post_id}",
+            extra={**data, "photo_ids": photo_ids},
+        )
+
+    @staticmethod
+    def _is_video_url(url: str) -> bool:
+        """Heuristically detect a video URL by file extension.
+
+        Uses the URL path only so presigned query strings (R2/S3) don't defeat
+        the check.
+        """
+        return urlparse(url).path.lower().endswith(VIDEO_URL_SUFFIXES)
+
+    def _delete_staged_photos(self, access_token: str, photo_ids: list[str]) -> None:
+        """Best-effort cleanup of unpublished photos staged for a multi-photo post.
+
+        Swallows errors so cleanup never masks the original publish failure.
+        """
+        for photo_id in photo_ids:
+            try:
+                self._request("DELETE", f"{BASE_URL}/{photo_id}", access_token=access_token)
+            except Exception:
+                logger.warning("Failed to clean up staged Facebook photo %s", photo_id)
 
     def _publish_video(self, access_token: str, page_id: str, content: PublishContent) -> PublishResult:
         payload: dict = {"file_url": content.media_urls[0]}
