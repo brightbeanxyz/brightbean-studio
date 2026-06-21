@@ -412,18 +412,32 @@ class FacebookProvider(SocialProvider):
             "GET",
             f"{BASE_URL}/{post_id}",
             access_token=access_token,
-            params={"fields": "id,permalink_url,likes.summary(true),comments.summary(true),shares"},
+            params={"fields": "id,likes.summary(true),comments.summary(true)"},
         )
         data = resp.json()
         likes = data.get("likes", {}).get("summary", {}).get("total_count", 0)
         comments = data.get("comments", {}).get("summary", {}).get("total_count", 0)
-        shares = data.get("shares", {}).get("count", 0)
+        shares = self._get_optional_post_share_count(access_token, post_id)
         return PostMetrics(
             likes=likes,
             comments=comments,
             shares=shares,
             extra={"raw_fallback": data},
         )
+
+    def _get_optional_post_share_count(self, access_token: str, post_id: str) -> int:
+        try:
+            resp = self._request(
+                "GET",
+                f"{BASE_URL}/{post_id}",
+                access_token=access_token,
+                params={"fields": "id,shares"},
+            )
+        except APIError as exc:
+            if "nonexisting field (shares)" in str(exc).lower():
+                return 0
+            raise
+        return resp.json().get("shares", {}).get("count", 0)
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         page_id = self.credentials.get("page_id", "me")

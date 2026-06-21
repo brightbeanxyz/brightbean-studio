@@ -64,9 +64,15 @@ def test_post_metrics_use_supported_facebook_insights_and_basic_counts():
                 json=MagicMock(
                     return_value={
                         "id": "post-1",
-                        "permalink_url": "/post/post-1/",
                         "likes": {"summary": {"total_count": 10}},
                         "comments": {"summary": {"total_count": 3}},
+                    }
+                )
+            ),
+            MagicMock(
+                json=MagicMock(
+                    return_value={
+                        "id": "post-1",
                         "shares": {"count": 2},
                     }
                 )
@@ -93,7 +99,13 @@ def test_post_metrics_use_supported_facebook_insights_and_basic_counts():
                 "GET",
                 "https://graph.facebook.com/v21.0/post-1",
                 access_token="page-token",
-                params={"fields": "id,permalink_url,likes.summary(true),comments.summary(true),shares"},
+                params={"fields": "id,likes.summary(true),comments.summary(true)"},
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v21.0/post-1",
+                access_token="page-token",
+                params={"fields": "id,shares"},
             ),
         ]
     )
@@ -117,10 +129,10 @@ def test_facebook_post_metrics_persist_reactions_key():
 def test_facebook_catalog_uses_supported_metrics():
     from apps.analytics.metrics import PLATFORM_METRICS, PLATFORM_PRIMARY
 
-    assert PLATFORM_PRIMARY["facebook"] == "reactions"
+    assert PLATFORM_PRIMARY["facebook"] == "views"
     assert "reach" not in PLATFORM_METRICS["facebook"]
     assert "impressions" not in PLATFORM_METRICS["facebook"]
-    assert {"reactions", "comments", "shares", "clicks", "follows"} <= set(PLATFORM_METRICS["facebook"])
+    assert {"views", "reactions", "comments", "shares", "clicks", "follows"} <= set(PLATFORM_METRICS["facebook"])
 
 
 def test_post_metrics_falls_back_for_objects_without_insights_edge():
@@ -132,13 +144,12 @@ def test_post_metrics_falls_back_for_objects_without_insights_edge():
                 json=MagicMock(
                     return_value={
                         "id": "reel-1",
-                        "permalink_url": "/reel/reel-1/",
                         "likes": {"summary": {"total_count": 7}},
                         "comments": {"summary": {"total_count": 3}},
-                        "shares": {"count": 2},
                     }
                 )
             ),
+            APIError('Facebook API error 400: {"error":{"message":"(#100) Tried accessing nonexisting field (shares)"}}'),
         ]
     )
 
@@ -146,10 +157,10 @@ def test_post_metrics_falls_back_for_objects_without_insights_edge():
 
     assert metrics.likes == 7
     assert metrics.comments == 3
-    assert metrics.shares == 2
-    assert metrics.extra["raw_fallback"]["permalink_url"] == "/reel/reel-1/"
+    assert metrics.shares == 0
+    assert metrics.extra["raw_fallback"]["id"] == "reel-1"
     assert provider._request.call_args_list[1].kwargs["params"] == {
-        "fields": "id,permalink_url,likes.summary(true),comments.summary(true),shares"
+        "fields": "id,likes.summary(true),comments.summary(true)"
     }
 
 
