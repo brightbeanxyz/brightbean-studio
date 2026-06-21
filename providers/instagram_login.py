@@ -396,7 +396,7 @@ class InstagramLoginProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
-        metrics = ["impressions", "reach", "engagement", "saved"]
+        metrics = ["reach", "views", "likes", "comments", "shares", "saved", "total_interactions"]
         resp = self._request(
             "GET",
             f"{API_BASE}/{post_id}/insights",
@@ -411,9 +411,12 @@ class InstagramLoginProvider(SocialProvider):
             values[name] = val
 
         return PostMetrics(
-            impressions=values.get("impressions", 0),
             reach=values.get("reach", 0),
-            engagements=values.get("engagement", 0),
+            video_views=values.get("views", 0),
+            likes=values.get("likes", 0),
+            comments=values.get("comments", 0),
+            shares=values.get("shares", 0),
+            engagements=values.get("total_interactions", 0),
             saves=values.get("saved", 0),
             extra={"raw_insights": values},
         )
@@ -421,7 +424,7 @@ class InstagramLoginProvider(SocialProvider):
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         since = int(date_range[0].timestamp())
         until = int(date_range[1].timestamp())
-        metrics = ["reach", "follower_count", "profile_views"]
+        metrics = ["reach", "follower_count"]
         resp = self._request(
             "GET",
             f"{API_BASE}/me/insights",
@@ -445,7 +448,7 @@ class InstagramLoginProvider(SocialProvider):
             f"{API_BASE}/me/insights",
             access_token=access_token,
             params={
-                "metric": "views",
+                "metric": "profile_views,views",
                 "period": "day",
                 "metric_type": "total_value",
                 "since": since,
@@ -454,9 +457,9 @@ class InstagramLoginProvider(SocialProvider):
         )
         views_data = views_resp.json()
         for entry in views_data.get("data", []):
-            if entry.get("name") == "views":
-                values["views"] = entry.get("total_value", {}).get("value", 0)
-                break
+            name = entry.get("name", "")
+            if name in {"profile_views", "views"}:
+                values[name] = entry.get("total_value", {}).get("value", 0)
 
         return AccountMetrics(
             reach=values.get("reach", 0),

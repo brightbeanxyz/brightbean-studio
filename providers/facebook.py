@@ -402,7 +402,7 @@ class FacebookProvider(SocialProvider):
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         page_id = self.credentials.get("page_id", "me")
-        metrics = ["page_impressions", "page_engaged_users", "page_fans"]
+        metrics = ["page_impressions_unique", "page_post_engagements", "page_daily_follows"]
         resp = self._request(
             "GET",
             f"{BASE_URL}/{page_id}/insights",
@@ -421,9 +421,8 @@ class FacebookProvider(SocialProvider):
             values[name] = val
 
         return AccountMetrics(
-            impressions=values.get("page_impressions", 0),
-            reach=values.get("page_engaged_users", 0),
-            followers=values.get("page_fans", 0),
+            reach=values.get("page_impressions_unique", 0),
+            followers_gained=values.get("page_daily_follows", 0),
             extra={"raw_insights": values},
         )
 
