@@ -371,10 +371,9 @@ class FacebookProvider(SocialProvider):
 
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
         metrics = [
-            "post_impressions",
-            "post_engaged_users",
             "post_clicks",
             "post_reactions_by_type_total",
+            "post_video_views",
         ]
         try:
             resp = self._request(
@@ -396,13 +395,15 @@ class FacebookProvider(SocialProvider):
 
         reactions = values.get("post_reactions_by_type_total", {})
         total_likes = reactions.get("like", 0) + reactions.get("love", 0) if isinstance(reactions, dict) else 0
+        basic = self._get_basic_post_metrics(access_token, post_id)
 
         return PostMetrics(
-            impressions=values.get("post_impressions", 0),
-            engagements=values.get("post_engaged_users", 0),
             clicks=values.get("post_clicks", 0),
-            likes=total_likes,
-            extra={"raw_insights": values},
+            likes=total_likes or basic.likes,
+            comments=basic.comments,
+            shares=basic.shares,
+            video_views=values.get("post_video_views", 0),
+            extra={"raw_insights": values, "raw_basic": basic.extra.get("raw_fallback", {})},
         )
 
     def _get_basic_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
@@ -411,14 +412,16 @@ class FacebookProvider(SocialProvider):
             "GET",
             f"{BASE_URL}/{post_id}",
             access_token=access_token,
-            params={"fields": "id,permalink_url,likes.summary(true),comments.summary(true)"},
+            params={"fields": "id,permalink_url,likes.summary(true),comments.summary(true),shares"},
         )
         data = resp.json()
         likes = data.get("likes", {}).get("summary", {}).get("total_count", 0)
         comments = data.get("comments", {}).get("summary", {}).get("total_count", 0)
+        shares = data.get("shares", {}).get("count", 0)
         return PostMetrics(
             likes=likes,
             comments=comments,
+            shares=shares,
             extra={"raw_fallback": data},
         )
 
