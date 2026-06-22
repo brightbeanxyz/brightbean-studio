@@ -94,7 +94,15 @@ def assign_queue_slots(queue):
     whose ``social_account`` equals ``queue.social_account``) and keeps
     ``QueueEntry.assigned_slot_datetime`` in sync. ``Post.scheduled_at`` is
     then refreshed via ``sync_post_scheduled_at`` as min-of-children.
+
+    Entries whose matching ``PlatformPost`` has already gone out (or is
+    mid-publish) are skipped entirely: their schedule is history. Re-slotting
+    them would drag a published post forward onto a future slot, where the
+    calendar — which places chips by ``scheduled_at`` — would show it as
+    "published" in the future. Skipped entries neither move nor consume a slot,
+    so the live entries still flow into the soonest open times.
     """
+    from apps.composer.models import PlatformPost
     from apps.composer.services import sync_post_scheduled_at
 
     entries = queue.entries.select_related("post").order_by("position")
@@ -105,13 +113,21 @@ def assign_queue_slots(queue):
     slot_times = _next_slot_datetimes(queue.social_account, now, count=len(entries) + 10)
 
     touched_posts = []
-    for idx, entry in enumerate(entries):
-        slot_dt = slot_times[idx] if idx < len(slot_times) else None
+    slot_idx = 0
+    for entry in entries:
+        pp = entry.post.platform_posts.filter(social_account=queue.social_account).first()
+
+        # Never re-slot an already-published/publishing post (see docstring).
+        if pp is not None and pp.status in PlatformPost.PROTECTED_STATUSES:
+            continue
+
+        slot_dt = slot_times[slot_idx] if slot_idx < len(slot_times) else None
+        slot_idx += 1
+
         entry.assigned_slot_datetime = slot_dt
         entry.save(update_fields=["assigned_slot_datetime"])
 
         # Write the per-platform scheduled_at on the matching PlatformPost.
-        pp = entry.post.platform_posts.filter(social_account=queue.social_account).first()
         if pp is not None:
             pp.scheduled_at = slot_dt
             pp.save(update_fields=["scheduled_at", "updated_at"])
@@ -154,3 +170,73 @@ def reorder_queue(queue, ordered_entry_ids):
         QueueEntry.objects.filter(id=entry_id, queue=queue).update(position=idx)
 
     assign_queue_slots(queue)
+
+
+def repair_future_published_scheduled_at(*, workspace_id=None, apply=True):
+    """Reset ``scheduled_at`` for published posts dragged into the future.
+
+    Before the ``assign_queue_slots`` guard landed, re-running a queue (adding or
+    reordering a post) re-slotted *every* entry — including already-published
+    ones — pushing their ``scheduled_at`` onto a future posting slot. Because the
+    calendar places chips by ``scheduled_at``, those posts then showed as
+    "published" up to a week ahead.
+
+    A correctly-published post always has ``scheduled_at <= published_at`` (you
+    schedule, then it fires at or after that instant). ``scheduled_at >
+    published_at`` is therefore an unambiguous signature of this corruption, so
+    the repair targets exactly those rows and resets ``scheduled_at`` to the true
+    ``published_at``. Idempotent and safe to re-run: once reset, a row no longer
+    matches the filter.
+
+    Returns a summary dict ``{"rows": [...], "platform_post_count": int,
+    "post_count": int, "applied": bool}`` where each row is a plain dict
+    describing one affected ``PlatformPost`` (for dry-run reporting).
+    """
+    from django.db.models import F
+
+    from apps.composer.models import PlatformPost, Post
+    from apps.composer.services import sync_post_scheduled_at
+
+    affected = (
+        PlatformPost.objects.filter(
+            status=PlatformPost.Status.PUBLISHED,
+            published_at__isnull=False,
+            scheduled_at__isnull=False,
+            scheduled_at__gt=F("published_at"),
+        )
+        .select_related("social_account", "post")
+        .order_by("scheduled_at")
+    )
+    if workspace_id is not None:
+        affected = affected.filter(post__workspace_id=workspace_id)
+
+    rows = []
+    post_ids = set()
+    for pp in affected:
+        rows.append(
+            {
+                "platform_post_id": str(pp.id),
+                "post_id": str(pp.post_id),
+                "workspace_id": str(pp.post.workspace_id),
+                "platform": pp.social_account.platform,
+                "account": pp.social_account.account_name or pp.social_account.account_handle,
+                "old_scheduled_at": pp.scheduled_at,
+                "new_scheduled_at": pp.published_at,
+            }
+        )
+        post_ids.add(pp.post_id)
+
+    if apply and rows:
+        # Snap each child back to its real publish instant, then recompute the
+        # parent ``Post.scheduled_at`` aggregate (min-of-children) so listings
+        # and Coalesce fallbacks line up again.
+        affected.update(scheduled_at=F("published_at"))
+        for post in Post.objects.filter(id__in=post_ids):
+            sync_post_scheduled_at(post)
+
+    return {
+        "rows": rows,
+        "platform_post_count": len(rows),
+        "post_count": len(post_ids),
+        "applied": bool(apply and rows),
+    }

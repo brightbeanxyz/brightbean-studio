@@ -1,16 +1,22 @@
 """Tests for the Content Calendar app (T-1A.2)."""
 
 import zoneinfo
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from unittest.mock import patch
 
+from django.core.management import call_command
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.calendar.models import PostingSlot, Queue, QueueEntry, RecurrenceRule
-from apps.calendar.services import add_to_queue
+from apps.calendar.services import (
+    _next_slot_datetimes,
+    add_to_queue,
+    reorder_queue,
+    repair_future_published_scheduled_at,
+)
 from apps.calendar.tasks import generate_recurring_posts
 from apps.calendar.views import _day_view_data
 from apps.composer.models import PlatformPost, Post
@@ -305,6 +311,182 @@ class QueueSlotTimezoneTests(TestCase):
         entry = QueueEntry.objects.get(queue=self.queue, post=post)
         local = entry.assigned_slot_datetime.astimezone(zoneinfo.ZoneInfo("Asia/Tokyo"))
         self.assertEqual((local.hour, local.minute), (9, 0))
+
+
+class QueueSlotPublishedGuardTests(TestCase):
+    """Already-published queue entries must never be re-slotted.
+
+    Regression for the bug where adding/reordering a queue recomputed slots for
+    *every* entry — including posts already published — dragging their
+    ``scheduled_at`` onto a future slot. The calendar places chips by
+    ``scheduled_at``, so those published posts then appeared as "published" a
+    week in the future.
+    """
+
+    def setUp(self):
+        self.org = Organization.objects.create(name="Guard Org", default_timezone="UTC")
+        self.workspace = Workspace.objects.create(organization=self.org, name="Guard WS")
+        self.account = SocialAccount.objects.create(
+            workspace=self.workspace,
+            platform="linkedin_personal",
+            account_platform_id="li-guard",
+            account_name="Guard",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        self.queue = Queue.objects.create(
+            workspace=self.workspace,
+            name="Guard Queue",
+            social_account=self.account,
+        )
+        # A 09:00 slot every weekday so "the next slot" is always available.
+        for day in range(7):
+            PostingSlot.objects.create(social_account=self.account, day_of_week=day, time=time(9, 0))
+
+    def _published_entry(self, position):
+        last_week = timezone.now() - timedelta(days=7)
+        post = Post.objects.create(workspace=self.workspace, caption="already out")
+        PlatformPost.objects.create(
+            post=post,
+            social_account=self.account,
+            status=PlatformPost.Status.PUBLISHED,
+            scheduled_at=last_week,
+            published_at=last_week,
+        )
+        QueueEntry.objects.create(queue=self.queue, post=post, position=position)
+        return post, last_week
+
+    def test_add_to_queue_leaves_published_entry_in_the_past(self):
+        published_post, last_week = self._published_entry(position=0)
+
+        live_post = Post.objects.create(workspace=self.workspace, caption="next up")
+        PlatformPost.objects.create(
+            post=live_post,
+            social_account=self.account,
+            status=PlatformPost.Status.SCHEDULED,
+        )
+
+        # Adding a fresh post recomputes the whole queue's slots.
+        add_to_queue(live_post, self.queue)
+
+        # The published post keeps its original (past) schedule — untouched.
+        published_pp = PlatformPost.objects.get(post=published_post)
+        self.assertEqual(published_pp.scheduled_at, last_week)
+        self.assertEqual(published_pp.status, PlatformPost.Status.PUBLISHED)
+
+        # The live post flows into the soonest open future slot — and isn't
+        # pushed back a slot by the (now-skipped) published entry ahead of it.
+        live_pp = PlatformPost.objects.get(post=live_post)
+        self.assertIsNotNone(live_pp.scheduled_at)
+        self.assertGreater(live_pp.scheduled_at, timezone.now())
+        expected_first = _next_slot_datetimes(self.account, timezone.now(), count=1)[0]
+        self.assertEqual(live_pp.scheduled_at, expected_first)
+
+    def test_reorder_queue_does_not_move_published_entry(self):
+        published_post, last_week = self._published_entry(position=0)
+
+        live_post = Post.objects.create(workspace=self.workspace, caption="reorder me")
+        PlatformPost.objects.create(
+            post=live_post,
+            social_account=self.account,
+            status=PlatformPost.Status.SCHEDULED,
+        )
+        live_entry = QueueEntry.objects.create(queue=self.queue, post=live_post, position=1)
+
+        reorder_queue(self.queue, [str(live_entry.id)])
+
+        published_pp = PlatformPost.objects.get(post=published_post)
+        self.assertEqual(published_pp.scheduled_at, last_week)
+
+
+class RepairPublishedScheduledAtTests(TestCase):
+    """The repair resets only the future-dated published rows, nothing else."""
+
+    def setUp(self):
+        self.org = Organization.objects.create(name="Repair Org", default_timezone="UTC")
+        self.workspace = Workspace.objects.create(organization=self.org, name="Repair WS")
+        self.account = SocialAccount.objects.create(
+            workspace=self.workspace,
+            platform="linkedin_personal",
+            account_platform_id="li-repair",
+            account_name="Repair",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        self.last_week = timezone.now() - timedelta(days=7)
+        self.next_week = timezone.now() + timedelta(days=7)
+
+        # Corrupted: published, but scheduled_at dragged a week into the future.
+        self.corrupt_post = Post.objects.create(workspace=self.workspace, caption="dragged forward")
+        self.corrupt_pp = PlatformPost.objects.create(
+            post=self.corrupt_post,
+            social_account=self.account,
+            status=PlatformPost.Status.PUBLISHED,
+            published_at=self.last_week,
+            scheduled_at=self.next_week,
+        )
+        # Healthy published row: scheduled before it published — must be left alone.
+        self.healthy_post = Post.objects.create(workspace=self.workspace, caption="published normally")
+        self.healthy_pp = PlatformPost.objects.create(
+            post=self.healthy_post,
+            social_account=self.account,
+            status=PlatformPost.Status.PUBLISHED,
+            published_at=self.last_week,
+            scheduled_at=self.last_week - timedelta(minutes=5),
+        )
+        # Genuinely scheduled future post (not yet published) — must be left alone.
+        self.future_post = Post.objects.create(workspace=self.workspace, caption="still upcoming")
+        self.future_pp = PlatformPost.objects.create(
+            post=self.future_post,
+            social_account=self.account,
+            status=PlatformPost.Status.SCHEDULED,
+            scheduled_at=self.next_week,
+        )
+
+    def test_dry_run_reports_but_writes_nothing(self):
+        result = repair_future_published_scheduled_at(apply=False)
+
+        self.assertEqual(result["platform_post_count"], 1)
+        self.assertFalse(result["applied"])
+        self.assertEqual(result["rows"][0]["platform_post_id"], str(self.corrupt_pp.id))
+
+        # Nothing changed on disk.
+        self.corrupt_pp.refresh_from_db()
+        self.assertEqual(self.corrupt_pp.scheduled_at, self.next_week)
+
+    def test_apply_snaps_only_the_corrupt_row_to_published_at(self):
+        result = repair_future_published_scheduled_at(apply=True)
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["platform_post_count"], 1)
+
+        # Corrupt row snapped back to its real publish instant.
+        self.corrupt_pp.refresh_from_db()
+        self.assertEqual(self.corrupt_pp.scheduled_at, self.last_week)
+        # Parent aggregate re-synced to match.
+        self.corrupt_post.refresh_from_db()
+        self.assertEqual(self.corrupt_post.scheduled_at, self.last_week)
+
+        # Healthy + genuinely-future rows untouched.
+        self.healthy_pp.refresh_from_db()
+        self.assertEqual(self.healthy_pp.scheduled_at, self.last_week - timedelta(minutes=5))
+        self.future_pp.refresh_from_db()
+        self.assertEqual(self.future_pp.scheduled_at, self.next_week)
+
+    def test_idempotent_second_run_finds_nothing(self):
+        repair_future_published_scheduled_at(apply=True)
+        again = repair_future_published_scheduled_at(apply=True)
+        self.assertEqual(again["platform_post_count"], 0)
+        self.assertFalse(again["applied"])
+
+    def test_workspace_scope_excludes_other_workspaces(self):
+        other_ws = Workspace.objects.create(organization=self.org, name="Other WS")
+        result = repair_future_published_scheduled_at(workspace_id=other_ws.id, apply=True)
+        self.assertEqual(result["platform_post_count"], 0)
+        self.corrupt_pp.refresh_from_db()
+        self.assertEqual(self.corrupt_pp.scheduled_at, self.next_week)
+
+    def test_management_command_applies_repair(self):
+        call_command("repair_published_scheduled_at")
+        self.corrupt_pp.refresh_from_db()
+        self.assertEqual(self.corrupt_pp.scheduled_at, self.last_week)
 
 
 class CalendarChannelSlotViewTests(TestCase):
