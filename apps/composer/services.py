@@ -265,6 +265,15 @@ def transition_platform_post(
             if platform_post.scheduled_at is not None:
                 platform_post.scheduled_at = None
                 update_fields.add("scheduled_at")
+            # A drafted child is no longer queued — drop its QueueEntry so the
+            # slot frees as a gap. Covers cancel / unschedule paths that would
+            # otherwise orphan the row with a stale assigned_slot_datetime.
+            from apps.calendar.models import QueueEntry
+
+            QueueEntry.objects.filter(
+                post=platform_post.post,
+                queue__social_account=platform_post.social_account,
+            ).delete()
         elif target_status == "published":
             update_fields.add("published_at")  # set by transition_to
         platform_post.save(update_fields=list(update_fields))

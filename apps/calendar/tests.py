@@ -959,6 +959,21 @@ class SlotOccupancyQueueTests(TestCase):
         self.assertEqual(pp_a.scheduled_at, c[1])  # moved to first gap, excluding self
         self.assertEqual(QueueEntry.objects.filter(post=post_a, queue=self.queue).count(), 1)
 
+    def test_drafting_child_removes_queue_entry(self):
+        # Cancel/unschedule parity: transitioning a queued child back to draft
+        # drops its QueueEntry (so no orphan with a stale slot lingers).
+        from apps.composer.services import transition_platform_post
+
+        c = self._cands()
+        post, pp, entry = self._occupy(c[0], caption="A")
+
+        transition_platform_post(pp, "draft")
+
+        pp.refresh_from_db()
+        self.assertEqual(pp.status, PlatformPost.Status.DRAFT)
+        self.assertIsNone(pp.scheduled_at)
+        self.assertFalse(QueueEntry.objects.filter(id=entry.id).exists())
+
     def test_queue_full_raises_when_channel_has_no_slots(self):
         slotless = SocialAccount.objects.create(
             workspace=self.workspace,
