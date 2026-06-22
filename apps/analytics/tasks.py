@@ -569,7 +569,16 @@ def sync_all_account_analytics() -> None:
     for account in accounts:
         # Account-level: at most once per day per account. Skip if today's
         # row already exists so an hourly cron doesn't turn into 24 API calls.
-        if not AccountInsightsSnapshot.objects.filter(social_account=account, date=today).exists():
+        # Also skip accounts already flagged for analytics reconnect — their
+        # token can't read the Analytics API, so retrying only re-fails and
+        # re-logs every hour. Reconnecting clears the flag and runs a one-shot
+        # backfill (see backfill_account_analytics), so the cron resumes on its
+        # own. The per-post Data-API loop below still runs (it uses the
+        # publish/read scopes the account already has).
+        if (
+            not account.analytics_needs_reconnect
+            and not AccountInsightsSnapshot.objects.filter(social_account=account, date=today).exists()
+        ):
             _sync_account_metrics(account, today)
 
         # Per-post: only those whose cadence window has elapsed
