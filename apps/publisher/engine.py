@@ -212,6 +212,12 @@ class PublishEngine:
 
             if result["success"]:
                 platform_post.platform_post_id = result.get("platform_post_id", "")
+                platform_extra_updates = result.get("platform_extra_updates") or {}
+                if platform_extra_updates:
+                    platform_post.platform_extra = {
+                        **(platform_post.platform_extra or {}),
+                        **platform_extra_updates,
+                    }
                 platform_post.status = PlatformPost.Status.PUBLISHED
                 platform_post.published_at = timezone.now()
                 platform_post.save()
@@ -426,12 +432,30 @@ class PublishEngine:
                 "platform_post_id": result.platform_post_id,
                 "url": result.url,
                 "response": result.extra,
+                "platform_extra_updates": self._platform_extra_updates(platform, result),
             }
         finally:
             # Clean up temp files regardless of success/failure
             for path in temp_files:
                 with contextlib.suppress(OSError):
                     os.unlink(path)
+
+    @staticmethod
+    def _platform_extra_updates(platform: str, result) -> dict:
+        if platform != "facebook":
+            return {}
+
+        extra = result.extra or {}
+        upstream_ids = {"insights_post_id": result.platform_post_id}
+        if extra.get("post_id"):
+            upstream_ids["feed_post_id"] = extra["post_id"]
+        if extra.get("id"):
+            upstream_ids["response_id"] = extra["id"]
+        if extra.get("video_id"):
+            upstream_ids["video_id"] = extra["video_id"]
+        if extra.get("photo_ids"):
+            upstream_ids["photo_ids"] = extra["photo_ids"]
+        return {"facebook_upstream_ids": upstream_ids}
 
     @staticmethod
     def _resolve_post_type(

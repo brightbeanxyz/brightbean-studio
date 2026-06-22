@@ -195,6 +195,32 @@ class DispatchExtraInjectionTest(SimpleTestCase):
         _access_token, content = mock_provider.publish_post.call_args.args
         self.assertNotIn("author", content.extra)
 
+    @patch("apps.publisher.engine.get_provider")
+    @patch("apps.publisher.engine._resolve_publish_credentials", return_value={})
+    def test_facebook_dispatch_returns_upstream_id_metadata(self, _mock_creds, mock_get_provider):
+        engine, platform_post, mock_provider = _build_dispatch_mocks(
+            platform="facebook",
+            account_platform_id="page-1",
+        )
+        mock_provider.publish_post.return_value = PublishResult(
+            platform_post_id="page-1_post-1",
+            url="https://www.facebook.com/page-1_post-1",
+            extra={"id": "video-1", "post_id": "page-1_post-1", "video_id": "video-1"},
+        )
+        mock_get_provider.return_value = mock_provider
+
+        result = engine._dispatch_to_provider(platform_post)
+
+        self.assertEqual(
+            result["platform_extra_updates"]["facebook_upstream_ids"],
+            {
+                "insights_post_id": "page-1_post-1",
+                "feed_post_id": "page-1_post-1",
+                "response_id": "video-1",
+                "video_id": "video-1",
+            },
+        )
+
 
 class ResolvePublishCredentialsTest(SimpleTestCase):
     @patch("apps.publisher.engine.resolve_platform_credentials", return_value={"client_id": "id"})
@@ -266,3 +292,44 @@ class NonRetryableFailureTest(TestCase):
         self.assertEqual(self.platform_post.retry_count, 1)
         self.assertIsNotNone(self.platform_post.next_retry_at)
         self.assertEqual(PublishLog.objects.filter(platform_post=self.platform_post).count(), 1)
+
+    def test_success_persists_facebook_upstream_id_metadata(self):
+        from apps.composer.models import PlatformPost
+
+        self.account.platform = "facebook"
+        self.account.account_platform_id = "page-1"
+        self.account.save(update_fields=["platform", "account_platform_id", "updated_at"])
+        self.platform_post.platform_extra = {"existing": "kept"}
+        self.platform_post.save(update_fields=["platform_extra", "updated_at"])
+
+        engine = PublishEngine()
+        with patch.object(
+            PublishEngine,
+            "_dispatch_to_provider",
+            return_value={
+                "success": True,
+                "platform_post_id": "page-1_post-1",
+                "platform_extra_updates": {
+                    "facebook_upstream_ids": {
+                        "insights_post_id": "page-1_post-1",
+                        "feed_post_id": "page-1_post-1",
+                        "video_id": "video-1",
+                    }
+                },
+            },
+        ):
+            result = engine._publish_platform_post(self.platform_post)
+
+        self.assertTrue(result["success"])
+        self.platform_post.refresh_from_db()
+        self.assertEqual(self.platform_post.status, PlatformPost.Status.PUBLISHED)
+        self.assertEqual(self.platform_post.platform_post_id, "page-1_post-1")
+        self.assertEqual(self.platform_post.platform_extra["existing"], "kept")
+        self.assertEqual(
+            self.platform_post.platform_extra["facebook_upstream_ids"],
+            {
+                "insights_post_id": "page-1_post-1",
+                "feed_post_id": "page-1_post-1",
+                "video_id": "video-1",
+            },
+        )

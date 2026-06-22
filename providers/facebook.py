@@ -389,10 +389,24 @@ class FacebookProvider(SocialProvider):
             json=payload,
         )
         data = resp.json()
+        video_id = data["id"]
+        video_fields: dict = {}
+        try:
+            video_fields = self._request(
+                "GET",
+                f"{BASE_URL}/{video_id}",
+                access_token=access_token,
+                params={"fields": "post_id,permalink_url"},
+            ).json()
+        except APIError as exc:
+            logger.debug("Facebook video %s post_id unavailable: %s", video_id, exc)
+
+        post_id = video_fields.get("post_id") or video_id
+        url = video_fields.get("permalink_url") or f"https://www.facebook.com/{post_id}"
         return PublishResult(
-            platform_post_id=data["id"],
-            url=f"https://www.facebook.com/{data['id']}",
-            extra=data,
+            platform_post_id=post_id,
+            url=url,
+            extra={**data, **video_fields, "video_id": video_id},
         )
 
     # ------------------------------------------------------------------

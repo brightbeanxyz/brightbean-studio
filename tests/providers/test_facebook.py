@@ -133,6 +133,51 @@ def test_is_video_url_ignores_query_string():
     assert FacebookProvider._is_video_url("https://cdn.example.com/pic.jpg?X-Amz-Sig=abc") is False
 
 
+def test_publish_video_resolves_feed_post_id_for_analytics():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "video-1"}),
+            _resp(
+                {
+                    "post_id": "page-1_post-1",
+                    "permalink_url": "https://www.facebook.com/page-1/videos/video-1/",
+                }
+            ),
+        ]
+    )
+
+    result = provider.publish_post(
+        "page-token",
+        PublishContent(
+            text="Video caption",
+            media_urls=["https://cdn.example.com/clip.mp4"],
+            post_type=PostType.VIDEO,
+            extra={"page_id": "page-1"},
+        ),
+    )
+
+    assert result.platform_post_id == "page-1_post-1"
+    assert result.url == "https://www.facebook.com/page-1/videos/video-1/"
+    assert result.extra["video_id"] == "video-1"
+    provider._request.assert_has_calls(
+        [
+            call(
+                "POST",
+                "https://graph.facebook.com/v25.0/page-1/videos",
+                access_token="page-token",
+                json={"file_url": "https://cdn.example.com/clip.mp4", "description": "Video caption"},
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v25.0/video-1",
+                access_token="page-token",
+                params={"fields": "post_id,permalink_url"},
+            ),
+        ]
+    )
+
+
 def test_publish_multi_photo_rejects_video_media():
     """Mixed image+video must fail with a clear error before any photo is staged."""
     provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
