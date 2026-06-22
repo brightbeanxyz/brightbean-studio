@@ -41,10 +41,10 @@ ACCOUNT_ONLY: set[str] = {"follows", "followers", "subscribers"}
 PLATFORM_METRICS: dict[str, list[str]] = {
     # IG media insights: reach, views (replaced impressions Apr-2025), likes,
     # comments, saved, shares, total_interactions; follower growth at account level.
-    "instagram": ["reach", "views", "likes", "comments", "saves", "shares", "follows", "engagement"],
-    "instagram_login": ["reach", "views", "likes", "comments", "saves", "shares", "follows", "engagement"],
-    # FB post insights: impressions, reach (unique), reactions, comments, shares, clicks.
-    "facebook": ["impressions", "reach", "reactions", "comments", "shares", "clicks", "follows", "engagement"],
+    "instagram": ["reach", "views", "likes", "comments", "saves", "shares", "followers", "engagement"],
+    "instagram_login": ["reach", "views", "likes", "comments", "saves", "shares", "followers", "engagement"],
+    # FB post insights: media views, unique media views, reactions, comments, shares, clicks.
+    "facebook": ["views", "reach", "reactions", "comments", "shares", "clicks", "followers", "engagement"],
     # LinkedIn share statistics: impressions, reactions, comments, reposts, clicks, engagement.
     "linkedin_company": ["impressions", "reactions", "comments", "reposts", "clicks", "follows", "engagement"],
     # LinkedIn Personal: only socialActions counts (no impressions/reach per API).
@@ -118,7 +118,7 @@ ENGAGEMENT_PARTS: list[str] = [
 
 # Candidate denominators in priority order (first match wins). If none of
 # these exist on the platform, the engagement card is suppressed in the UI.
-ENGAGEMENT_DENOMINATORS: list[str] = ["reach", "impressions", "views", "plays"]
+ENGAGEMENT_DENOMINATORS: list[str] = ["views", "reach", "impressions", "plays"]
 
 
 def post_metrics_for(platform: str) -> list[str]:

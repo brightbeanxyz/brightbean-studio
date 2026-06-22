@@ -2,9 +2,13 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from providers.exceptions import PublishError
+from providers.exceptions import APIError, PublishError
 from providers.facebook import FacebookProvider
 from providers.types import PostType, PublishContent
+
+
+def _resp(data):
+    return MagicMock(json=MagicMock(return_value=data))
 
 
 def test_publish_multi_photo_post_stages_photos_then_publishes_feed_post():
@@ -34,19 +38,19 @@ def test_publish_multi_photo_post_stages_photos_then_publishes_feed_post():
         [
             call(
                 "POST",
-                "https://graph.facebook.com/v21.0/page-1/photos",
+                "https://graph.facebook.com/v25.0/page-1/photos",
                 access_token="page-token",
                 json={"url": "https://cdn.example.com/one.jpg", "published": False},
             ),
             call(
                 "POST",
-                "https://graph.facebook.com/v21.0/page-1/photos",
+                "https://graph.facebook.com/v25.0/page-1/photos",
                 access_token="page-token",
                 json={"url": "https://cdn.example.com/two.jpg", "published": False},
             ),
             call(
                 "POST",
-                "https://graph.facebook.com/v21.0/page-1/feed",
+                "https://graph.facebook.com/v25.0/page-1/feed",
                 access_token="page-token",
                 json={
                     "attached_media": [{"media_fbid": "photo-1"}, {"media_fbid": "photo-2"}],
@@ -113,11 +117,11 @@ def test_publish_single_photo_uses_photos_edge_without_staging():
         ),
     )
 
-    assert result.platform_post_id == "photo-1"
+    assert result.platform_post_id == "page-1_post-1"
     assert result.url == "https://www.facebook.com/page-1_post-1"
     provider._request.assert_called_once_with(
         "POST",
-        "https://graph.facebook.com/v21.0/page-1/photos",
+        "https://graph.facebook.com/v25.0/page-1/photos",
         access_token="page-token",
         json={"url": "https://cdn.example.com/one.jpg", "message": "Single image caption"},
     )
@@ -189,8 +193,8 @@ def test_publish_multi_photo_cleans_up_staged_photos_on_feed_failure():
 
     provider._request.assert_has_calls(
         [
-            call("DELETE", "https://graph.facebook.com/v21.0/photo-1", access_token="page-token"),
-            call("DELETE", "https://graph.facebook.com/v21.0/photo-2", access_token="page-token"),
+            call("DELETE", "https://graph.facebook.com/v25.0/photo-1", access_token="page-token"),
+            call("DELETE", "https://graph.facebook.com/v25.0/photo-2", access_token="page-token"),
         ]
     )
 
@@ -216,4 +220,228 @@ def test_publish_multi_photo_cleans_up_after_partial_staging_failure():
             ),
         )
 
-    provider._request.assert_any_call("DELETE", "https://graph.facebook.com/v21.0/photo-1", access_token="page-token")
+    provider._request.assert_any_call("DELETE", "https://graph.facebook.com/v25.0/photo-1", access_token="page-token")
+
+
+def test_get_user_pages_includes_follower_count():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        return_value=MagicMock(
+            json=MagicMock(
+                return_value={
+                    "data": [
+                        {
+                            "id": "page-1",
+                            "name": "Page One",
+                            "access_token": "page-token",
+                            "category": "Media",
+                            "followers_count": 123,
+                            "picture": {"data": {"url": "https://example.com/avatar.jpg"}},
+                        }
+                    ]
+                }
+            )
+        )
+    )
+
+    pages = provider.get_user_pages("user-token")
+
+    assert pages[0]["followers_count"] == 123
+    provider._request.assert_called_once_with(
+        "GET",
+        "https://graph.facebook.com/v25.0/me/accounts",
+        access_token="user-token",
+        params={"fields": "id,name,access_token,category,picture,followers_count"},
+    )
+
+
+def test_get_post_metrics_uses_v25_media_view_metrics_and_object_counts():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp(
+                {
+                    "id": "page-1_post-1",
+                    "shares": {"count": 7},
+                    "comments": {"summary": {"total_count": 5}},
+                    "reactions": {"summary": {"total_count": 9}},
+                }
+            ),
+            _resp({"data": [{"name": "post_media_view", "values": [{"value": 54}]}]}),
+            _resp({"data": [{"name": "post_total_media_view_unique", "values": [{"value": 42}]}]}),
+            _resp({"data": [{"name": "post_clicks", "values": [{"value": 4}]}]}),
+            _resp(
+                {
+                    "data": [
+                        {
+                            "name": "post_reactions_by_type_total",
+                            "values": [{"value": {"like": 3, "love": 2, "wow": 1}}],
+                        }
+                    ]
+                }
+            ),
+        ]
+    )
+
+    metrics = provider.get_post_metrics("page-token", "page-1_post-1")
+
+    assert metrics.video_views == 54
+    assert metrics.reach == 42
+    assert metrics.clicks == 4
+    assert metrics.likes == 5
+    assert metrics.comments == 5
+    assert metrics.shares == 7
+    assert metrics.extra["reactions"] == 6
+    provider._request.assert_has_calls(
+        [
+            call(
+                "GET",
+                "https://graph.facebook.com/v25.0/page-1_post-1",
+                access_token="page-token",
+                params={
+                    "fields": "id,shares,comments.limit(0).summary(true),reactions.limit(0).summary(true)",
+                },
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v25.0/page-1_post-1/insights",
+                access_token="page-token",
+                params={"metric": "post_media_view"},
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v25.0/page-1_post-1/insights",
+                access_token="page-token",
+                params={"metric": "post_total_media_view_unique"},
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v25.0/page-1_post-1/insights",
+                access_token="page-token",
+                params={"metric": "post_clicks"},
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v25.0/page-1_post-1/insights",
+                access_token="page-token",
+                params={"metric": "post_reactions_by_type_total"},
+            ),
+        ]
+    )
+
+
+def test_get_post_metrics_keeps_object_counts_when_insights_edge_is_missing():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp(
+                {
+                    "id": "page-1_post-1",
+                    "shares": {"count": 3},
+                    "comments": {"summary": {"total_count": 2}},
+                    "reactions": {"summary": {"total_count": 4}},
+                }
+            ),
+            APIError("nonexisting field insights", platform="Facebook"),
+            APIError("nonexisting field insights", platform="Facebook"),
+            APIError("nonexisting field insights", platform="Facebook"),
+            APIError("nonexisting field insights", platform="Facebook"),
+        ]
+    )
+
+    metrics = provider.get_post_metrics("page-token", "page-1_post-1")
+
+    assert metrics.video_views == 0
+    assert metrics.reach == 0
+    assert metrics.comments == 2
+    assert metrics.shares == 3
+    assert metrics.extra["reactions"] == 4
+    assert set(metrics.extra["insight_errors"]) == {
+        "post_media_view",
+        "post_total_media_view_unique",
+        "post_clicks",
+        "post_reactions_by_type_total",
+    }
+
+
+def test_get_post_metrics_skips_one_unsupported_metric_and_keeps_rest():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "page-1_post-1", "comments": {"summary": {"total_count": 1}}}),
+            _resp({"data": [{"name": "post_media_view", "values": [{"value": 100}]}]}),
+            APIError("invalid metric", platform="Facebook", raw_response={"error": {"code": 100}}),
+            _resp({"data": [{"name": "post_clicks", "values": [{"value": 9}]}]}),
+            _resp({"data": [{"name": "post_reactions_by_type_total", "values": [{"value": {"like": 2}}]}]}),
+        ]
+    )
+
+    metrics = provider.get_post_metrics("page-token", "page-1_post-1")
+
+    assert metrics.video_views == 100
+    assert metrics.reach == 0
+    assert metrics.clicks == 9
+    assert metrics.extra["reactions"] == 2
+    assert "post_total_media_view_unique" in metrics.extra["insight_errors"]
+
+
+def test_get_account_metrics_uses_v25_page_media_view_metrics_and_followers_count():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret", "page_id": "page-1"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"data": [{"name": "page_media_view", "values": [{"value": 100}]}]}),
+            _resp({"data": [{"name": "page_total_media_view_unique", "values": [{"value": 80}]}]}),
+            _resp({"data": [{"name": "page_follows", "values": [{"value": 6}]}]}),
+            _resp({"data": [{"name": "page_post_engagements", "values": [{"value": 11}]}]}),
+            _resp({"followers_count": 250}),
+        ]
+    )
+
+    metrics = provider.get_account_metrics("page-token", (MagicMock(timestamp=lambda: 10), MagicMock(timestamp=lambda: 20)))
+
+    assert metrics.followers == 250
+    assert metrics.followers_gained == 6
+    assert metrics.reach == 80
+    assert metrics.extra["views"] == 100
+    provider._request.assert_has_calls(
+        [
+            call(
+                "GET",
+                "https://graph.facebook.com/v25.0/page-1/insights",
+                access_token="page-token",
+                params={"metric": "page_media_view", "since": 10, "until": 20},
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v25.0/page-1/insights",
+                access_token="page-token",
+                params={"metric": "page_total_media_view_unique", "since": 10, "until": 20},
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v25.0/page-1/insights",
+                access_token="page-token",
+                params={"metric": "page_follows", "since": 10, "until": 20},
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v25.0/page-1/insights",
+                access_token="page-token",
+                params={"metric": "page_post_engagements", "since": 10, "until": 20},
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v25.0/page-1",
+                access_token="page-token",
+                params={"fields": "followers_count"},
+            ),
+        ]
+    )
+
+
+def test_facebook_analytics_uuid_guard_detects_internal_ids():
+    from apps.analytics.tasks import _looks_like_uuid
+
+    assert _looks_like_uuid("0c77c88e-73f4-4986-a93f-87af966bb4ad") is True
+    assert _looks_like_uuid("123456789_987654321") is False
+    assert _looks_like_uuid("123456789") is False

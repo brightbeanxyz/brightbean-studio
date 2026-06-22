@@ -436,6 +436,18 @@ def follower_growth_metric(
         series = series_map[growth_metric]
     else:
         series = _series_for(account, growth_metric, timezone.now().date(), days)
+    if growth_metric == "followers":
+        cur = series[-days:]
+        prev = series[-2 * days : -days]
+        cur_val = (cur[-1] - cur[0]) if len(cur) > 1 else 0.0
+        prev_val = (prev[-1] - prev[0]) if len(prev) > 1 else 0.0
+        delta = ((cur_val - prev_val) / prev_val) * 100 if prev_val else 0.0
+        return growth_metric, DerivedMetric(
+            value=max(cur_val, 0.0),
+            delta=round(delta, 1),
+            series=[max(cur[i] - cur[i - 1], 0.0) if i else 0.0 for i in range(len(cur))],
+            kind=kind_of(growth_metric),
+        )
     return growth_metric, derive(series, days, kind_of(growth_metric))
 
 

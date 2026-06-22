@@ -8,6 +8,7 @@ from urllib.parse import urlencode, urlparse
 
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, PublishError
+from .meta_insights import fetch_insights_safe
 from .types import (
     AccountMetrics,
     AccountProfile,
@@ -26,9 +27,27 @@ from .types import (
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://graph.facebook.com/v21.0"
-OAUTH_URL = "https://www.facebook.com/v21.0/dialog/oauth"
+BASE_URL = "https://graph.facebook.com/v25.0"
+OAUTH_URL = "https://www.facebook.com/v25.0/dialog/oauth"
 TOKEN_URL = f"{BASE_URL}/oauth/access_token"
+FACEBOOK_PAGE_INSIGHTS = [
+    "page_media_view",
+    "page_total_media_view_unique",
+    "page_follows",
+    "page_post_engagements",
+]
+FACEBOOK_POST_INSIGHTS = [
+    "post_media_view",
+    "post_total_media_view_unique",
+    "post_clicks",
+    "post_reactions_by_type_total",
+]
+FACEBOOK_POST_FIELDS = [
+    "id",
+    "shares",
+    "comments.limit(0).summary(true)",
+    "reactions.limit(0).summary(true)",
+]
 
 # Facebook caps the ``attached_media`` array on a single feed post. Larger sets
 # must use the album-creation flow, which this provider does not implement.
@@ -39,7 +58,7 @@ VIDEO_URL_SUFFIXES = (".mp4", ".mov")
 
 
 class FacebookProvider(SocialProvider):
-    """Facebook Graph API v21.0 provider."""
+    """Facebook Graph API v25.0 provider."""
 
     def __init__(self, credentials: dict | None = None):
         creds = dict(credentials or {})
@@ -91,9 +110,8 @@ class FacebookProvider(SocialProvider):
 
     @property
     def analytics_only_scopes(self) -> list[str]:
-        # ``read_insights`` is required for page-level account insights
-        # (page_impressions_unique, page_daily_follows). Only requested in
-        # OAuth when this platform's analytics is enabled.
+        # ``read_insights`` is required for page/post insights. Only requested
+        # in OAuth when this platform's analytics is enabled.
         return ["read_insights"]
 
     @property
@@ -183,7 +201,7 @@ class FacebookProvider(SocialProvider):
             "GET",
             f"{BASE_URL}/me",
             access_token=access_token,
-            params={"fields": "id,name,picture"},
+            params={"fields": "id,name,picture,followers_count"},
         )
         data = resp.json()
         avatar = None
@@ -193,6 +211,7 @@ class FacebookProvider(SocialProvider):
             platform_id=data["id"],
             name=data.get("name", ""),
             avatar_url=avatar,
+            follower_count=data.get("followers_count", 0),
             extra=data,
         )
 
@@ -210,7 +229,7 @@ class FacebookProvider(SocialProvider):
             "GET",
             f"{BASE_URL}/me/accounts",
             access_token=access_token,
-            params={"fields": "id,name,access_token,category,picture"},
+            params={"fields": "id,name,access_token,category,picture,followers_count"},
         )
         data = resp.json()
         if "error" in data:
@@ -233,6 +252,7 @@ class FacebookProvider(SocialProvider):
                     "access_token": page.get("access_token", ""),
                     "category": page.get("category", ""),
                     "picture": picture_url,
+                    "followers_count": page.get("followers_count", 0),
                 }
             )
         return pages
@@ -286,11 +306,8 @@ class FacebookProvider(SocialProvider):
             json=payload,
         )
         data = resp.json()
-        return PublishResult(
-            platform_post_id=data["id"],
-            url=f"https://www.facebook.com/{data.get('post_id', data['id'])}",
-            extra=data,
-        )
+        post_id = data.get("post_id", data["id"])
+        return PublishResult(platform_post_id=post_id, url=f"https://www.facebook.com/{post_id}", extra=data)
 
     def _publish_multi_photo(self, access_token: str, page_id: str, content: PublishContent) -> PublishResult:
         urls = content.media_urls
@@ -414,61 +431,84 @@ class FacebookProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
-        metrics = [
-            "post_impressions",
-            "post_engaged_users",
-            "post_clicks",
-            "post_reactions_by_type_total",
-        ]
-        resp = self._request(
-            "GET",
-            f"{BASE_URL}/{post_id}/insights",
+        fields: dict = {}
+        try:
+            fields_resp = self._request(
+                "GET",
+                f"{BASE_URL}/{post_id}",
+                access_token=access_token,
+                params={"fields": ",".join(FACEBOOK_POST_FIELDS)},
+            )
+            fields = fields_resp.json()
+        except APIError as exc:
+            logger.debug("Facebook post %s fields unavailable: %s", post_id, exc)
+
+        values, errors = fetch_insights_safe(
+            self._request,
+            platform=self.platform_name,
+            endpoint=f"{BASE_URL}/{post_id}/insights",
             access_token=access_token,
-            params={"metric": ",".join(metrics)},
+            metrics=FACEBOOK_POST_INSIGHTS,
+            endpoint_type="post",
         )
-        data = resp.json()
-        values: dict = {}
-        for entry in data.get("data", []):
-            name = entry.get("name", "")
-            val = entry.get("values", [{}])[0].get("value", 0)
-            values[name] = val
 
         reactions = values.get("post_reactions_by_type_total", {})
-        total_likes = reactions.get("like", 0) + reactions.get("love", 0) if isinstance(reactions, dict) else 0
+        if isinstance(reactions, dict) and reactions:
+            reactions_total = sum(reactions.values())
+            total_likes = reactions.get("like", 0) + reactions.get("love", 0)
+        else:
+            reactions_total = fields.get("reactions", {}).get("summary", {}).get("total_count", 0)
+            total_likes = 0
+
+        comments = fields.get("comments", {}).get("summary", {}).get("total_count", 0)
+        shares = fields.get("shares", {}).get("count", 0)
 
         return PostMetrics(
-            impressions=values.get("post_impressions", 0),
-            engagements=values.get("post_engaged_users", 0),
+            reach=values.get("post_total_media_view_unique", 0),
             clicks=values.get("post_clicks", 0),
             likes=total_likes,
-            extra={"raw_insights": values},
+            comments=comments,
+            shares=shares,
+            video_views=values.get("post_media_view", 0),
+            extra={"reactions": reactions_total, "raw_fields": fields, "raw_insights": values, "insight_errors": errors},
         )
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         page_id = self.credentials.get("page_id", "me")
-        metrics = ["page_impressions", "page_engaged_users", "page_fans"]
-        resp = self._request(
-            "GET",
-            f"{BASE_URL}/{page_id}/insights",
+        values, errors = fetch_insights_safe(
+            self._request,
+            platform=self.platform_name,
+            endpoint=f"{BASE_URL}/{page_id}/insights",
             access_token=access_token,
-            params={
-                "metric": ",".join(metrics),
+            metrics=FACEBOOK_PAGE_INSIGHTS,
+            base_params={
                 "since": int(date_range[0].timestamp()),
                 "until": int(date_range[1].timestamp()),
             },
+            endpoint_type="page",
         )
-        data = resp.json()
-        values: dict = {}
-        for entry in data.get("data", []):
-            name = entry.get("name", "")
-            val = entry.get("values", [{}])[0].get("value", 0)
-            values[name] = val
+
+        followers = 0
+        try:
+            page_resp = self._request(
+                "GET",
+                f"{BASE_URL}/{page_id}",
+                access_token=access_token,
+                params={"fields": "followers_count"},
+            )
+            followers = page_resp.json().get("followers_count", 0)
+        except APIError as exc:
+            logger.debug("Facebook page %s follower count unavailable: %s", page_id, exc)
 
         return AccountMetrics(
-            impressions=values.get("page_impressions", 0),
-            reach=values.get("page_engaged_users", 0),
-            followers=values.get("page_fans", 0),
-            extra={"raw_insights": values},
+            followers=followers,
+            followers_gained=values.get("page_follows", 0),
+            reach=values.get("page_total_media_view_unique", 0),
+            extra={
+                "views": values.get("page_media_view", 0),
+                "raw_insights": values,
+                "insight_errors": errors,
+            },
         )
 
     # ------------------------------------------------------------------
