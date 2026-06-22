@@ -299,7 +299,7 @@ def test_get_post_metrics_uses_v25_media_view_metrics_and_object_counts():
                 "https://graph.facebook.com/v25.0/page-1_post-1",
                 access_token="page-token",
                 params={
-                    "fields": "id,shares,comments.limit(0).summary(true),reactions.limit(0).summary(true)",
+                    "fields": "id,post_id,shares,comments.limit(0).summary(true),reactions.limit(0).summary(true)",
                 },
             ),
             call(
@@ -362,6 +362,51 @@ def test_get_post_metrics_keeps_object_counts_when_insights_edge_is_missing():
         "post_clicks",
         "post_reactions_by_type_total",
     }
+
+
+def test_get_post_metrics_resolves_photo_id_to_feed_post_for_comments_and_shares():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "photo-1", "post_id": "page-1_post-1"}),
+            _resp(
+                {
+                    "id": "page-1_post-1",
+                    "shares": {"count": 2},
+                    "comments": {"summary": {"total_count": 4}},
+                    "reactions": {"summary": {"total_count": 5}},
+                }
+            ),
+            _resp({"data": [{"name": "post_media_view", "values": [{"value": 500}]}]}),
+            _resp({"data": [{"name": "post_total_media_view_unique", "values": [{"value": 300}]}]}),
+            _resp({"data": [{"name": "post_clicks", "values": [{"value": 20}]}]}),
+            _resp(
+                {
+                    "data": [
+                        {
+                            "name": "post_reactions_by_type_total",
+                            "values": [{"value": {"like": 10, "love": 3, "haha": 2}}],
+                        }
+                    ]
+                }
+            ),
+        ]
+    )
+
+    metrics = provider.get_post_metrics("page-token", "photo-1")
+
+    assert metrics.video_views == 500
+    assert metrics.reach == 300
+    assert metrics.clicks == 20
+    assert metrics.comments == 4
+    assert metrics.shares == 2
+    assert metrics.extra["reactions"] == 15
+    provider._request.assert_any_call(
+        "GET",
+        "https://graph.facebook.com/v25.0/page-1_post-1/insights",
+        access_token="page-token",
+        params={"metric": "post_media_view"},
+    )
 
 
 def test_get_post_metrics_skips_one_unsupported_metric_and_keeps_rest():

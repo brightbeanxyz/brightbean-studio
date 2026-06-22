@@ -437,15 +437,47 @@ def follower_growth_metric(
     else:
         series = _series_for(account, growth_metric, timezone.now().date(), days)
     if growth_metric == "followers":
-        cur = series[-days:]
-        prev = series[-2 * days : -days]
-        cur_val = (cur[-1] - cur[0]) if len(cur) > 1 else 0.0
-        prev_val = (prev[-1] - prev[0]) if len(prev) > 1 else 0.0
+        end = timezone.now().date()
+        current_start = end - timedelta(days=days - 1)
+        previous_start = end - timedelta(days=(2 * days) - 1)
+        rows = list(
+            AccountInsightsSnapshot.objects.filter(
+                social_account=account,
+                metric_key=growth_metric,
+                date__gte=previous_start,
+                date__lte=end,
+            )
+            .order_by("date")
+            .values_list("date", "value")
+        )
+
+        def window_delta(start: dt_date, stop: dt_date) -> float:
+            values = [value for day, value in rows if start <= day <= stop]
+            if len(values) < 2:
+                return 0.0
+            return max(float(values[-1]) - float(values[0]), 0.0)
+
+        cur_val = window_delta(current_start, end)
+        prev_val = window_delta(previous_start, current_start - timedelta(days=1))
         delta = ((cur_val - prev_val) / prev_val) * 100 if prev_val else 0.0
+        by_day = {day: float(value) for day, value in rows}
+        previous_value = next(
+            (float(value) for day, value in reversed(rows) if day < current_start),
+            None,
+        )
+        daily_series: list[float] = []
+        for i in range(days):
+            day = current_start + timedelta(days=i)
+            value = by_day.get(day)
+            if value is None:
+                daily_series.append(0.0)
+                continue
+            daily_series.append(max(value - previous_value, 0.0) if previous_value is not None else 0.0)
+            previous_value = value
         return growth_metric, DerivedMetric(
-            value=max(cur_val, 0.0),
+            value=cur_val,
             delta=round(delta, 1),
-            series=[max(cur[i] - cur[i - 1], 0.0) if i else 0.0 for i in range(len(cur))],
+            series=daily_series,
             kind=kind_of(growth_metric),
         )
     return growth_metric, derive(series, days, kind_of(growth_metric))

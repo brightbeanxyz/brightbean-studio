@@ -44,6 +44,7 @@ FACEBOOK_POST_INSIGHTS = [
 ]
 FACEBOOK_POST_FIELDS = [
     "id",
+    "post_id",
     "shares",
     "comments.limit(0).summary(true)",
     "reactions.limit(0).summary(true)",
@@ -431,22 +432,17 @@ class FacebookProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
-        fields: dict = {}
-        try:
-            fields_resp = self._request(
-                "GET",
-                f"{BASE_URL}/{post_id}",
-                access_token=access_token,
-                params={"fields": ",".join(FACEBOOK_POST_FIELDS)},
-            )
-            fields = fields_resp.json()
-        except APIError as exc:
-            logger.debug("Facebook post %s fields unavailable: %s", post_id, exc)
+        fields = self._get_post_fields(access_token, post_id)
+        insight_post_id = fields.get("post_id") or post_id
+        if insight_post_id != post_id:
+            feed_fields = self._get_post_fields(access_token, insight_post_id)
+            if feed_fields:
+                fields = {**fields, **feed_fields}
 
         values, errors = fetch_insights_safe(
             self._request,
             platform=self.platform_name,
-            endpoint=f"{BASE_URL}/{post_id}/insights",
+            endpoint=f"{BASE_URL}/{insight_post_id}/insights",
             access_token=access_token,
             metrics=FACEBOOK_POST_INSIGHTS,
             endpoint_type="post",
@@ -460,8 +456,8 @@ class FacebookProvider(SocialProvider):
             reactions_total = fields.get("reactions", {}).get("summary", {}).get("total_count", 0)
             total_likes = 0
 
-        comments = fields.get("comments", {}).get("summary", {}).get("total_count", 0)
-        shares = fields.get("shares", {}).get("count", 0)
+        comments = self._summary_total(fields, "comments")
+        shares = self._share_count(fields)
 
         return PostMetrics(
             reach=values.get("post_total_media_view_unique", 0),
@@ -472,6 +468,33 @@ class FacebookProvider(SocialProvider):
             video_views=values.get("post_media_view", 0),
             extra={"reactions": reactions_total, "raw_fields": fields, "raw_insights": values, "insight_errors": errors},
         )
+
+    def _get_post_fields(self, access_token: str, post_id: str) -> dict:
+        try:
+            fields_resp = self._request(
+                "GET",
+                f"{BASE_URL}/{post_id}",
+                access_token=access_token,
+                params={"fields": ",".join(FACEBOOK_POST_FIELDS)},
+            )
+            return fields_resp.json()
+        except APIError as exc:
+            logger.debug("Facebook post %s fields unavailable: %s", post_id, exc)
+            return {}
+
+    @staticmethod
+    def _summary_total(data: dict, key: str) -> int:
+        value = data.get(key, {})
+        if isinstance(value, dict):
+            return value.get("summary", {}).get("total_count", 0) or 0
+        return 0
+
+    @staticmethod
+    def _share_count(data: dict) -> int:
+        value = data.get("shares", {})
+        if isinstance(value, dict):
+            return value.get("count", 0) or 0
+        return 0
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         page_id = self.credentials.get("page_id", "me")
