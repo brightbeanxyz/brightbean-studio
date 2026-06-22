@@ -1074,3 +1074,25 @@ class QueueEntryEndpointTests(TestCase):
         self.assertEqual(resp.status_code, 204)
         pp = PlatformPost.objects.get(post=post)
         self.assertEqual(pp.scheduled_at, c[0])
+
+    def test_queue_detail_page_renders_chronologically(self):
+        # Smoke: the detail page renders with the new remove button and orders
+        # entries by slot datetime (an earlier slot added second still shows first).
+        c = _next_slot_datetimes(self.account, timezone.now(), count=2)
+        later = Post.objects.create(workspace=self.workspace, caption="LATER caption")
+        PlatformPost.objects.create(
+            post=later, social_account=self.account, status=PlatformPost.Status.SCHEDULED, scheduled_at=c[1]
+        )
+        QueueEntry.objects.create(queue=self.queue, post=later, position=0, assigned_slot_datetime=c[1])
+        earlier = Post.objects.create(workspace=self.workspace, caption="EARLIER caption")
+        PlatformPost.objects.create(
+            post=earlier, social_account=self.account, status=PlatformPost.Status.SCHEDULED, scheduled_at=c[0]
+        )
+        QueueEntry.objects.create(queue=self.queue, post=earlier, position=1, assigned_slot_datetime=c[0])
+
+        url = reverse("calendar:queue_detail", kwargs={"workspace_id": self.workspace.id, "queue_id": self.queue.id})
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Remove from queue")
+        body = resp.content.decode()
+        self.assertLess(body.index("EARLIER caption"), body.index("LATER caption"))
