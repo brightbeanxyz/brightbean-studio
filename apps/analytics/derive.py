@@ -24,6 +24,17 @@ class DerivedMetric:
     kind: str  # "count" | "percent" | "minutes"
 
 
+def calculate_engagement_rate(engagements: float, views: float | None = None, reach: float | None = None) -> float:
+    denominator = 0.0
+    if views and views > 0:
+        denominator = float(views)
+    elif reach and reach > 0:
+        denominator = float(reach)
+    if denominator <= 0:
+        return 0.0
+    return round((float(engagements) / denominator) * 100, 2)
+
+
 def _split(values: list[float], days: int) -> tuple[list[float], list[float]]:
     """Return (current, previous) windows of ``days`` length, latest-last."""
     if not values:
@@ -74,7 +85,10 @@ def engagement_rate(
     daily denom is available; otherwise the daily numerator only.
     """
     parts_keys = [k for k in series_by_metric if k in ENGAGEMENT_PARTS]
-    denom_key = next((d for d in ENGAGEMENT_DENOMINATORS if d in series_by_metric), None)
+    denom_key = next(
+        (d for d in ENGAGEMENT_DENOMINATORS if d in series_by_metric and sum(series_by_metric.get(d, [])[-days:]) > 0),
+        None,
+    )
 
     # Keep the full 2*days window through ``_split`` so the previous-period
     # numerator and denominator are both populated for the delta calc. The
@@ -86,26 +100,34 @@ def engagement_rate(
         aligned = [s + [0.0] * (max_len - len(s)) for s in aligned]
         parts_series_per_day = [sum(day_values) for day_values in zip(*aligned, strict=False)]
 
+    denom_series_by_metric = {d: list(series_by_metric.get(d, []))[-2 * days :] for d in ENGAGEMENT_DENOMINATORS}
     denom_series_per_day = list(series_by_metric.get(denom_key, []))[-2 * days :] if denom_key else []
 
     parts_cur, parts_prev = _split(parts_series_per_day, days)
     if denom_key:
-        denom_cur_total = sum(denom_series_per_day[-days:]) or 1.0
-        denom_prev_total = sum(denom_series_per_day[-2 * days : -days]) or 1.0
+        denom_cur_total = sum(denom_series_per_day[-days:])
+        denom_prev_total = sum(denom_series_per_day[-2 * days : -days])
     else:
-        denom_cur_total = float(fallback_followers) or 1.0
-        denom_prev_total = float(fallback_followers) or 1.0
+        denom_cur_total = float(fallback_followers)
+        denom_prev_total = float(fallback_followers)
 
-    rate_cur = (sum(parts_cur) / denom_cur_total) * 100
-    rate_prev = (sum(parts_prev) / denom_prev_total) * 100
+    rate_cur = (sum(parts_cur) / denom_cur_total) * 100 if denom_cur_total > 0 else 0.0
+    rate_prev = (sum(parts_prev) / denom_prev_total) * 100 if denom_prev_total > 0 else 0.0
     delta = ((rate_cur - rate_prev) / rate_prev) * 100 if rate_prev else 0.0
 
     # Sparkline = CURRENT window only.
     parts_cur_window = parts_series_per_day[-days:]
-    denom_cur_window = denom_series_per_day[-days:] if denom_series_per_day else []
-    if denom_cur_window and len(denom_cur_window) == len(parts_cur_window):
+    denom_cur_windows = {key: values[-days:] for key, values in denom_series_by_metric.items() if values}
+    if denom_cur_windows:
+
+        def daily_denominator(index: int) -> float:
+            return next(
+                (values[index] for values in denom_cur_windows.values() if index < len(values) and values[index] > 0),
+                0.0,
+            )
+
         sparkline = [
-            (parts_cur_window[i] / denom_cur_window[i]) * 100 if denom_cur_window[i] else 0.0
+            (parts_cur_window[i] / daily_denominator(i)) * 100 if daily_denominator(i) > 0 else 0.0
             for i in range(len(parts_cur_window))
         ]
     else:

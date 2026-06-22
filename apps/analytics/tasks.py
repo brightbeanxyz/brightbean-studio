@@ -22,6 +22,7 @@ import contextlib
 import logging
 from datetime import date as dt_date
 from datetime import timedelta
+from uuid import UUID
 
 from background_task import background
 from django.db import transaction
@@ -182,6 +183,27 @@ def _post_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
         if v is not None:
             with contextlib.suppress(TypeError, ValueError):
                 out[dest_key] = float(v)
+    from .metrics import PLATFORM_METRICS
+
+    if "engagement" in PLATFORM_METRICS.get(platform, []):
+        from .derive import calculate_engagement_rate
+
+        engagement_parts = (
+            out.get("likes", 0.0)
+            + out.get("reactions", 0.0)
+            + out.get("comments", 0.0)
+            + out.get("replies", 0.0)
+            + out.get("shares", 0.0)
+            + out.get("reposts", 0.0)
+            + out.get("saves", 0.0)
+            + out.get("clicks", 0.0)
+            + out.get("outbound", 0.0)
+        )
+        out["engagement"] = calculate_engagement_rate(
+            engagement_parts,
+            views=out.get("views", 0.0),
+            reach=out.get("reach", 0.0),
+        )
     return out
 
 
@@ -253,6 +275,8 @@ def _resolve_provider(account):
             }
         except MastodonAppRegistration.DoesNotExist:
             pass
+    elif account.platform == "facebook":
+        credentials = {**credentials, "page_id": account.account_platform_id}
     elif account.platform == "instagram":
         credentials = {**credentials, "ig_user_id": account.account_platform_id}
     return get_provider(account.platform, credentials)
@@ -278,7 +302,14 @@ def _is_insufficient_scope(exc: Exception) -> bool:
     )
 
 
-def _write_account_snapshot(account, metric_values: dict[str, float], on_date: dt_date) -> int:
+def _write_account_snapshot(
+    account,
+    metric_values: dict[str, float],
+    on_date: dt_date,
+    *,
+    raw: dict | None = None,
+    errors: dict | None = None,
+) -> int:
     from .models import AccountInsightsSnapshot
 
     if not metric_values:
@@ -289,13 +320,20 @@ def _write_account_snapshot(account, metric_values: dict[str, float], on_date: d
             social_account=account,
             metric_key=key,
             date=on_date,
-            defaults={"value": value},
+            defaults={"value": value, "raw": raw or {}, "errors": errors or {}},
         )
         count += 1
     return count
 
 
-def _write_post_snapshot(post, metric_values: dict[str, float], on_date: dt_date) -> int:
+def _write_post_snapshot(
+    post,
+    metric_values: dict[str, float],
+    on_date: dt_date,
+    *,
+    raw: dict | None = None,
+    errors: dict | None = None,
+) -> int:
     from .models import PostInsightsSnapshot
 
     if not metric_values:
@@ -306,7 +344,7 @@ def _write_post_snapshot(post, metric_values: dict[str, float], on_date: dt_date
             platform_post=post,
             metric_key=key,
             date=on_date,
-            defaults={"value": value},
+            defaults={"value": value, "raw": raw or {}, "errors": errors or {}},
         )
         count += 1
     return count
@@ -382,7 +420,15 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
                 _mark_needs_reconnect(account)
             logger.warning("get_account_metrics failed for %s on %s: %s", account, target, exc)
             return
-        _write_account_snapshot(account, _account_metrics_to_dict(metrics, account.platform), target)
+        _refresh_follower_count(account, metrics)
+        extra = getattr(metrics, "extra", {}) or {}
+        _write_account_snapshot(
+            account,
+            _account_metrics_to_dict(metrics, account.platform),
+            target,
+            raw=extra.get("raw_insights", {}),
+            errors=extra.get("insight_errors", {}),
+        )
 
     if account.platform == "youtube":
         _sync_youtube_post_analytics(account, provider, on_date)
@@ -445,12 +491,26 @@ def _sync_youtube_post_analytics(account, provider, on_date: dt_date) -> None:
         post = posts_by_pid.get(pid)
         if post is None:
             continue
-        _write_post_snapshot(post, _post_metrics_to_dict(metrics, "youtube"), on_date)
+        extra = getattr(metrics, "extra", {}) or {}
+        _write_post_snapshot(
+            post,
+            _post_metrics_to_dict(metrics, "youtube"),
+            on_date,
+            raw=extra.get("raw_insights", extra),
+            errors=extra.get("insight_errors", {}),
+        )
 
 
 def _sync_post_metrics(post, on_date: dt_date) -> None:
     """Fetch this post's current metrics and write today's snapshot rows."""
     account = post.social_account
+    if account.platform in {"facebook", "instagram", "instagram_login"} and _looks_like_uuid(post.platform_post_id):
+        logger.warning(
+            "Skipping %s analytics for PlatformPost %s because platform_post_id looks like an internal UUID.",
+            account.platform,
+            post.id,
+        )
+        return
     provider = _resolve_provider(account)
     try:
         metrics = provider.get_post_metrics(account.oauth_access_token, post.platform_post_id)
@@ -461,7 +521,39 @@ def _sync_post_metrics(post, on_date: dt_date) -> None:
             _mark_needs_reconnect(account)
         logger.warning("get_post_metrics failed for post %s (%s): %s", post.id, account.platform, exc)
         return
-    _write_post_snapshot(post, _post_metrics_to_dict(metrics, account.platform), on_date)
+    extra = getattr(metrics, "extra", {}) or {}
+    _write_post_snapshot(
+        post,
+        _post_metrics_to_dict(metrics, account.platform),
+        on_date,
+        raw={
+            "fields": extra.get("raw_fields", {}),
+            "insights": extra.get("raw_insights", {}),
+            "insight_post_id": extra.get("insight_post_id"),
+            "attempted_insight_post_ids": extra.get("attempted_insight_post_ids", []),
+        },
+        errors=extra.get("insight_errors", {}),
+    )
+
+
+def _looks_like_uuid(value: str) -> bool:
+    if not value:
+        return False
+    try:
+        UUID(str(value))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _refresh_follower_count(account, metrics) -> None:
+    followers = getattr(metrics, "followers", 0) or 0
+    if followers <= 0 and account.follower_count != 0:
+        return
+    if followers == account.follower_count:
+        return
+    account.follower_count = followers
+    account.save(update_fields=["follower_count", "updated_at"])
 
 
 def _mark_needs_reconnect(account):

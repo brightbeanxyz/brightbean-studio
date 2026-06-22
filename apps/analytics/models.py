@@ -27,6 +27,8 @@ class AccountInsightsSnapshot(models.Model):
     # Stored as float so we can hold both counts (integers) and rates (e.g.
     # avg_view_pct, engagement). Templates format based on metrics.METRICS[kind].
     value = models.FloatField(default=0.0)
+    raw = models.JSONField(default=dict, blank=True)
+    errors = models.JSONField(default=dict, blank=True)
     captured_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -56,6 +58,8 @@ class PostInsightsSnapshot(models.Model):
     metric_key = models.CharField(max_length=40)
     date = models.DateField()
     value = models.FloatField(default=0.0)
+    raw = models.JSONField(default=dict, blank=True)
+    errors = models.JSONField(default=dict, blank=True)
     captured_at = models.DateTimeField(auto_now=True)
 
     class Meta:

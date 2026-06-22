@@ -20,6 +20,7 @@ from urllib.parse import urlencode
 
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, PublishError
+from .meta_insights import fetch_insights_safe
 from .types import (
     AccountMetrics,
     AccountProfile,
@@ -41,7 +42,35 @@ logger = logging.getLogger(__name__)
 AUTH_URL = "https://www.instagram.com/oauth/authorize"
 TOKEN_URL = "https://api.instagram.com/oauth/access_token"
 GRAPH_HOST = "https://graph.instagram.com"
-API_BASE = f"{GRAPH_HOST}/v21.0"
+API_BASE = f"{GRAPH_HOST}/v25.0"
+INSTAGRAM_ACCOUNT_INSIGHTS = [
+    "reach",
+    "views",
+    "profile_views",
+    "accounts_engaged",
+    "total_interactions",
+]
+INSTAGRAM_MEDIA_INSIGHTS = [
+    "reach",
+    "views",
+    "likes",
+    "comments",
+    "saved",
+    "shares",
+    "total_interactions",
+]
+INSTAGRAM_MEDIA_FIELDS = [
+    "id",
+    "caption",
+    "media_type",
+    "media_product_type",
+    "media_url",
+    "thumbnail_url",
+    "permalink",
+    "timestamp",
+    "like_count",
+    "comments_count",
+]
 
 # Container polling
 CONTAINER_POLL_INTERVAL = 2  # seconds
@@ -239,7 +268,7 @@ class InstagramLoginProvider(SocialProvider):
             f"{API_BASE}/me",
             access_token=access_token,
             params={
-                "fields": "user_id,username,name,profile_picture_url,followers_count,biography",
+                "fields": "user_id,username,name,profile_picture_url,followers_count,media_count,biography",
             },
         )
         data = resp.json()
@@ -396,75 +425,67 @@ class InstagramLoginProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
-        metrics = ["impressions", "reach", "engagement", "saved"]
-        resp = self._request(
-            "GET",
-            f"{API_BASE}/{post_id}/insights",
+        fields = self._get_media_fields(access_token, post_id)
+        values, errors = fetch_insights_safe(
+            self._request,
+            platform=self.platform_name,
+            endpoint=f"{API_BASE}/{post_id}/insights",
             access_token=access_token,
-            params={"metric": ",".join(metrics)},
+            metrics=INSTAGRAM_MEDIA_INSIGHTS,
+            endpoint_type="media",
         )
-        data = resp.json()
-        values: dict = {}
-        for entry in data.get("data", []):
-            name = entry.get("name", "")
-            val = entry.get("values", [{}])[0].get("value", 0)
-            values[name] = val
+        likes = values.get("likes", fields.get("like_count", 0))
+        comments = values.get("comments", fields.get("comments_count", 0))
 
         return PostMetrics(
-            impressions=values.get("impressions", 0),
             reach=values.get("reach", 0),
-            engagements=values.get("engagement", 0),
+            likes=likes,
+            comments=comments,
             saves=values.get("saved", 0),
-            extra={"raw_insights": values},
+            shares=values.get("shares", 0),
+            video_views=values.get("views", 0),
+            extra={
+                "total_interactions": values.get("total_interactions", 0),
+                "raw_fields": fields,
+                "raw_insights": values,
+                "insight_errors": errors,
+            },
         )
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         since = int(date_range[0].timestamp())
         until = int(date_range[1].timestamp())
-        metrics = ["reach", "follower_count", "profile_views"]
-        resp = self._request(
-            "GET",
-            f"{API_BASE}/me/insights",
+        values, errors = fetch_insights_safe(
+            self._request,
+            platform=self.platform_name,
+            endpoint=f"{API_BASE}/me/insights",
             access_token=access_token,
-            params={
-                "metric": ",".join(metrics),
+            metrics=INSTAGRAM_ACCOUNT_INSIGHTS,
+            base_params={
                 "period": "day",
                 "since": since,
                 "until": until,
             },
-        )
-        data = resp.json()
-        values: dict = {}
-        for entry in data.get("data", []):
-            name = entry.get("name", "")
-            val = entry.get("values", [{}])[0].get("value", 0)
-            values[name] = val
-
-        views_resp = self._request(
-            "GET",
-            f"{API_BASE}/me/insights",
-            access_token=access_token,
-            params={
-                "metric": "views",
-                "period": "day",
-                "metric_type": "total_value",
-                "since": since,
-                "until": until,
+            metric_params={
+                "views": {"metric_type": "total_value"},
+                "profile_views": {"metric_type": "total_value"},
+                "accounts_engaged": {"metric_type": "total_value"},
+                "total_interactions": {"metric_type": "total_value"},
             },
+            endpoint_type="account",
         )
-        views_data = views_resp.json()
-        for entry in views_data.get("data", []):
-            if entry.get("name") == "views":
-                values["views"] = entry.get("total_value", {}).get("value", 0)
-                break
+        followers = self._get_profile_fields(access_token).get("followers_count", 0)
 
         return AccountMetrics(
             reach=values.get("reach", 0),
-            followers=values.get("follower_count", 0),
+            followers=followers,
             profile_views=values.get("profile_views", 0),
             extra={
                 "views": values.get("views", 0),
+                "accounts_engaged": values.get("accounts_engaged", 0),
+                "total_interactions": values.get("total_interactions", 0),
                 "raw_insights": values,
+                "insight_errors": errors,
             },
         )
 
@@ -512,6 +533,30 @@ class InstagramLoginProvider(SocialProvider):
         )
         data = resp.json()
         return ReplyResult(platform_message_id=data.get("id", ""), extra=data)
+
+    def _get_profile_fields(self, access_token: str) -> dict:
+        try:
+            return self._request(
+                "GET",
+                f"{API_BASE}/me",
+                access_token=access_token,
+                params={"fields": "user_id,username,name,profile_picture_url,followers_count,media_count"},
+            ).json()
+        except APIError as exc:
+            logger.debug("Instagram Login profile fields unavailable: %s", exc)
+            return {}
+
+    def _get_media_fields(self, access_token: str, media_id: str) -> dict:
+        try:
+            return self._request(
+                "GET",
+                f"{API_BASE}/{media_id}",
+                access_token=access_token,
+                params={"fields": ",".join(INSTAGRAM_MEDIA_FIELDS)},
+            ).json()
+        except APIError as exc:
+            logger.debug("Instagram Login media fields unavailable for %s: %s", media_id, exc)
+            return {}
 
     # ------------------------------------------------------------------
     # Token management
