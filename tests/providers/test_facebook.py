@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, call
 import pytest
 
 from providers.exceptions import PublishError
-from providers.facebook import FacebookProvider
+from providers.facebook import BASE_URL, FacebookProvider
 from providers.types import PostType, PublishContent
 
 
@@ -137,12 +137,14 @@ def test_publish_video_resolves_feed_post_id_for_analytics():
     provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
     provider._request = MagicMock(
         side_effect=[
-            _resp({"id": "video-1"}),
-            _resp(
-                {
-                    "post_id": "page-1_post-1",
-                    "permalink_url": "https://www.facebook.com/page-1/videos/video-1/",
-                }
+            MagicMock(json=MagicMock(return_value={"id": "video-1"})),
+            MagicMock(
+                json=MagicMock(
+                    return_value={
+                        "post_id": "page-1_post-1",
+                        "permalink_url": "https://www.facebook.com/page-1/videos/video-1/",
+                    }
+                )
             ),
         ]
     )
@@ -164,13 +166,13 @@ def test_publish_video_resolves_feed_post_id_for_analytics():
         [
             call(
                 "POST",
-                "https://graph.facebook.com/v25.0/page-1/videos",
+                f"{BASE_URL}/page-1/videos",
                 access_token="page-token",
                 json={"file_url": "https://cdn.example.com/clip.mp4", "description": "Video caption"},
             ),
             call(
                 "GET",
-                "https://graph.facebook.com/v25.0/video-1",
+                f"{BASE_URL}/video-1",
                 access_token="page-token",
                 params={"fields": "post_id,permalink_url"},
             ),
