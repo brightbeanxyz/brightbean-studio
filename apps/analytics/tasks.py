@@ -529,6 +529,8 @@ def _sync_post_metrics(post, on_date: dt_date) -> None:
         raw={
             "fields": extra.get("raw_fields", {}),
             "insights": extra.get("raw_insights", {}),
+            "insight_post_id": extra.get("insight_post_id"),
+            "attempted_insight_post_ids": extra.get("attempted_insight_post_ids", []),
         },
         errors=extra.get("insight_errors", {}),
     )

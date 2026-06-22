@@ -480,6 +480,45 @@ def test_get_post_metrics_tries_page_scoped_feed_id_for_numeric_object_id():
     )
 
 
+def test_get_post_metrics_tries_next_candidate_when_feed_id_has_no_insights_edge():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret", "page_id": "page-1"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "1668168861075953"}),
+            _resp({"id": "page-1_1668168861075953", "comments": {"summary": {"total_count": 2}}}),
+            APIError("nonexisting field insights", platform="Facebook"),
+            _resp(
+                {
+                    "data": [
+                        {"name": "post_media_view", "values": [{"value": 12}]},
+                        {"name": "post_total_media_view_unique", "values": [{"value": 10}]},
+                    ]
+                }
+            ),
+        ]
+    )
+
+    metrics = provider.get_post_metrics("page-token", "1668168861075953")
+
+    assert metrics.video_views == 12
+    assert metrics.reach == 10
+    assert metrics.comments == 2
+    assert metrics.extra["insight_post_id"] == "1668168861075953"
+    assert metrics.extra["attempted_insight_post_ids"] == ["page-1_1668168861075953", "1668168861075953"]
+    provider._request.assert_any_call(
+        "GET",
+        "https://graph.facebook.com/v25.0/page-1_1668168861075953/insights",
+        access_token="page-token",
+        params={"metric": FACEBOOK_POST_INSIGHTS_PARAM},
+    )
+    provider._request.assert_any_call(
+        "GET",
+        "https://graph.facebook.com/v25.0/1668168861075953/insights",
+        access_token="page-token",
+        params={"metric": FACEBOOK_POST_INSIGHTS_PARAM},
+    )
+
+
 def test_get_post_metrics_reports_batched_insights_failure_for_each_metric():
     provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
     provider._request = MagicMock(

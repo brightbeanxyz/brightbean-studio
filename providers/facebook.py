@@ -436,8 +436,8 @@ class FacebookProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
-        fields, insight_post_id = self._resolve_post_fields(access_token, post_id)
-        values, errors = self._get_post_insights(access_token, insight_post_id)
+        fields, insight_candidates = self._resolve_post_fields(access_token, post_id)
+        values, errors, insight_post_id = self._get_post_insights(access_token, insight_candidates)
 
         reactions = values.get("post_reactions_by_type_total", {})
         if isinstance(reactions, dict) and reactions:
@@ -461,38 +461,50 @@ class FacebookProvider(SocialProvider):
                 "raw_insights": values,
                 "insight_errors": errors,
                 "insight_post_id": insight_post_id,
+                "attempted_insight_post_ids": insight_candidates,
             },
         )
 
-    def _resolve_post_fields(self, access_token: str, post_id: str) -> tuple[dict, str]:
+    def _resolve_post_fields(self, access_token: str, post_id: str) -> tuple[dict, list[str]]:
         fields = self._get_post_fields(access_token, post_id)
         candidate_ids = [fields.get("post_id")]
         page_id = self.credentials.get("page_id")
         if page_id and "_" not in str(post_id):
             candidate_ids.append(f"{page_id}_{post_id}")
+        candidate_ids.append(post_id)
 
-        for candidate_id in candidate_ids:
+        deduped_candidate_ids = list(dict.fromkeys(str(candidate_id) for candidate_id in candidate_ids if candidate_id))
+        best_fields = fields
+
+        for candidate_id in deduped_candidate_ids:
             if not candidate_id or candidate_id == post_id:
                 continue
             feed_fields = self._get_post_fields(access_token, candidate_id)
             if feed_fields:
-                return {**fields, **feed_fields}, candidate_id
-        return fields, post_id
+                best_fields = {**fields, **feed_fields}
+                break
+        return best_fields, deduped_candidate_ids
 
-    def _get_post_insights(self, access_token: str, post_id: str) -> tuple[dict, dict[str, str]]:
+    def _get_post_insights(self, access_token: str, post_ids: list[str]) -> tuple[dict, dict[str, str], str]:
         metric = ",".join(FACEBOOK_POST_INSIGHTS)
-        endpoint = f"{BASE_URL}/{post_id}/insights"
-        try:
-            resp = self._request(
-                "GET",
-                endpoint,
-                access_token=access_token,
-                params={"metric": metric},
-            )
-        except APIError as exc:
-            logger.warning("Skipping unsupported Facebook post insights at %s: %s", endpoint, exc)
-            return {}, {key: str(exc) for key in FACEBOOK_POST_INSIGHTS}
-        return parse_insights_response(resp.json()), {}
+        errors_by_post_id: dict[str, str] = {}
+        for post_id in post_ids:
+            endpoint = f"{BASE_URL}/{post_id}/insights"
+            try:
+                resp = self._request(
+                    "GET",
+                    endpoint,
+                    access_token=access_token,
+                    params={"metric": metric},
+                )
+            except APIError as exc:
+                errors_by_post_id[post_id] = str(exc)
+                logger.warning("Skipping unsupported Facebook post insights at %s: %s", endpoint, exc)
+                continue
+            return parse_insights_response(resp.json()), {}, post_id
+
+        error_text = "; ".join(f"{post_id}: {error}" for post_id, error in errors_by_post_id.items())
+        return {}, {key: error_text for key in FACEBOOK_POST_INSIGHTS}, post_ids[0] if post_ids else ""
 
     def _get_post_fields(self, access_token: str, post_id: str) -> dict:
         try:
