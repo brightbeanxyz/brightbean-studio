@@ -2092,6 +2092,34 @@ def post_delete(request, workspace_id, post_id):
     )
 
 
+@login_required
+@require_POST
+def clone_post_view(request, workspace_id, post_id):
+    """Clone a post into a fresh draft (Clone / Repost) and open the copy.
+
+    The composer makes published/publishing posts read-only; this is the escape
+    hatch to repost — the duplicate starts as a draft with the same content but
+    no schedule, so it can be edited and re-queued without touching the original.
+    """
+    from django.urls import reverse
+
+    from apps.composer.services import clone_post
+
+    workspace = _get_workspace(request, workspace_id)
+    post = get_object_or_404(Post, id=post_id, workspace=workspace)
+
+    membership = request.workspace_membership
+    perms = membership.effective_permissions if membership else {}
+    if not perms.get("create_posts", False):
+        raise PermissionDenied("You do not have permission to create posts.")
+
+    new_post = clone_post(post, author=request.user)
+    target = reverse("composer:compose_edit", kwargs={"workspace_id": workspace.id, "post_id": new_post.id})
+    if request.htmx:
+        return HttpResponse(status=204, headers={"HX-Redirect": target})
+    return redirect(target)
+
+
 # ---------------------------------------------------------------------------
 # Create landing page & Idea CRUD
 # ---------------------------------------------------------------------------
