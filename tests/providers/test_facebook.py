@@ -1,9 +1,10 @@
 from unittest.mock import MagicMock, call
 
+import httpx
 import pytest
 
-from providers.exceptions import PublishError
-from providers.facebook import FacebookProvider
+from providers.exceptions import PublishError, RateLimitError
+from providers.facebook import BASE_URL, FacebookProvider
 from providers.types import PostType, PublishContent
 
 
@@ -131,6 +132,100 @@ def test_is_video_url_ignores_query_string():
     assert FacebookProvider._is_video_url("https://cdn.example.com/clip.mp4?X-Amz-Sig=abc&x=1") is True
     assert FacebookProvider._is_video_url("https://cdn.example.com/clip.MOV") is True
     assert FacebookProvider._is_video_url("https://cdn.example.com/pic.jpg?X-Amz-Sig=abc") is False
+
+
+def test_publish_video_resolves_feed_post_id_for_analytics():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            MagicMock(json=MagicMock(return_value={"id": "video-1"})),
+            MagicMock(
+                json=MagicMock(
+                    return_value={
+                        "post_id": "page-1_post-1",
+                        "permalink_url": "https://www.facebook.com/page-1/videos/video-1/",
+                    }
+                )
+            ),
+        ]
+    )
+
+    result = provider.publish_post(
+        "page-token",
+        PublishContent(
+            text="Video caption",
+            media_urls=["https://cdn.example.com/clip.mp4"],
+            post_type=PostType.VIDEO,
+            extra={"page_id": "page-1"},
+        ),
+    )
+
+    assert result.platform_post_id == "page-1_post-1"
+    assert result.url == "https://www.facebook.com/page-1/videos/video-1/"
+    assert result.extra["video_id"] == "video-1"
+    provider._request.assert_has_calls(
+        [
+            call(
+                "POST",
+                f"{BASE_URL}/page-1/videos",
+                access_token="page-token",
+                json={"file_url": "https://cdn.example.com/clip.mp4", "description": "Video caption"},
+            ),
+            call(
+                "GET",
+                f"{BASE_URL}/video-1",
+                access_token="page-token",
+                params={"fields": "post_id,permalink_url"},
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    "lookup_error",
+    [
+        RateLimitError("rate limited", platform="Facebook"),
+        httpx.ConnectError("connection failed"),
+    ],
+)
+def test_publish_video_treats_metadata_lookup_failures_as_best_effort(lookup_error):
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            MagicMock(json=MagicMock(return_value={"id": "video-1"})),
+            lookup_error,
+        ]
+    )
+
+    result = provider.publish_post(
+        "page-token",
+        PublishContent(
+            text="Video caption",
+            media_urls=["https://cdn.example.com/clip.mp4"],
+            post_type=PostType.VIDEO,
+            extra={"page_id": "page-1"},
+        ),
+    )
+
+    assert result.platform_post_id == "video-1"
+    assert result.url == "https://www.facebook.com/video-1"
+    assert result.extra["video_id"] == "video-1"
+    provider._request.assert_has_calls(
+        [
+            call(
+                "POST",
+                f"{BASE_URL}/page-1/videos",
+                access_token="page-token",
+                json={"file_url": "https://cdn.example.com/clip.mp4", "description": "Video caption"},
+            ),
+            call(
+                "GET",
+                f"{BASE_URL}/video-1",
+                access_token="page-token",
+                params={"fields": "post_id,permalink_url"},
+            ),
+        ]
+    )
 
 
 def test_publish_multi_photo_rejects_video_media():
