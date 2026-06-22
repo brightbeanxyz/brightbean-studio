@@ -72,3 +72,41 @@ def test_first_message_on_quiet_account_still_notifies(connected_account):
         with patch.object(InboxSyncEngine, "_notify_new_message") as notify_new:
             InboxSyncEngine().sync_all()
         notify_new.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_mastodon_sync_passes_per_account_instance_url(workspace):
+    # Regression: sync used to call get_provider(platform) with no credentials, so the
+    # federated MastodonProvider got instance_url="" and built scheme-less URLs like
+    # "/api/v1/notifications" -> httpx.UnsupportedProtocol. The account's instance_url
+    # must reach the provider. is_safe_url is patched so the SSRF check stays hermetic
+    # (it does a real DNS lookup otherwise).
+    from apps.social_accounts.models import MastodonAppRegistration
+
+    # Persisted so sync_all() picks it up; referenced only via the DB query.
+    SocialAccount.objects.create(
+        workspace=workspace,
+        platform="mastodon",
+        account_platform_id="masto-1",
+        account_name="Masto Test",
+        instance_url="https://mastodon.social",
+        oauth_access_token="tok",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    MastodonAppRegistration.objects.create(
+        instance_url="https://mastodon.social",
+        client_id="cid",
+        client_secret="csecret",
+    )
+
+    with (
+        patch("apps.inbox.tasks.get_provider") as get_provider,
+        patch("apps.common.validators.is_safe_url", return_value=True),
+    ):
+        get_provider.return_value.get_messages.return_value = []
+        InboxSyncEngine().sync_all()
+
+    get_provider.assert_called_once()
+    platform, credentials = get_provider.call_args.args
+    assert platform == "mastodon"
+    assert credentials["instance_url"] == "https://mastodon.social"

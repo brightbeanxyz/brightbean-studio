@@ -225,7 +225,9 @@ def send_reply(request, workspace_id, message_id):
 
     # Attempt to post reply via provider
     try:
-        provider = get_provider(account.platform)
+        from apps.publisher.engine import _resolve_publish_credentials
+
+        provider = get_provider(account.platform, _resolve_publish_credentials(account))
         result = provider.reply_to_message(
             access_token=account.oauth_access_token,
             message_id=message.platform_message_id,

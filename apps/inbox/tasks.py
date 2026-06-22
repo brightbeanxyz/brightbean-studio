@@ -59,8 +59,10 @@ class InboxSyncEngine:
 
     def _sync_account(self, account):
         """Sync messages for a single social account."""
+        from apps.publisher.engine import _resolve_publish_credentials
+
         try:
-            provider = get_provider(account.platform)
+            provider = get_provider(account.platform, _resolve_publish_credentials(account))
         except ValueError:
             logger.warning("No provider for platform %s", account.platform)
             return

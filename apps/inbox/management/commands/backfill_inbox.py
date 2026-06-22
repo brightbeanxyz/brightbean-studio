@@ -51,9 +51,11 @@ class Command(BaseCommand):
 
         self.stdout.write(f"Backfilling {days} days of messages for {accounts.count()} account(s)...")
 
+        from apps.publisher.engine import _resolve_publish_credentials
+
         for account in accounts:
             try:
-                provider = get_provider(account.platform)
+                provider = get_provider(account.platform, _resolve_publish_credentials(account))
                 messages = provider.get_messages(
                     access_token=account.oauth_access_token,
                     since=since,
