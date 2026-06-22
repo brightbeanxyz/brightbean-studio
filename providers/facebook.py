@@ -202,7 +202,7 @@ class FacebookProvider(SocialProvider):
             "GET",
             f"{BASE_URL}/me",
             access_token=access_token,
-            params={"fields": "id,name,picture,followers_count"},
+            params={"fields": "id,name,picture"},
         )
         data = resp.json()
         avatar = None
@@ -212,7 +212,6 @@ class FacebookProvider(SocialProvider):
             platform_id=data["id"],
             name=data.get("name", ""),
             avatar_url=avatar,
-            follower_count=data.get("followers_count", 0),
             extra=data,
         )
 
@@ -451,10 +450,8 @@ class FacebookProvider(SocialProvider):
         reactions = values.get("post_reactions_by_type_total", {})
         if isinstance(reactions, dict) and reactions:
             reactions_total = sum(reactions.values())
-            total_likes = reactions.get("like", 0) + reactions.get("love", 0)
         else:
             reactions_total = fields.get("reactions", {}).get("summary", {}).get("total_count", 0)
-            total_likes = 0
 
         comments = self._summary_total(fields, "comments")
         shares = self._share_count(fields)
@@ -462,7 +459,7 @@ class FacebookProvider(SocialProvider):
         return PostMetrics(
             reach=values.get("post_total_media_view_unique", 0),
             clicks=values.get("post_clicks", 0),
-            likes=total_likes,
+            likes=0,
             comments=comments,
             shares=shares,
             video_views=values.get("post_media_view", 0),
@@ -490,6 +487,8 @@ class FacebookProvider(SocialProvider):
     @staticmethod
     def _summary_total(data: dict, key: str) -> int:
         value = data.get(key, {})
+        if isinstance(value, int):
+            return value
         if isinstance(value, dict):
             return value.get("summary", {}).get("total_count", 0) or 0
         return 0
@@ -497,6 +496,8 @@ class FacebookProvider(SocialProvider):
     @staticmethod
     def _share_count(data: dict) -> int:
         value = data.get("shares", {})
+        if isinstance(value, int):
+            return value
         if isinstance(value, dict):
             return value.get("count", 0) or 0
         return 0

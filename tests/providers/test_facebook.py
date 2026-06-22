@@ -255,6 +255,32 @@ def test_get_user_pages_includes_follower_count():
     )
 
 
+def test_get_profile_uses_user_safe_fields():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        return_value=_resp(
+            {
+                "id": "user-1",
+                "name": "User One",
+                "picture": {"data": {"url": "https://example.com/user.jpg"}},
+            }
+        )
+    )
+
+    profile = provider.get_profile("user-token")
+
+    assert profile.platform_id == "user-1"
+    assert profile.name == "User One"
+    assert profile.avatar_url == "https://example.com/user.jpg"
+    assert profile.follower_count == 0
+    provider._request.assert_called_once_with(
+        "GET",
+        "https://graph.facebook.com/v25.0/me",
+        access_token="user-token",
+        params={"fields": "id,name,picture"},
+    )
+
+
 def test_get_post_metrics_uses_v25_media_view_metrics_and_object_counts():
     provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
     provider._request = MagicMock(
@@ -288,7 +314,7 @@ def test_get_post_metrics_uses_v25_media_view_metrics_and_object_counts():
     assert metrics.video_views == 54
     assert metrics.reach == 42
     assert metrics.clicks == 4
-    assert metrics.likes == 5
+    assert metrics.likes == 0
     assert metrics.comments == 5
     assert metrics.shares == 7
     assert metrics.extra["reactions"] == 6
@@ -362,6 +388,24 @@ def test_get_post_metrics_keeps_object_counts_when_insights_edge_is_missing():
         "post_clicks",
         "post_reactions_by_type_total",
     }
+
+
+def test_get_post_metrics_accepts_integer_object_counts():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "page-1_post-1", "shares": 3, "comments": 2}),
+            _resp({"data": []}),
+            _resp({"data": []}),
+            _resp({"data": []}),
+            _resp({"data": []}),
+        ]
+    )
+
+    metrics = provider.get_post_metrics("page-token", "page-1_post-1")
+
+    assert metrics.comments == 2
+    assert metrics.shares == 3
 
 
 def test_get_post_metrics_resolves_photo_id_to_feed_post_for_comments_and_shares():
