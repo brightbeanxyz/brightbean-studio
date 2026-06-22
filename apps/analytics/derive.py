@@ -119,6 +119,7 @@ def engagement_rate(
     parts_cur_window = parts_series_per_day[-days:]
     denom_cur_windows = {key: values[-days:] for key, values in denom_series_by_metric.items() if values}
     if denom_cur_windows:
+
         def daily_denominator(index: int) -> float:
             return next(
                 (values[index] for values in denom_cur_windows.values() if index < len(values) and values[index] > 0),

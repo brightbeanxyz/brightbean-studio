@@ -466,7 +466,12 @@ class FacebookProvider(SocialProvider):
             comments=comments,
             shares=shares,
             video_views=values.get("post_media_view", 0),
-            extra={"reactions": reactions_total, "raw_fields": fields, "raw_insights": values, "insight_errors": errors},
+            extra={
+                "reactions": reactions_total,
+                "raw_fields": fields,
+                "raw_insights": values,
+                "insight_errors": errors,
+            },
         )
 
     def _get_post_fields(self, access_token: str, post_id: str) -> dict:

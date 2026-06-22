@@ -442,7 +442,9 @@ def test_get_account_metrics_uses_v25_page_media_view_metrics_and_followers_coun
         ]
     )
 
-    metrics = provider.get_account_metrics("page-token", (MagicMock(timestamp=lambda: 10), MagicMock(timestamp=lambda: 20)))
+    metrics = provider.get_account_metrics(
+        "page-token", (MagicMock(timestamp=lambda: 10), MagicMock(timestamp=lambda: 20))
+    )
 
     assert metrics.followers == 250
     assert metrics.followers_gained == 6
