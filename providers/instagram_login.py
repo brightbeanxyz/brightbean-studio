@@ -466,7 +466,12 @@ class InstagramLoginProvider(SocialProvider):
                 "since": since,
                 "until": until,
             },
-            metric_params={"views": {"metric_type": "total_value"}},
+            metric_params={
+                "views": {"metric_type": "total_value"},
+                "profile_views": {"metric_type": "total_value"},
+                "accounts_engaged": {"metric_type": "total_value"},
+                "total_interactions": {"metric_type": "total_value"},
+            },
             endpoint_type="account",
         )
         followers = self._get_profile_fields(access_token).get("followers_count", 0)
