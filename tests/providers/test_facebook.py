@@ -6,6 +6,12 @@ from providers.exceptions import APIError, PublishError
 from providers.facebook import FacebookProvider
 from providers.types import PostType, PublishContent
 
+FACEBOOK_POST_FIELDS_PARAM = (
+    "id,message,created_time,permalink_url,full_picture,post_id,shares,"
+    "comments.limit(0).summary(true),reactions.limit(0).summary(true)"
+)
+FACEBOOK_POST_INSIGHTS_PARAM = "post_media_view,post_total_media_view_unique,post_clicks,post_reactions_by_type_total"
+
 
 def _resp(data):
     return MagicMock(json=MagicMock(return_value=data))
@@ -293,16 +299,16 @@ def test_get_post_metrics_uses_v25_media_view_metrics_and_object_counts():
                     "reactions": {"summary": {"total_count": 9}},
                 }
             ),
-            _resp({"data": [{"name": "post_media_view", "values": [{"value": 54}]}]}),
-            _resp({"data": [{"name": "post_total_media_view_unique", "values": [{"value": 42}]}]}),
-            _resp({"data": [{"name": "post_clicks", "values": [{"value": 4}]}]}),
             _resp(
                 {
                     "data": [
+                        {"name": "post_media_view", "values": [{"value": 54}]},
+                        {"name": "post_total_media_view_unique", "values": [{"value": 42}]},
+                        {"name": "post_clicks", "values": [{"value": 4}]},
                         {
                             "name": "post_reactions_by_type_total",
                             "values": [{"value": {"like": 3, "love": 2, "wow": 1}}],
-                        }
+                        },
                     ]
                 }
             ),
@@ -324,33 +330,13 @@ def test_get_post_metrics_uses_v25_media_view_metrics_and_object_counts():
                 "GET",
                 "https://graph.facebook.com/v25.0/page-1_post-1",
                 access_token="page-token",
-                params={
-                    "fields": "id,post_id,shares,comments.limit(0).summary(true),reactions.limit(0).summary(true)",
-                },
+                params={"fields": FACEBOOK_POST_FIELDS_PARAM},
             ),
             call(
                 "GET",
                 "https://graph.facebook.com/v25.0/page-1_post-1/insights",
                 access_token="page-token",
-                params={"metric": "post_media_view"},
-            ),
-            call(
-                "GET",
-                "https://graph.facebook.com/v25.0/page-1_post-1/insights",
-                access_token="page-token",
-                params={"metric": "post_total_media_view_unique"},
-            ),
-            call(
-                "GET",
-                "https://graph.facebook.com/v25.0/page-1_post-1/insights",
-                access_token="page-token",
-                params={"metric": "post_clicks"},
-            ),
-            call(
-                "GET",
-                "https://graph.facebook.com/v25.0/page-1_post-1/insights",
-                access_token="page-token",
-                params={"metric": "post_reactions_by_type_total"},
+                params={"metric": FACEBOOK_POST_INSIGHTS_PARAM},
             ),
         ]
     )
@@ -368,9 +354,6 @@ def test_get_post_metrics_keeps_object_counts_when_insights_edge_is_missing():
                     "reactions": {"summary": {"total_count": 4}},
                 }
             ),
-            APIError("nonexisting field insights", platform="Facebook"),
-            APIError("nonexisting field insights", platform="Facebook"),
-            APIError("nonexisting field insights", platform="Facebook"),
             APIError("nonexisting field insights", platform="Facebook"),
         ]
     )
@@ -396,9 +379,6 @@ def test_get_post_metrics_accepts_integer_object_counts():
         side_effect=[
             _resp({"id": "page-1_post-1", "shares": 3, "comments": 2}),
             _resp({"data": []}),
-            _resp({"data": []}),
-            _resp({"data": []}),
-            _resp({"data": []}),
         ]
     )
 
@@ -421,16 +401,16 @@ def test_get_post_metrics_resolves_photo_id_to_feed_post_for_comments_and_shares
                     "reactions": {"summary": {"total_count": 5}},
                 }
             ),
-            _resp({"data": [{"name": "post_media_view", "values": [{"value": 500}]}]}),
-            _resp({"data": [{"name": "post_total_media_view_unique", "values": [{"value": 300}]}]}),
-            _resp({"data": [{"name": "post_clicks", "values": [{"value": 20}]}]}),
             _resp(
                 {
                     "data": [
+                        {"name": "post_media_view", "values": [{"value": 500}]},
+                        {"name": "post_total_media_view_unique", "values": [{"value": 300}]},
+                        {"name": "post_clicks", "values": [{"value": 20}]},
                         {
                             "name": "post_reactions_by_type_total",
                             "values": [{"value": {"like": 10, "love": 3, "haha": 2}}],
-                        }
+                        },
                     ]
                 }
             ),
@@ -449,28 +429,73 @@ def test_get_post_metrics_resolves_photo_id_to_feed_post_for_comments_and_shares
         "GET",
         "https://graph.facebook.com/v25.0/page-1_post-1/insights",
         access_token="page-token",
-        params={"metric": "post_media_view"},
+        params={"metric": FACEBOOK_POST_INSIGHTS_PARAM},
     )
 
 
-def test_get_post_metrics_skips_one_unsupported_metric_and_keeps_rest():
+def test_get_post_metrics_tries_page_scoped_feed_id_for_numeric_object_id():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret", "page_id": "page-1"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "1668168861075953"}),
+            _resp(
+                {
+                    "id": "page-1_1668168861075953",
+                    "shares": {"count": 8},
+                    "comments": {"summary": {"total_count": 6}},
+                    "reactions": {"summary": {"total_count": 3}},
+                }
+            ),
+            _resp(
+                {
+                    "data": [
+                        {"name": "post_media_view", "values": [{"value": 90}]},
+                        {"name": "post_total_media_view_unique", "values": [{"value": 70}]},
+                        {"name": "post_clicks", "values": [{"value": 5}]},
+                        {"name": "post_reactions_by_type_total", "values": [{"value": {"like": 3}}]},
+                    ]
+                }
+            ),
+        ]
+    )
+
+    metrics = provider.get_post_metrics("page-token", "1668168861075953")
+
+    assert metrics.video_views == 90
+    assert metrics.reach == 70
+    assert metrics.comments == 6
+    assert metrics.shares == 8
+    assert metrics.extra["insight_post_id"] == "page-1_1668168861075953"
+    provider._request.assert_any_call(
+        "GET",
+        "https://graph.facebook.com/v25.0/page-1_1668168861075953",
+        access_token="page-token",
+        params={"fields": FACEBOOK_POST_FIELDS_PARAM},
+    )
+    provider._request.assert_any_call(
+        "GET",
+        "https://graph.facebook.com/v25.0/page-1_1668168861075953/insights",
+        access_token="page-token",
+        params={"metric": FACEBOOK_POST_INSIGHTS_PARAM},
+    )
+
+
+def test_get_post_metrics_reports_batched_insights_failure_for_each_metric():
     provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
     provider._request = MagicMock(
         side_effect=[
             _resp({"id": "page-1_post-1", "comments": {"summary": {"total_count": 1}}}),
-            _resp({"data": [{"name": "post_media_view", "values": [{"value": 100}]}]}),
-            APIError("invalid metric", platform="Facebook", raw_response={"error": {"code": 100}}),
-            _resp({"data": [{"name": "post_clicks", "values": [{"value": 9}]}]}),
-            _resp({"data": [{"name": "post_reactions_by_type_total", "values": [{"value": {"like": 2}}]}]}),
+            APIError("nonexisting field insights", platform="Facebook", raw_response={"error": {"code": 100}}),
         ]
     )
 
     metrics = provider.get_post_metrics("page-token", "page-1_post-1")
 
-    assert metrics.video_views == 100
+    assert metrics.video_views == 0
     assert metrics.reach == 0
-    assert metrics.clicks == 9
-    assert metrics.extra["reactions"] == 2
+    assert metrics.clicks == 0
+    assert metrics.comments == 1
+    assert metrics.extra["reactions"] == 0
     assert "post_total_media_view_unique" in metrics.extra["insight_errors"]
 
 

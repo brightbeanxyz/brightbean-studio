@@ -8,7 +8,7 @@ from urllib.parse import urlencode, urlparse
 
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, PublishError
-from .meta_insights import fetch_insights_safe
+from .meta_insights import fetch_insights_safe, parse_insights_response
 from .types import (
     AccountMetrics,
     AccountProfile,
@@ -44,6 +44,10 @@ FACEBOOK_POST_INSIGHTS = [
 ]
 FACEBOOK_POST_FIELDS = [
     "id",
+    "message",
+    "created_time",
+    "permalink_url",
+    "full_picture",
     "post_id",
     "shares",
     "comments.limit(0).summary(true)",
@@ -431,21 +435,8 @@ class FacebookProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
-        fields = self._get_post_fields(access_token, post_id)
-        insight_post_id = fields.get("post_id") or post_id
-        if insight_post_id != post_id:
-            feed_fields = self._get_post_fields(access_token, insight_post_id)
-            if feed_fields:
-                fields = {**fields, **feed_fields}
-
-        values, errors = fetch_insights_safe(
-            self._request,
-            platform=self.platform_name,
-            endpoint=f"{BASE_URL}/{insight_post_id}/insights",
-            access_token=access_token,
-            metrics=FACEBOOK_POST_INSIGHTS,
-            endpoint_type="post",
-        )
+        fields, insight_post_id = self._resolve_post_fields(access_token, post_id)
+        values, errors = self._get_post_insights(access_token, insight_post_id)
 
         reactions = values.get("post_reactions_by_type_total", {})
         if isinstance(reactions, dict) and reactions:
@@ -468,8 +459,39 @@ class FacebookProvider(SocialProvider):
                 "raw_fields": fields,
                 "raw_insights": values,
                 "insight_errors": errors,
+                "insight_post_id": insight_post_id,
             },
         )
+
+    def _resolve_post_fields(self, access_token: str, post_id: str) -> tuple[dict, str]:
+        fields = self._get_post_fields(access_token, post_id)
+        candidate_ids = [fields.get("post_id")]
+        page_id = self.credentials.get("page_id")
+        if page_id and "_" not in str(post_id):
+            candidate_ids.append(f"{page_id}_{post_id}")
+
+        for candidate_id in candidate_ids:
+            if not candidate_id or candidate_id == post_id:
+                continue
+            feed_fields = self._get_post_fields(access_token, candidate_id)
+            if feed_fields:
+                return {**fields, **feed_fields}, candidate_id
+        return fields, post_id
+
+    def _get_post_insights(self, access_token: str, post_id: str) -> tuple[dict, dict[str, str]]:
+        metric = ",".join(FACEBOOK_POST_INSIGHTS)
+        endpoint = f"{BASE_URL}/{post_id}/insights"
+        try:
+            resp = self._request(
+                "GET",
+                endpoint,
+                access_token=access_token,
+                params={"metric": metric},
+            )
+        except APIError as exc:
+            logger.warning("Skipping unsupported Facebook post insights at %s: %s", endpoint, exc)
+            return {}, {key: str(exc) for key in FACEBOOK_POST_INSIGHTS}
+        return parse_insights_response(resp.json()), {}
 
     def _get_post_fields(self, access_token: str, post_id: str) -> dict:
         try:
