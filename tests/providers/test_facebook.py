@@ -1,8 +1,9 @@
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, call
 
 import pytest
 
-from providers.exceptions import PublishError
+from providers.exceptions import APIError, PublishError
 from providers.facebook import FacebookProvider
 from providers.types import PostType, PublishContent
 
@@ -217,3 +218,127 @@ def test_publish_multi_photo_cleans_up_after_partial_staging_failure():
         )
 
     provider._request.assert_any_call("DELETE", "https://graph.facebook.com/v21.0/photo-1", access_token="page-token")
+
+
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+
+def test_post_metrics_read_from_object_summary_fields():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            MagicMock(json=MagicMock(return_value={"id": "post-1", "reactions": {"summary": {"total_count": 25}}})),
+            MagicMock(json=MagicMock(return_value={"id": "post-1", "comments": {"summary": {"total_count": 8}}})),
+            MagicMock(json=MagicMock(return_value={"id": "post-1", "shares": {"count": 3}})),
+        ]
+    )
+
+    metrics = provider.get_post_metrics("page-token", "post-1")
+
+    assert metrics.likes == 25
+    assert metrics.comments == 8
+    assert metrics.shares == 3
+    provider._request.assert_has_calls(
+        [
+            call(
+                "GET",
+                "https://graph.facebook.com/v21.0/post-1",
+                access_token="page-token",
+                params={"fields": "id,reactions.summary(total_count)"},
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v21.0/post-1",
+                access_token="page-token",
+                params={"fields": "id,comments.summary(true)"},
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v21.0/post-1",
+                access_token="page-token",
+                params={"fields": "id,shares"},
+            ),
+        ]
+    )
+
+
+def test_post_metrics_keep_partial_data_when_facebook_object_field_is_missing():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            APIError(
+                'Facebook API error 400: {"error":{"message":"(#100) Tried accessing nonexisting field (reactions)"}}',
+                status_code=400,
+            ),
+            MagicMock(json=MagicMock(return_value={"id": "post-1", "comments": {"summary": {"total_count": 8}}})),
+            APIError(
+                'Facebook API error 400: {"error":{"message":"(#100) Tried accessing nonexisting field (shares)"}}',
+                status_code=400,
+            ),
+        ]
+    )
+
+    metrics = provider.get_post_metrics("page-token", "post-1")
+
+    assert metrics.likes == 0
+    assert metrics.comments == 8
+    assert metrics.shares == 0
+
+
+def test_account_metrics_fetches_page_insights_individually():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret", "page_id": "page-1"})
+    provider._request = MagicMock(
+        side_effect=[
+            MagicMock(json=MagicMock(return_value={"data": [{"name": "page_impressions", "values": [{"value": 10}]}]})),
+            MagicMock(
+                json=MagicMock(return_value={"data": [{"name": "page_impressions_unique", "values": [{"value": 8}]}]})
+            ),
+            MagicMock(
+                json=MagicMock(return_value={"data": [{"name": "page_post_engagements", "values": [{"value": 3}]}]})
+            ),
+            MagicMock(
+                json=MagicMock(return_value={"data": [{"name": "page_daily_follows", "values": [{"value": 2}]}]})
+            ),
+        ]
+    )
+
+    metrics = provider.get_account_metrics(
+        "page-token",
+        (
+            datetime(2026, 6, 18, tzinfo=UTC),
+            datetime(2026, 6, 19, tzinfo=UTC),
+        ),
+    )
+
+    assert metrics.impressions == 10
+    assert metrics.reach == 8
+    assert metrics.followers_gained == 2
+    assert metrics.extra["raw_insights"]["page_post_engagements"] == 3
+    provider._request.assert_has_calls(
+        [
+            call(
+                "GET",
+                "https://graph.facebook.com/v21.0/page-1/insights",
+                access_token="page-token",
+                params={
+                    "metric": "page_impressions",
+                    "period": "day",
+                    "since": 1781740800,
+                    "until": 1781827200,
+                },
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v21.0/page-1/insights",
+                access_token="page-token",
+                params={
+                    "metric": "page_impressions_unique",
+                    "period": "day",
+                    "since": 1781740800,
+                    "until": 1781827200,
+                },
+            ),
+        ]
+    )

@@ -414,62 +414,88 @@ class FacebookProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
-        metrics = [
-            "post_impressions",
-            "post_engaged_users",
-            "post_clicks",
-            "post_reactions_by_type_total",
-        ]
-        resp = self._request(
-            "GET",
-            f"{BASE_URL}/{post_id}/insights",
-            access_token=access_token,
-            params={"metric": ",".join(metrics)},
-        )
-        data = resp.json()
-        values: dict = {}
-        for entry in data.get("data", []):
-            name = entry.get("name", "")
-            val = entry.get("values", [{}])[0].get("value", 0)
-            values[name] = val
+        # The /insights edge is not available for every object we publish
+        # (notably single-photo posts), and Meta has removed several legacy
+        # post insight metrics. Engagement summary fields vary by object type,
+        # so fetch them independently and keep partial data when one field is
+        # not available for the object.
+        reactions = self._get_post_object_field(access_token, post_id, "reactions.summary(total_count)")
+        comments = self._get_post_object_field(access_token, post_id, "comments.summary(true)")
+        shares = self._get_post_object_field(access_token, post_id, "shares")
 
-        reactions = values.get("post_reactions_by_type_total", {})
-        total_likes = reactions.get("like", 0) + reactions.get("love", 0) if isinstance(reactions, dict) else 0
-
+        raw_data = {
+            "reactions": reactions.get("reactions", {}),
+            "comments": comments.get("comments", {}),
+            "shares": shares.get("shares", {}),
+        }
         return PostMetrics(
-            impressions=values.get("post_impressions", 0),
-            engagements=values.get("post_engaged_users", 0),
-            clicks=values.get("post_clicks", 0),
-            likes=total_likes,
-            extra={"raw_insights": values},
+            likes=raw_data["reactions"].get("summary", {}).get("total_count", 0),
+            comments=raw_data["comments"].get("summary", {}).get("total_count", 0),
+            shares=raw_data["shares"].get("count", 0),
+            extra={"raw_data": raw_data},
         )
+
+    def _get_post_object_field(self, access_token: str, post_id: str, field: str) -> dict:
+        try:
+            resp = self._request(
+                "GET",
+                f"{BASE_URL}/{post_id}",
+                access_token=access_token,
+                params={"fields": f"id,{field}"},
+            )
+        except APIError as exc:
+            message = str(exc).lower()
+            if "nonexisting field" in message or "tried accessing" in message:
+                logger.info("Skipping unavailable Facebook post object field %s", field)
+                return {}
+            raise
+
+        return resp.json()
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         page_id = self.credentials.get("page_id", "me")
-        metrics = ["page_impressions", "page_engaged_users", "page_fans"]
-        resp = self._request(
-            "GET",
-            f"{BASE_URL}/{page_id}/insights",
-            access_token=access_token,
-            params={
-                "metric": ",".join(metrics),
-                "since": int(date_range[0].timestamp()),
-                "until": int(date_range[1].timestamp()),
-            },
-        )
-        data = resp.json()
         values: dict = {}
-        for entry in data.get("data", []):
-            name = entry.get("name", "")
-            val = entry.get("values", [{}])[0].get("value", 0)
-            values[name] = val
+        for metric in ("page_impressions", "page_impressions_unique", "page_post_engagements", "page_daily_follows"):
+            values.update(self._get_page_insight_metric(access_token, page_id, metric, date_range))
 
         return AccountMetrics(
             impressions=values.get("page_impressions", 0),
-            reach=values.get("page_engaged_users", 0),
-            followers=values.get("page_fans", 0),
+            reach=values.get("page_impressions_unique", 0),
+            followers_gained=values.get("page_daily_follows", 0),
             extra={"raw_insights": values},
         )
+
+    def _get_page_insight_metric(
+        self,
+        access_token: str,
+        page_id: str,
+        metric: str,
+        date_range: tuple[datetime, datetime],
+    ) -> dict:
+        try:
+            resp = self._request(
+                "GET",
+                f"{BASE_URL}/{page_id}/insights",
+                access_token=access_token,
+                params={
+                    "metric": metric,
+                    "period": "day",
+                    "since": int(date_range[0].timestamp()),
+                    "until": int(date_range[1].timestamp()),
+                },
+            )
+        except APIError as exc:
+            message = str(exc).lower()
+            if "valid insights metric" in message or "nonexisting field" in message:
+                logger.info("Skipping unavailable Facebook page insight metric %s", metric)
+                return {}
+            raise
+
+        values: dict = {}
+        for entry in resp.json().get("data", []):
+            name = entry.get("name", "")
+            values[name] = sum((point.get("value") or 0) for point in entry.get("values", []))
+        return values
 
     # ------------------------------------------------------------------
     # Inbox

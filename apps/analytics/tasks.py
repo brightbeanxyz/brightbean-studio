@@ -122,6 +122,12 @@ _POST_FIELD_OVERRIDES: dict[str, dict[str, str]] = {
 # ``_GENERIC_POST_EXTRA_KEYS`` below; per-platform overrides handle the
 # vocabulary that providers actually use.
 _POST_EXTRA_OVERRIDES: dict[str, dict[str, str]] = {
+    "instagram": {
+        "follows": "post_follows",
+    },
+    "instagram_login": {
+        "follows": "post_follows",
+    },
     "pinterest": {
         # providers/pinterest.py:328 stores Pinterest's OUTBOUND_CLICK under
         # ``outbound_clicks`` in extra; the catalog metric key is ``outbound``.
@@ -134,8 +140,15 @@ _GENERIC_POST_EXTRA_KEYS = (
     "replies",
     "reposts",
     "outbound",
+    "profile_visits",
+    "profile_activity",
+    "post_follows",
     "watch_time",
+    "avg_watch_time",
+    "skip_rate",
     "avg_view_pct",
+    "facebook_views",
+    "crossposted_views",
 )
 
 
@@ -161,6 +174,7 @@ def _post_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
         ("shares", "shares"),
         ("saves", "saves"),
         ("clicks", "clicks"),
+        ("engagements", "interactions"),
         ("video_views", "views"),
     )
     for src, default_key in base_map:

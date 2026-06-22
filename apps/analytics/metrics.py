@@ -20,13 +20,20 @@ METRICS: dict[str, dict[str, str]] = {
     "shares": {"label": "Shares", "kind": "count"},
     "reposts": {"label": "Reposts", "kind": "count"},
     "saves": {"label": "Saves", "kind": "count"},
+    "interactions": {"label": "Interactions", "kind": "count"},
     "clicks": {"label": "Link clicks", "kind": "count"},
     "outbound": {"label": "Outbound clicks", "kind": "count"},
     "profile_visits": {"label": "Profile visits", "kind": "count"},
+    "profile_activity": {"label": "Profile activity", "kind": "count"},
     "follows": {"label": "New follows", "kind": "count"},
+    "post_follows": {"label": "Follows", "kind": "count"},
     "followers": {"label": "Followers", "kind": "count"},
     "subscribers": {"label": "Subscribers", "kind": "count"},
     "watch_time": {"label": "Watch time", "kind": "minutes"},
+    "avg_watch_time": {"label": "Avg watch time", "kind": "minutes"},
+    "skip_rate": {"label": "Skip rate", "kind": "percent"},
+    "facebook_views": {"label": "Facebook views", "kind": "count"},
+    "crossposted_views": {"label": "Crossposted views", "kind": "count"},
     "avg_view_pct": {"label": "Avg view %", "kind": "percent"},
     "engagement": {"label": "Engagement rate", "kind": "percent"},
 }
@@ -39,12 +46,54 @@ ACCOUNT_ONLY: set[str] = {"follows", "followers", "subscribers"}
 # Which metrics each platform's API reports (after the scope upgrades in the
 # plan are in place). Verified against each platform's published insights API.
 PLATFORM_METRICS: dict[str, list[str]] = {
-    # IG media insights: reach, views (replaced impressions Apr-2025), likes,
-    # comments, saved, shares, total_interactions; follower growth at account level.
-    "instagram": ["reach", "views", "likes", "comments", "saves", "shares", "follows", "engagement"],
-    "instagram_login": ["reach", "views", "likes", "comments", "saves", "shares", "follows", "engagement"],
-    # FB post insights: impressions, reach (unique), reactions, comments, shares, clicks.
-    "facebook": ["impressions", "reach", "reactions", "comments", "shares", "clicks", "follows", "engagement"],
+    # IG media insights: impressions/engagement were removed from the current
+    # media metric set. Use views + total_interactions and the newer Reels /
+    # crosspost metrics when the media type exposes them.
+    "instagram": [
+        "reach",
+        "views",
+        "facebook_views",
+        "crossposted_views",
+        "watch_time",
+        "avg_watch_time",
+        "skip_rate",
+        "likes",
+        "comments",
+        "saves",
+        "shares",
+        "reposts",
+        "interactions",
+        "clicks",
+        "profile_visits",
+        "profile_activity",
+        "post_follows",
+        "follows",
+        "engagement",
+    ],
+    "instagram_login": [
+        "reach",
+        "views",
+        "facebook_views",
+        "crossposted_views",
+        "watch_time",
+        "avg_watch_time",
+        "skip_rate",
+        "likes",
+        "comments",
+        "saves",
+        "shares",
+        "reposts",
+        "interactions",
+        "clicks",
+        "profile_visits",
+        "profile_activity",
+        "post_follows",
+        "follows",
+        "engagement",
+    ],
+    # FB post analytics now come from object summary fields because /insights
+    # is unavailable for some published object types and legacy metrics drift.
+    "facebook": ["impressions", "reach", "reactions", "comments", "shares", "follows", "engagement"],
     # LinkedIn share statistics: impressions, reactions, comments, reposts, clicks, engagement.
     "linkedin_company": ["impressions", "reactions", "comments", "reposts", "clicks", "follows", "engagement"],
     # LinkedIn Personal: only socialActions counts (no impressions/reach per API).
@@ -114,6 +163,7 @@ ENGAGEMENT_PARTS: list[str] = [
     "saves",
     "clicks",
     "outbound",
+    "post_follows",
 ]
 
 # Candidate denominators in priority order (first match wins). If none of

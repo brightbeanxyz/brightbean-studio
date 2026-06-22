@@ -393,39 +393,65 @@ class InstagramProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
-        metrics = ["impressions", "reach", "engagement", "saved"]
-        resp = self._request(
-            "GET",
-            f"{BASE_URL}/{post_id}/insights",
-            access_token=access_token,
-            params={"metric": ",".join(metrics)},
-        )
-        data = resp.json()
         values: dict = {}
-        for entry in data.get("data", []):
-            name = entry.get("name", "")
-            val = entry.get("values", [{}])[0].get("value", 0)
-            values[name] = val
+        for metric in (
+            "reach",
+            "views",
+            "saved",
+            "likes",
+            "comments",
+            "shares",
+            "total_interactions",
+            "follows",
+            "profile_visits",
+            "profile_activity",
+            "ig_reels_video_view_total_time",
+            "ig_reels_avg_watch_time",
+            "reels_skip_rate",
+            "reposts",
+            "facebook_views",
+            "crossposted_views",
+            "total_views",
+            "total_likes",
+            "total_comments",
+            "link_clicks",
+        ):
+            values.update(self._get_media_insight_metric(access_token, post_id, metric))
 
         return PostMetrics(
-            impressions=values.get("impressions", 0),
             reach=values.get("reach", 0),
-            engagements=values.get("engagement", 0),
+            video_views=values.get("views", 0),
+            likes=values.get("likes", values.get("total_likes", 0)),
+            comments=values.get("comments", values.get("total_comments", 0)),
+            shares=values.get("shares", 0),
+            engagements=values.get("total_interactions", 0),
             saves=values.get("saved", 0),
-            extra={"raw_insights": values},
+            clicks=values.get("link_clicks", 0),
+            extra={
+                "follows": values.get("follows", 0),
+                "profile_visits": values.get("profile_visits", 0),
+                "profile_activity": values.get("profile_activity", 0),
+                "watch_time": values.get("ig_reels_video_view_total_time", 0) / 60000,
+                "avg_watch_time": values.get("ig_reels_avg_watch_time", 0) / 60000,
+                "skip_rate": values.get("reels_skip_rate", 0),
+                "reposts": values.get("reposts", 0),
+                "facebook_views": values.get("facebook_views", 0),
+                "crossposted_views": values.get("crossposted_views", 0),
+                "total_views": values.get("total_views", 0),
+                "raw_insights": values,
+            },
         )
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         ig_user_id = self.credentials.get("ig_user_id", "me")
         since = int(date_range[0].timestamp())
         until = int(date_range[1].timestamp())
-        metrics = ["reach", "follower_count", "profile_views"]
         resp = self._request(
             "GET",
             f"{BASE_URL}/{ig_user_id}/insights",
             access_token=access_token,
             params={
-                "metric": ",".join(metrics),
+                "metric": "reach,follower_count",
                 "period": "day",
                 "since": since,
                 "until": until,
@@ -443,7 +469,7 @@ class InstagramProvider(SocialProvider):
             f"{BASE_URL}/{ig_user_id}/insights",
             access_token=access_token,
             params={
-                "metric": "views",
+                "metric": "views,profile_views",
                 "period": "day",
                 "metric_type": "total_value",
                 "since": since,
@@ -452,9 +478,9 @@ class InstagramProvider(SocialProvider):
         )
         views_data = views_resp.json()
         for entry in views_data.get("data", []):
-            if entry.get("name") == "views":
-                values["views"] = entry.get("total_value", {}).get("value", 0)
-                break
+            name = entry.get("name")
+            if name:
+                values[name] = entry.get("total_value", {}).get("value", 0)
 
         return AccountMetrics(
             reach=values.get("reach", 0),
@@ -465,6 +491,35 @@ class InstagramProvider(SocialProvider):
                 "raw_insights": values,
             },
         )
+
+    def _get_media_insight_metric(self, access_token: str, post_id: str, metric: str) -> dict:
+        try:
+            resp = self._request(
+                "GET",
+                f"{BASE_URL}/{post_id}/insights",
+                access_token=access_token,
+                params={"metric": metric},
+            )
+        except APIError as exc:
+            message = str(exc).lower()
+            if (
+                "must be one of" in message
+                or "not supported" in message
+                or "does not support" in message
+                or "valid insights metric" in message
+            ):
+                logger.info("Skipping unavailable Instagram media insight metric %s", metric)
+                return {}
+            raise
+
+        values: dict = {}
+        for entry in resp.json().get("data", []):
+            name = entry.get("name", "")
+            value = entry.get("total_value", {}).get("value")
+            if value is None:
+                value = entry.get("values", [{}])[0].get("value", 0)
+            values[name] = value
+        return values
 
     # ------------------------------------------------------------------
     # Inbox
