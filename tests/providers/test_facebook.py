@@ -505,7 +505,8 @@ def test_get_account_metrics_uses_v25_page_media_view_metrics_and_followers_coun
         side_effect=[
             _resp({"data": [{"name": "page_media_view", "values": [{"value": 100}]}]}),
             _resp({"data": [{"name": "page_total_media_view_unique", "values": [{"value": 80}]}]}),
-            _resp({"data": [{"name": "page_follows", "values": [{"value": 6}]}]}),
+            _resp({"data": [{"name": "page_daily_follows_unique", "values": [{"value": 6}]}]}),
+            _resp({"data": [{"name": "page_follows", "values": [{"value": 532790}]}]}),
             _resp({"data": [{"name": "page_post_engagements", "values": [{"value": 11}]}]}),
             _resp({"followers_count": 250}),
         ]
@@ -525,25 +526,31 @@ def test_get_account_metrics_uses_v25_page_media_view_metrics_and_followers_coun
                 "GET",
                 "https://graph.facebook.com/v25.0/page-1/insights",
                 access_token="page-token",
-                params={"metric": "page_media_view", "since": 10, "until": 20},
+                params={"metric": "page_media_view", "period": "day", "since": 10, "until": 20},
             ),
             call(
                 "GET",
                 "https://graph.facebook.com/v25.0/page-1/insights",
                 access_token="page-token",
-                params={"metric": "page_total_media_view_unique", "since": 10, "until": 20},
+                params={"metric": "page_total_media_view_unique", "period": "day", "since": 10, "until": 20},
             ),
             call(
                 "GET",
                 "https://graph.facebook.com/v25.0/page-1/insights",
                 access_token="page-token",
-                params={"metric": "page_follows", "since": 10, "until": 20},
+                params={"metric": "page_daily_follows_unique", "period": "day", "since": 10, "until": 20},
             ),
             call(
                 "GET",
                 "https://graph.facebook.com/v25.0/page-1/insights",
                 access_token="page-token",
-                params={"metric": "page_post_engagements", "since": 10, "until": 20},
+                params={"metric": "page_follows", "period": "day", "since": 10, "until": 20},
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v25.0/page-1/insights",
+                access_token="page-token",
+                params={"metric": "page_post_engagements", "period": "day", "since": 10, "until": 20},
             ),
             call(
                 "GET",
@@ -553,6 +560,27 @@ def test_get_account_metrics_uses_v25_page_media_view_metrics_and_followers_coun
             ),
         ]
     )
+
+
+def test_get_account_metrics_uses_page_follows_only_as_total_fallback():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret", "page_id": "page-1"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"data": []}),
+            _resp({"data": []}),
+            _resp({"data": [{"name": "page_daily_follows_unique", "values": [{"value": 4}]}]}),
+            _resp({"data": [{"name": "page_follows", "values": [{"value": 532790}]}]}),
+            _resp({"data": []}),
+            APIError("followers_count unavailable", platform="Facebook"),
+        ]
+    )
+
+    metrics = provider.get_account_metrics(
+        "page-token", (MagicMock(timestamp=lambda: 10), MagicMock(timestamp=lambda: 20))
+    )
+
+    assert metrics.followers == 532790
+    assert metrics.followers_gained == 4
 
 
 def test_facebook_analytics_uuid_guard_detects_internal_ids():

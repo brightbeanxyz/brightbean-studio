@@ -33,6 +33,7 @@ TOKEN_URL = f"{BASE_URL}/oauth/access_token"
 FACEBOOK_PAGE_INSIGHTS = [
     "page_media_view",
     "page_total_media_view_unique",
+    "page_daily_follows_unique",
     "page_follows",
     "page_post_engagements",
 ]
@@ -533,6 +534,7 @@ class FacebookProvider(SocialProvider):
             access_token=access_token,
             metrics=FACEBOOK_PAGE_INSIGHTS,
             base_params={
+                "period": "day",
                 "since": int(date_range[0].timestamp()),
                 "until": int(date_range[1].timestamp()),
             },
@@ -550,10 +552,12 @@ class FacebookProvider(SocialProvider):
             followers = page_resp.json().get("followers_count", 0)
         except APIError as exc:
             logger.debug("Facebook page %s follower count unavailable: %s", page_id, exc)
+        if not followers:
+            followers = values.get("page_follows", 0)
 
         return AccountMetrics(
             followers=followers,
-            followers_gained=values.get("page_follows", 0),
+            followers_gained=values.get("page_daily_follows_unique", 0),
             reach=values.get("page_total_media_view_unique", 0),
             extra={
                 "views": values.get("page_media_view", 0),
