@@ -51,6 +51,9 @@ from .models import (
 
 MAX_CSV_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB cap on CSV planner imports
 
+# Shown when every posting slot within the lookahead horizon is already taken.
+_QUEUE_FULL_MSG = "No open posting slot within the scheduling horizon — add posting slots or free one up."
+
 
 def _get_workspace(request, workspace_id):
     """Resolve workspace and enforce membership check."""
@@ -291,32 +294,33 @@ def _resolve_queues_for_post(queue_id, workspace, post_data):
 
 
 def _reassign_queue_slots_from_floor(queues, post, floor_date, workspace):
-    """Override per-platform scheduled_at for *post* with the next posting slot
-    on/after *floor_date* for each queue's social account.
+    """Re-slot *post* into each queue's first open slot on/after *floor_date*.
 
-    Used when the composer was opened from a specific calendar day - we want
-    each platform to pick its earliest available slot starting that day,
-    independently.
+    Used when the composer was opened from a specific calendar day — each
+    platform picks its earliest *free* slot (a gap, not a raw next slot, so it
+    never double-books) starting that day. Keeps the QueueEntry mirror in sync
+    with the PlatformPost the publisher fires on.
     """
-    from apps.calendar.services import _next_slot_datetimes
-    from apps.composer.services import sync_post_scheduled_at
-
-    ws_tz = workspace.effective_timezone or "UTC"
     import zoneinfo
 
-    tz = zoneinfo.ZoneInfo(ws_tz)
+    from apps.calendar.models import QueueEntry
+    from apps.calendar.services import _next_available_slot
+    from apps.composer.services import sync_post_scheduled_at
+
+    tz = zoneinfo.ZoneInfo(workspace.effective_timezone or "UTC")
     floor_dt = datetime.combine(floor_date, datetime.min.time()).replace(tzinfo=tz)
     floor_dt = max(floor_dt, timezone.now())
 
     for q in queues:
-        slots = _next_slot_datetimes(q.social_account, floor_dt, count=1)
-        if not slots:
-            continue
         pp = post.platform_posts.filter(social_account=q.social_account).first()
         if pp is None:
             continue
-        pp.scheduled_at = slots[0]
+        slot = _next_available_slot(q.social_account, exclude_pp_ids=[pp.id], after=floor_dt)
+        if slot is None:
+            continue
+        pp.scheduled_at = slot
         pp.save(update_fields=["scheduled_at", "updated_at"])
+        QueueEntry.objects.filter(post=post, queue=q).update(assigned_slot_datetime=slot)
 
     sync_post_scheduled_at(post)
 
@@ -771,7 +775,9 @@ def save_post(request, workspace_id, post_id=None):
         pending_target = "scheduled"
         initial_status = "scheduled"
     elif action == "add_to_queue":
-        from apps.calendar.services import add_to_queue
+        from django.db import transaction
+
+        from apps.calendar.services import QueueFullError, add_to_queue
 
         queue_id = request.POST.get("queue_id")
         queues = _resolve_queues_for_post(queue_id, workspace, request.POST)
@@ -783,15 +789,22 @@ def save_post(request, workspace_id, post_id=None):
         # Ensure PlatformPost rows exist for every selected account before the
         # queue service writes per-platform scheduled_at values.
         _sync_platform_posts(request, post, workspace, initial_status="draft")
-        for q in queues:
-            add_to_queue(post, q)
-        # If opened from a specific calendar day (month/week/day "+" CTA), each
-        # queue should use that day as its floor - re-assign slots accordingly.
+        # If opened from a specific calendar day (month/week/day "+" CTA), that
+        # day is each queue's slot floor.
         floor_date = form.cleaned_data.get("scheduled_date")
-        if floor_date:
-            _reassign_queue_slots_from_floor(queues, post, floor_date, workspace)
-        # Transition every child whose scheduled_at was filled in to "scheduled".
-        _transition_post_children(post, "scheduled", only=_scoped_platform_post_ids(request, post))
+        try:
+            # One transaction across every queue: if a later queue is full, the
+            # earlier queues' slot writes roll back instead of leaving a child
+            # half-queued.
+            with transaction.atomic():
+                for q in queues:
+                    add_to_queue(post, q)
+                if floor_date:
+                    _reassign_queue_slots_from_floor(queues, post, floor_date, workspace)
+                # Transition every child whose scheduled_at was filled in.
+                _transition_post_children(post, "scheduled", only=_scoped_platform_post_ids(request, post))
+        except QueueFullError:
+            return JsonResponse({"errors": {"queue": _QUEUE_FULL_MSG}}, status=400)
         _save_version(post, request.user)
         if request.htmx:
             return HttpResponse(
@@ -803,7 +816,9 @@ def save_post(request, workspace_id, post_id=None):
             )
         return redirect("composer:compose_edit", workspace_id=workspace.id, post_id=post.id)
     elif action == "add_to_queue_priority":
-        from apps.calendar.services import add_to_queue
+        from django.db import transaction
+
+        from apps.calendar.services import QueueFullError, add_to_queue
 
         queue_id = request.POST.get("queue_id")
         queues = _resolve_queues_for_post(queue_id, workspace, request.POST)
@@ -813,9 +828,14 @@ def save_post(request, workspace_id, post_id=None):
         post.proposed_publish_at = None
         post.save()
         _sync_platform_posts(request, post, workspace, initial_status="draft")
-        for q in queues:
-            add_to_queue(post, q, priority=True)
-        _transition_post_children(post, "scheduled", only=_scoped_platform_post_ids(request, post))
+        try:
+            # One transaction across every queue (see add_to_queue above).
+            with transaction.atomic():
+                for q in queues:
+                    add_to_queue(post, q, priority=True)
+                _transition_post_children(post, "scheduled", only=_scoped_platform_post_ids(request, post))
+        except QueueFullError:
+            return JsonResponse({"errors": {"queue": _QUEUE_FULL_MSG}}, status=400)
         _save_version(post, request.user)
         if request.htmx:
             return HttpResponse(
@@ -2079,6 +2099,34 @@ def post_delete(request, workspace_id, post_id):
         status=204,
         headers={"HX-Trigger": "postChanged"},
     )
+
+
+@login_required
+@require_POST
+def clone_post_view(request, workspace_id, post_id):
+    """Clone a post into a fresh draft (Clone / Repost) and open the copy.
+
+    The composer makes published/publishing posts read-only; this is the escape
+    hatch to repost — the duplicate starts as a draft with the same content but
+    no schedule, so it can be edited and re-queued without touching the original.
+    """
+    from django.urls import reverse
+
+    from apps.composer.services import clone_post
+
+    workspace = _get_workspace(request, workspace_id)
+    post = get_object_or_404(Post, id=post_id, workspace=workspace)
+
+    membership = request.workspace_membership
+    perms = membership.effective_permissions if membership else {}
+    if not perms.get("create_posts", False):
+        raise PermissionDenied("You do not have permission to create posts.")
+
+    new_post = clone_post(post, author=request.user)
+    target = reverse("composer:compose_edit", kwargs={"workspace_id": workspace.id, "post_id": new_post.id})
+    if request.htmx:
+        return HttpResponse(status=204, headers={"HX-Redirect": target})
+    return redirect(target)
 
 
 # ---------------------------------------------------------------------------

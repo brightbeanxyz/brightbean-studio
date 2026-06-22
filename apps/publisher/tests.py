@@ -292,3 +292,69 @@ class NonRetryableFailureTest(TestCase):
         self.assertEqual(self.platform_post.retry_count, 1)
         self.assertIsNotNone(self.platform_post.next_retry_at)
         self.assertEqual(PublishLog.objects.filter(platform_post=self.platform_post).count(), 1)
+
+
+class PublishedPostLeavesQueueTest(TestCase):
+    """A successful publish drops the post's QueueEntry, freeing the slot."""
+
+    def setUp(self):
+        from apps.calendar.models import Queue, QueueEntry
+        from apps.composer.models import PlatformPost, Post
+        from apps.organizations.models import Organization
+        from apps.social_accounts.models import SocialAccount
+        from apps.workspaces.models import Workspace
+
+        self.org = Organization.objects.create(name="Org")
+        self.workspace = Workspace.objects.create(organization=self.org, name="WS")
+        self.account = SocialAccount.objects.create(
+            workspace=self.workspace,
+            platform="linkedin_personal",
+            account_platform_id="li-1",
+            account_name="LI",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        self.queue = Queue.objects.create(workspace=self.workspace, name="Q", social_account=self.account)
+        self.post = Post.objects.create(workspace=self.workspace, caption="hi")
+        self.pp = PlatformPost.objects.create(
+            post=self.post,
+            social_account=self.account,
+            status=PlatformPost.Status.PUBLISHING,
+            scheduled_at=timezone.now() + timedelta(hours=1),
+        )
+        self.entry = QueueEntry.objects.create(
+            queue=self.queue, post=self.post, position=0, assigned_slot_datetime=self.pp.scheduled_at
+        )
+
+    def test_publish_success_removes_queue_entry(self):
+        from apps.calendar.models import QueueEntry
+        from apps.composer.models import PlatformPost
+
+        engine = PublishEngine()
+        success = {"success": True, "platform_post_id": "x", "status_code": 200, "response": {}}
+        with patch.object(PublishEngine, "_dispatch_to_provider", return_value=success):
+            engine._publish_platform_post(self.pp)
+
+        self.pp.refresh_from_db()
+        self.assertEqual(self.pp.status, PlatformPost.Status.PUBLISHED)
+        self.assertIsNotNone(self.pp.published_at)
+        # The QueueEntry is gone (slot freed), but the PlatformPost remains.
+        self.assertFalse(QueueEntry.objects.filter(id=self.entry.id).exists())
+
+    def test_publish_success_survives_queue_cleanup_failure(self):
+        from apps.composer.models import PlatformPost
+
+        engine = PublishEngine()
+        success = {"success": True, "platform_post_id": "x", "status_code": 200, "response": {}}
+        # The post is durably published; if the QueueEntry cleanup then fails it
+        # must NOT fall through to a retry (which would re-dispatch and double-post).
+        with (
+            patch.object(PublishEngine, "_dispatch_to_provider", return_value=success),
+            patch("apps.calendar.models.QueueEntry.objects") as mock_objects,
+        ):
+            mock_objects.filter.side_effect = Exception("db unavailable")
+            engine._publish_platform_post(self.pp)
+
+        self.pp.refresh_from_db()
+        self.assertEqual(self.pp.status, PlatformPost.Status.PUBLISHED)
+        self.assertEqual(self.pp.retry_count, 0)
+        self.assertIsNone(self.pp.next_retry_at)

@@ -22,6 +22,16 @@ urlpatterns = [
     path("queues/<uuid:queue_id>/", views.queue_detail, name="queue_detail"),
     path("queues/<uuid:queue_id>/delete/", views.queue_delete, name="queue_delete"),
     path("queues/<uuid:queue_id>/reorder/", views.queue_reorder, name="queue_reorder"),
+    path(
+        "queues/<uuid:queue_id>/entries/<uuid:entry_id>/remove/",
+        views.queue_entry_remove,
+        name="queue_entry_remove",
+    ),
+    path(
+        "queues/<uuid:queue_id>/entries/<uuid:entry_id>/reslot/",
+        views.queue_entry_reslot,
+        name="queue_entry_reslot",
+    ),
     # Publish page tab partials (HTMX)
     path("publish/queue/", views.publish_tab_queue, name="publish_tab_queue"),
     path("publish/drafts/", views.publish_tab_drafts, name="publish_tab_drafts"),

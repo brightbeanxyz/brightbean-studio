@@ -12,6 +12,7 @@ status transitions so audit + idempotency live in one place.
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import uuid
 from collections.abc import Iterable
@@ -265,12 +266,79 @@ def transition_platform_post(
             if platform_post.scheduled_at is not None:
                 platform_post.scheduled_at = None
                 update_fields.add("scheduled_at")
+            # A drafted child is no longer queued — drop its QueueEntry so the
+            # slot frees as a gap. Covers cancel / unschedule paths that would
+            # otherwise orphan the row with a stale assigned_slot_datetime.
+            from apps.calendar.models import QueueEntry
+
+            QueueEntry.objects.filter(
+                post=platform_post.post,
+                queue__social_account=platform_post.social_account,
+            ).delete()
         elif target_status == "published":
             update_fields.add("published_at")  # set by transition_to
         platform_post.save(update_fields=list(update_fields))
 
     sync_post_scheduled_at(platform_post.post)
     return platform_post
+
+
+def clone_post(post, *, author=None):
+    """Create a fresh DRAFT duplicate of *post* (Clone / Repost).
+
+    Copies caption, title, first comment, internal notes, tags, category, every
+    per-platform override (``platform_specific_*`` + ``platform_extra``) and all
+    media attachments. The copy starts as a ``draft`` with no schedule, so a
+    published (or any) post can be re-edited and re-queued without touching the
+    original. ``author`` defaults to the source author.
+    """
+    from django.db import transaction
+
+    from apps.composer.models import PlatformPost, Post, PostMedia
+
+    with transaction.atomic():
+        new_post = Post.objects.create(
+            workspace=post.workspace,
+            author=author or post.author,
+            title=(f"Copy of {post.title}" if post.title else ""),
+            caption=post.caption,
+            first_comment=post.first_comment,
+            internal_notes=post.internal_notes,
+            tags=post.tags,
+            category=post.category,
+        )
+        children = list(post.platform_posts.all())
+        if children:
+            PlatformPost.objects.bulk_create(
+                [
+                    PlatformPost(
+                        post=new_post,
+                        social_account=pp.social_account,
+                        status="draft",
+                        platform_specific_title=pp.platform_specific_title,
+                        platform_specific_caption=pp.platform_specific_caption,
+                        platform_specific_first_comment=pp.platform_specific_first_comment,
+                        platform_specific_media=copy.deepcopy(pp.platform_specific_media),
+                        platform_extra=copy.deepcopy(pp.platform_extra) if pp.platform_extra else {},
+                    )
+                    for pp in children
+                ]
+            )
+        media = list(post.media_attachments.all())
+        if media:
+            PostMedia.objects.bulk_create(
+                [
+                    PostMedia(
+                        post=new_post,
+                        media_asset=pm.media_asset,
+                        position=pm.position,
+                        alt_text=pm.alt_text,
+                        platform_overrides=copy.deepcopy(pm.platform_overrides),
+                    )
+                    for pm in media
+                ]
+            )
+    return new_post
 
 
 # ---------------------------------------------------------------------------

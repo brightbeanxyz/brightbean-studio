@@ -224,6 +224,26 @@ class PublishEngine:
                 platform_post.published_at = timezone.now()
                 platform_post.save()
 
+                # A published post leaves the queue: drop the QueueEntry that
+                # held this channel's slot so the queue shows only upcoming posts
+                # and the slot frees up as a gap. Best-effort and isolated: the
+                # publish has already succeeded, so a cleanup failure here must
+                # NOT fall through to the `except` below (which would schedule a
+                # retry and double-post). The PlatformPost + published_at are kept.
+                try:
+                    from apps.calendar.models import QueueEntry
+
+                    QueueEntry.objects.filter(
+                        post_id=platform_post.post_id,
+                        queue__social_account_id=platform_post.social_account_id,
+                    ).delete()
+                except Exception:
+                    logger.warning(
+                        "Failed to drop QueueEntry for published PlatformPost %s",
+                        platform_post.id,
+                        exc_info=True,
+                    )
+
                 # Log success
                 PublishLog.objects.create(
                     platform_post=platform_post,
