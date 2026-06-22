@@ -52,7 +52,7 @@
 
     <div id="entries-list" class="space-y-2">
         {% for entry in entries %}
-        <div class="flex items-center gap-3 p-3 bg-white rounded-lg border border-stone-200 hover:border-stone-300 transition-colors cursor-grab active:cursor-grabbing"
+        <div class="group flex items-center gap-3 p-3 bg-white rounded-lg border border-stone-200 hover:border-stone-300 transition-colors cursor-grab active:cursor-grabbing"
              draggable="true"
              data-entry-id="{{ entry.id }}"
              @dragstart="onDragStart($event, '{{ entry.id }}')"
@@ -64,9 +64,9 @@
                 <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
             </div>
 
-            <!-- Position badge -->
+            <!-- Slot order -->
             <div class="w-6 h-6 rounded-full bg-stone-100 flex items-center justify-center text-[10px] font-bold text-stone-500 flex-shrink-0">
-                {{ entry.position|add:1 }}
+                {{ forloop.counter }}
             </div>
 
             <!-- Post info -->
@@ -98,6 +98,17 @@
                 <span class="text-xs text-stone-400">No slot</span>
                 {% endif %}
             </div>
+
+            <!-- Remove from queue (leaves a gap; the slot frees up) -->
+            <button type="button"
+                    class="text-stone-300 hover:text-red-500 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                    hx-post="{% url 'calendar:queue_entry_remove' workspace_id=workspace.id queue_id=queue.id entry_id=entry.id %}"
+                    hx-confirm="Remove this post from the queue? Its slot will free up."
+                    @click.stop
+                    @dragstart.stop
+                    title="Remove from queue">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
         </div>
         {% empty %}
         <div class="text-center py-16">

@@ -21,7 +21,7 @@ from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 
 from .holidays import get_holidays_for_range
-from .models import CustomCalendarEvent, PostingSlot, Queue
+from .models import CustomCalendarEvent, PostingSlot, Queue, QueueEntry
 
 # Common timezones for the publish page timezone dropdown
 COMMON_TIMEZONES = [
@@ -1258,12 +1258,16 @@ def queue_create(request, workspace_id):
 @login_required
 def queue_detail(request, workspace_id, queue_id):
     """Show queue entries in order with drag-to-reorder."""
+    from django.db.models import F
+
     workspace = _get_workspace(request, workspace_id)
     queue = get_object_or_404(Queue, id=queue_id, workspace=workspace)
+    # Slot datetime is the source of truth for order now (positions can be sparse
+    # after gap-fills); show entries chronologically, unslotted ones last.
     entries = (
         queue.entries.select_related("post__author")
         .prefetch_related("post__platform_posts__social_account")
-        .order_by("position")
+        .order_by(F("assigned_slot_datetime").asc(nulls_last=True), "position")
     )
 
     return render(
@@ -1307,6 +1311,54 @@ def queue_reorder(request, workspace_id, queue_id):
     if request.htmx:
         return HttpResponse(status=204, headers={"HX-Trigger": "queueReordered"})
     return JsonResponse({"reordered": True})
+
+
+@login_required
+@require_POST
+def queue_entry_remove(request, workspace_id, queue_id, entry_id):
+    """Remove a single post from a queue, leaving a gap (comment §3).
+
+    Workspace-scoped and idempotent: a vanished entry (stale page, double-click)
+    still refreshes the list via the ``queueReordered`` trigger instead of 404ing.
+    """
+    workspace = _get_workspace(request, workspace_id)
+    entry = (
+        QueueEntry.objects.filter(id=entry_id, queue_id=queue_id, queue__workspace=workspace)
+        .select_related("post", "queue__social_account")
+        .first()
+    )
+    if entry is not None:
+        from .services import remove_from_queue
+
+        remove_from_queue(entry)
+
+    if request.htmx:
+        return HttpResponse(status=204, headers={"HX-Trigger": "queueReordered"})
+    return JsonResponse({"removed": entry is not None})
+
+
+@login_required
+@require_POST
+def queue_entry_reslot(request, workspace_id, queue_id, entry_id):
+    """Move a queued post to the queue's next open slot (comment §4)."""
+    workspace = _get_workspace(request, workspace_id)
+    entry = get_object_or_404(
+        QueueEntry.objects.select_related("post", "queue__social_account"),
+        id=entry_id,
+        queue_id=queue_id,
+        queue__workspace=workspace,
+    )
+
+    from .services import QueueFullError, reslot_to_next_available
+
+    try:
+        reslot_to_next_available(entry)
+    except QueueFullError:
+        return JsonResponse({"error": "No open slot within the scheduling horizon."}, status=409)
+
+    if request.htmx:
+        return HttpResponse(status=204, headers={"HX-Trigger": "queueReordered"})
+    return JsonResponse({"reslotted": True})
 
 
 # ---------------------------------------------------------------------------

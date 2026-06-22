@@ -973,3 +973,89 @@ class SlotOccupancyQueueTests(TestCase):
 
         with self.assertRaises(QueueFullError):
             add_post_next_available(post, queue)
+
+
+class QueueEntryEndpointTests(TestCase):
+    """HTTP endpoints for single-entry remove / reslot (workspace-scoped)."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(email="qe@example.com", password="pw", tos_accepted_at=timezone.now())
+        self.org = Organization.objects.create(name="EP Org")
+        self.workspace = Workspace.objects.create(organization=self.org, name="EP WS")
+        OrgMembership.objects.create(user=self.user, organization=self.org, org_role=OrgMembership.OrgRole.OWNER)
+        WorkspaceMembership.objects.create(
+            user=self.user, workspace=self.workspace, workspace_role=WorkspaceMembership.WorkspaceRole.OWNER
+        )
+        self.account = SocialAccount.objects.create(
+            workspace=self.workspace,
+            platform="linkedin_personal",
+            account_platform_id="li-ep",
+            account_name="EP",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        for day in range(7):
+            PostingSlot.objects.create(social_account=self.account, day_of_week=day, time=time(9, 0))
+        self.queue = Queue.objects.create(workspace=self.workspace, name="EP Q", social_account=self.account)
+        self.client.force_login(self.user)
+
+    def _queue_post(self, slot_dt):
+        post = Post.objects.create(workspace=self.workspace, caption="x")
+        PlatformPost.objects.create(
+            post=post, social_account=self.account, status=PlatformPost.Status.SCHEDULED, scheduled_at=slot_dt
+        )
+        entry = QueueEntry.objects.create(queue=self.queue, post=post, position=0, assigned_slot_datetime=slot_dt)
+        return post, entry
+
+    def _remove_url(self, entry_id, queue_id=None):
+        return reverse(
+            "calendar:queue_entry_remove",
+            kwargs={"workspace_id": self.workspace.id, "queue_id": queue_id or self.queue.id, "entry_id": entry_id},
+        )
+
+    def test_remove_entry_deletes_and_drafts(self):
+        c = _next_slot_datetimes(self.account, timezone.now(), count=2)
+        post, entry = self._queue_post(c[0])
+        resp = self.client.post(self._remove_url(entry.id), HTTP_HX_REQUEST="true")
+        self.assertEqual(resp.status_code, 204)
+        self.assertIn("queueReordered", resp.headers.get("HX-Trigger", ""))
+        self.assertFalse(QueueEntry.objects.filter(id=entry.id).exists())
+        pp = PlatformPost.objects.get(post=post)
+        self.assertEqual(pp.status, PlatformPost.Status.DRAFT)
+        self.assertIsNone(pp.scheduled_at)
+
+    def test_remove_idempotent_when_already_gone(self):
+        import uuid as _uuid
+
+        resp = self.client.post(self._remove_url(_uuid.uuid4()), HTTP_HX_REQUEST="true")
+        self.assertEqual(resp.status_code, 204)
+
+    def test_remove_foreign_workspace_entry_is_noop(self):
+        other_org = Organization.objects.create(name="Other")
+        other_ws = Workspace.objects.create(organization=other_org, name="Other WS")
+        other_acct = SocialAccount.objects.create(
+            workspace=other_ws,
+            platform="linkedin_personal",
+            account_platform_id="li-other",
+            account_name="O",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        other_queue = Queue.objects.create(workspace=other_ws, name="OQ", social_account=other_acct)
+        other_post = Post.objects.create(workspace=other_ws, caption="o")
+        other_entry = QueueEntry.objects.create(queue=other_queue, post=other_post, position=0)
+
+        # Member of self.workspace targets their own workspace_id but a foreign entry.
+        resp = self.client.post(self._remove_url(other_entry.id, queue_id=other_queue.id), HTTP_HX_REQUEST="true")
+        self.assertEqual(resp.status_code, 204)
+        self.assertTrue(QueueEntry.objects.filter(id=other_entry.id).exists())
+
+    def test_reslot_moves_to_next_gap(self):
+        c = _next_slot_datetimes(self.account, timezone.now(), count=3)
+        post, entry = self._queue_post(c[2])  # [0],[1] free
+        url = reverse(
+            "calendar:queue_entry_reslot",
+            kwargs={"workspace_id": self.workspace.id, "queue_id": self.queue.id, "entry_id": entry.id},
+        )
+        resp = self.client.post(url, HTTP_HX_REQUEST="true")
+        self.assertEqual(resp.status_code, 204)
+        pp = PlatformPost.objects.get(post=post)
+        self.assertEqual(pp.scheduled_at, c[0])
