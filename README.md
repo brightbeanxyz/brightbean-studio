@@ -379,7 +379,7 @@ Facebook, Instagram, and Threads all use the same Meta app credentials.
 
    **Use case: "Manage everything on your Page"** (Facebook)
    - This use case auto-includes `business_management`, `pages_show_list`, and `public_profile`
-   - Add these optional permissions: `pages_manage_posts`, `pages_read_engagement`, `pages_read_user_content`, `pages_manage_metadata`, `read_insights`
+   - Add these optional permissions: `pages_manage_posts`, `pages_manage_engagement`, `pages_read_engagement`, `pages_read_user_content`, `pages_manage_metadata`, `read_insights`
 
    **Use case: "Messenger from Meta"** (Facebook Messaging)
    - Required to enable the `pages_messaging` permission, which is not available under the "Manage Pages" use case
