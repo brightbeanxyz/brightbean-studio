@@ -79,6 +79,8 @@ class FacebookProvider(SocialProvider):
         scopes = [
             "business_management",
             "pages_show_list",
+            # Required by publish_comment() — POST /{post_id}/comments is gated
+            # behind pages_manage_engagement.
             "pages_manage_engagement",
             "pages_manage_posts",
             "pages_read_engagement",
