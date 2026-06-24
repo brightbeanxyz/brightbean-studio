@@ -115,3 +115,45 @@ def test_sync_account_metrics_does_not_backfill_followers_total(workspace):
     ).exists()
     # Date-ranged metrics ARE still backfilled.
     assert AccountInsightsSnapshot.objects.filter(social_account=account, date__lt=today, metric_key="reach").exists()
+
+
+@pytest.mark.django_db
+def test_sync_account_metrics_recovers_followers_from_later_offset(workspace):
+    """If on_date's own fetch returns followers=None but a later offset fetches the
+    current total, it must still be written to on_date (not dropped)."""
+    from datetime import date
+    from unittest.mock import MagicMock, patch
+
+    from apps.analytics.models import AccountInsightsSnapshot
+    from apps.analytics.tasks import _sync_account_metrics
+    from providers.types import AccountMetrics
+
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform="instagram",
+        account_platform_id="ig-1",
+        account_name="IG One",
+        oauth_access_token="token",
+        oauth_refresh_token="refresh",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    fake_provider = MagicMock()
+    fake_provider.account_metrics_supports_date_range = True
+    # offset 0 (on_date): profile fetch failed -> followers=None; later offsets recover it.
+    fake_provider.get_account_metrics.side_effect = [
+        AccountMetrics(followers=None, reach=5, extra={"views": 7}),
+        AccountMetrics(followers=1000, reach=4, extra={"views": 6}),
+        AccountMetrics(followers=1000, reach=3, extra={"views": 5}),
+    ]
+    today = date(2026, 6, 24)
+
+    with patch("apps.analytics.tasks._resolve_provider", return_value=fake_provider):
+        _sync_account_metrics(account, today)
+
+    # on_date recovered the current follower total from the later offset...
+    row = AccountInsightsSnapshot.objects.get(social_account=account, date=today, metric_key="followers")
+    assert row.value == 1000.0
+    # ...and no past date got a followers row.
+    assert not AccountInsightsSnapshot.objects.filter(
+        social_account=account, date__lt=today, metric_key="followers"
+    ).exists()

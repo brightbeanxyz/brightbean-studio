@@ -395,6 +395,7 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
     """
     from datetime import datetime, time
 
+    from .metrics import PLATFORM_METRICS
     from .models import AccountInsightsSnapshot
 
     provider = _resolve_provider(account)
@@ -405,6 +406,13 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
     # current day for them; backfill of true historical values is impossible
     # without an API that supports it.
     recent_days = _ACCOUNT_METRICS_RECENT_DAYS if getattr(provider, "account_metrics_supports_date_range", True) else 1
+    # ``followers`` is a live point-in-time total: the provider returns the
+    # current count regardless of the requested window, so it is valid only for
+    # the day the sync runs. Capture it from whichever offset returns it (so a
+    # value is recovered even when on_date's own fetch failed or its row already
+    # exists) and write it once, to on_date only, after the loop — never into a
+    # backfilled past date (which would fabricate flat history).
+    current_followers = None
     for offset in range(recent_days):
         target = on_date - timedelta(days=offset)
         if AccountInsightsSnapshot.objects.filter(social_account=account, date=target).exists():
@@ -421,14 +429,14 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
             logger.warning("get_account_metrics failed for %s on %s: %s", account, target, exc)
             return
         _refresh_follower_count(account, metrics)
+        fetched_followers = getattr(metrics, "followers", None)
+        if fetched_followers is not None:
+            current_followers = fetched_followers
         extra = getattr(metrics, "extra", {}) or {}
         metric_values = _account_metrics_to_dict(metrics, account.platform)
-        if offset > 0:
-            # ``followers`` is a point-in-time cumulative total: the provider
-            # returns today's value regardless of the (start, end) window, so
-            # writing it into a backfilled past date fabricates flat history and
-            # corrupts follower-growth deltas. Persist it for the current day only.
-            metric_values.pop("followers", None)
+        # The live followers total is written to on_date after the loop; keep it
+        # out of every dated/backfilled snapshot written here.
+        metric_values.pop("followers", None)
         _write_account_snapshot(
             account,
             metric_values,
@@ -436,6 +444,11 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
             raw=extra.get("raw_insights", {}),
             errors=extra.get("insight_errors", {}),
         )
+
+    if current_followers is not None and "followers" in PLATFORM_METRICS.get(account.platform, []):
+        # Live total → on_date only, idempotently: recovers a value fetched at a
+        # later offset and fills it in when on_date's other metrics already exist.
+        _write_account_snapshot(account, {"followers": float(current_followers)}, on_date)
 
     if account.platform == "youtube":
         _sync_youtube_post_analytics(account, provider, on_date)
