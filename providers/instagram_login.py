@@ -437,12 +437,12 @@ class InstagramLoginProvider(SocialProvider):
         comments = values.get("comments", fields.get("comments_count", 0))
 
         return PostMetrics(
-            reach=values.get("reach", 0),
+            reach=values.get("views", 0),
             likes=likes,
             comments=comments,
             saves=values.get("saved", 0),
             shares=values.get("shares", 0),
-            video_views=values.get("views", 0),
+            video_views=values.get("reach", 0),
             extra={
                 "total_interactions": values.get("total_interactions", 0),
                 "raw_fields": fields,
