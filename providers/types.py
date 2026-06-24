@@ -90,7 +90,6 @@ class AccountMetrics:
     followers_gained: int = 0
     impressions: int = 0
     reach: int = 0
-    profile_views: int = 0
     extra: dict = field(default_factory=dict)
 
 

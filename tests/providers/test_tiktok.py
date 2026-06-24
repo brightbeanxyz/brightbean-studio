@@ -413,18 +413,19 @@ class TestAccountMetricsPersistence:
         assert out["followers"] == 0.0
 
     def test_followers_not_persisted_for_platforms_without_catalog_entry(self):
-        # Instagram/Facebook providers populate ``AccountMetrics.followers``
-        # with daily-delta values (Insights API ``follower_count`` /
-        # ``page_fans``), not lifetime totals. Persisting them under the
-        # ``followers`` key (which the catalog labels as a total) would
-        # mislabel the data. The catalog-membership gate prevents that
-        # leak today; this test pins the contract.
+        # Facebook/LinkedIn surface follower *growth* via the daily-delta
+        # ``follows`` key (e.g. FB ``page_daily_follows_unique``) and their
+        # catalogs don't list ``followers``, so the lifetime total must not be
+        # persisted under the ``followers`` key. The catalog-membership gate
+        # prevents that leak; this test pins the contract. (Instagram
+        # intentionally DOES persist ``followers`` now — its catalog lists it so
+        # growth derives from the daily total, same as TikTok.)
         from apps.analytics.tasks import _account_metrics_to_dict
         from providers.types import AccountMetrics
 
         metrics = AccountMetrics(followers=42)
 
-        for platform in ("instagram", "facebook", "linkedin_company"):
+        for platform in ("facebook", "linkedin_company"):
             out = _account_metrics_to_dict(metrics, platform)
             assert "followers" not in out, f"unexpected followers leak for {platform}"
 

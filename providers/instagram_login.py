@@ -46,7 +46,6 @@ API_BASE = f"{GRAPH_HOST}/v25.0"
 INSTAGRAM_ACCOUNT_INSIGHTS = [
     "reach",
     "views",
-    "profile_views",
     "accounts_engaged",
     "total_interactions",
 ]
@@ -468,7 +467,6 @@ class InstagramLoginProvider(SocialProvider):
             },
             metric_params={
                 "views": {"metric_type": "total_value"},
-                "profile_views": {"metric_type": "total_value"},
                 "accounts_engaged": {"metric_type": "total_value"},
                 "total_interactions": {"metric_type": "total_value"},
             },
@@ -479,7 +477,6 @@ class InstagramLoginProvider(SocialProvider):
         return AccountMetrics(
             reach=values.get("reach", 0),
             followers=followers,
-            profile_views=values.get("profile_views", 0),
             extra={
                 "views": values.get("views", 0),
                 "accounts_engaged": values.get("accounts_engaged", 0),

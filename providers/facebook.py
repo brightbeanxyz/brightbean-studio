@@ -6,8 +6,10 @@ import logging
 from datetime import datetime
 from urllib.parse import urlencode, urlparse
 
+import httpx
+
 from .base import SocialProvider
-from .exceptions import APIError, OAuthError, PublishError
+from .exceptions import APIError, OAuthError, PublishError, RateLimitError
 from .meta_insights import fetch_insights_safe, parse_insights_response
 from .types import (
     AccountMetrics,
@@ -414,10 +416,27 @@ class FacebookProvider(SocialProvider):
             json=payload,
         )
         data = resp.json()
+        video_id = data["id"]
+        # Resolve the feed post id + permalink so analytics target the page post
+        # and the stored URL is shareable. Best-effort: video processing is async,
+        # so post_id may not be ready yet — fall back to the bare video id.
+        video_fields: dict = {}
+        try:
+            video_fields = self._request(
+                "GET",
+                f"{BASE_URL}/{video_id}",
+                access_token=access_token,
+                params={"fields": "post_id,permalink_url"},
+            ).json()
+        except (APIError, RateLimitError, httpx.HTTPError) as exc:
+            logger.debug("Facebook video %s post_id unavailable: %s", video_id, exc)
+
+        post_id = video_fields.get("post_id") or video_id
+        url = video_fields.get("permalink_url") or f"https://www.facebook.com/{post_id}"
         return PublishResult(
-            platform_post_id=data["id"],
-            url=f"https://www.facebook.com/{data['id']}",
-            extra=data,
+            platform_post_id=post_id,
+            url=url,
+            extra={**data, **video_fields, "video_id": video_id},
         )
 
     # ------------------------------------------------------------------
@@ -510,17 +529,23 @@ class FacebookProvider(SocialProvider):
         return {}, {key: error_text for key in FACEBOOK_POST_INSIGHTS}, post_ids[0] if post_ids else ""
 
     def _get_post_fields(self, access_token: str, post_id: str) -> dict:
-        try:
-            fields_resp = self._request(
-                "GET",
-                f"{BASE_URL}/{post_id}",
-                access_token=access_token,
-                params={"fields": ",".join(FACEBOOK_POST_FIELDS)},
-            )
-            return fields_resp.json()
-        except APIError as exc:
-            logger.debug("Facebook post %s fields unavailable: %s", post_id, exc)
-            return {}
+        # ``post_id`` is a Video-node field, not a field on a plain Post node, so
+        # requesting it against a feed post can fail the whole call with an
+        # invalid-field error. Retry without ``post_id`` so the engagement fields
+        # (comments/shares/reactions summaries) still load for normal posts.
+        field_sets = (FACEBOOK_POST_FIELDS, [f for f in FACEBOOK_POST_FIELDS if f != "post_id"])
+        for fields in field_sets:
+            try:
+                fields_resp = self._request(
+                    "GET",
+                    f"{BASE_URL}/{post_id}",
+                    access_token=access_token,
+                    params={"fields": ",".join(fields)},
+                )
+                return fields_resp.json()
+            except APIError as exc:
+                logger.debug("Facebook post %s fields unavailable: %s", post_id, exc)
+        return {}
 
     @staticmethod
     def _summary_total(data: dict, key: str) -> int:

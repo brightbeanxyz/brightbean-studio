@@ -105,7 +105,6 @@ def test_account_metrics_use_current_instagram_insights_metrics():
         side_effect=[
             _resp({"data": [{"name": "reach", "values": [{"value": 12}]}]}),
             _resp({"data": [{"name": "views", "period": "day", "total_value": {"value": 67}}]}),
-            _resp({"data": [{"name": "profile_views", "values": [{"value": 5}]}]}),
             _resp({"data": [{"name": "accounts_engaged", "values": [{"value": 8}]}]}),
             _resp({"data": [{"name": "total_interactions", "values": [{"value": 9}]}]}),
             _resp({"followers_count": 34}),
@@ -123,7 +122,6 @@ def test_account_metrics_use_current_instagram_insights_metrics():
     assert metrics.impressions == 0
     assert metrics.reach == 12
     assert metrics.followers == 34
-    assert metrics.profile_views == 5
     assert metrics.extra["views"] == 67
     provider._request.assert_has_calls(
         [
@@ -148,18 +146,6 @@ def test_account_metrics_use_current_instagram_insights_metrics():
                     "metric_type": "total_value",
                     "since": 1781740800,
                     "until": 1781827200,
-                },
-            ),
-            call(
-                "GET",
-                "https://graph.facebook.com/v25.0/ig-1/insights",
-                access_token="page-token",
-                params={
-                    "metric": "profile_views",
-                    "period": "day",
-                    "since": 1781740800,
-                    "until": 1781827200,
-                    "metric_type": "total_value",
                 },
             ),
             call(
@@ -228,7 +214,6 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
         side_effect=[
             _resp({"data": [{"name": "reach", "values": [{"value": 12}]}]}),
             _resp({"data": [{"name": "views", "period": "day", "total_value": {"value": 67}}]}),
-            _resp({"data": [{"name": "profile_views", "values": [{"value": 5}]}]}),
             _resp({"data": [{"name": "accounts_engaged", "values": [{"value": 8}]}]}),
             _resp({"data": [{"name": "total_interactions", "values": [{"value": 9}]}]}),
             _resp({"followers_count": 34}),
@@ -246,7 +231,6 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
     assert metrics.impressions == 0
     assert metrics.reach == 12
     assert metrics.followers == 34
-    assert metrics.profile_views == 5
     assert metrics.extra["views"] == 67
     provider._request.assert_has_calls(
         [
@@ -271,18 +255,6 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
                     "metric_type": "total_value",
                     "since": 1781740800,
                     "until": 1781827200,
-                },
-            ),
-            call(
-                "GET",
-                "https://graph.instagram.com/v25.0/me/insights",
-                access_token="ig-token",
-                params={
-                    "metric": "profile_views",
-                    "period": "day",
-                    "since": 1781740800,
-                    "until": 1781827200,
-                    "metric_type": "total_value",
                 },
             ),
             call(

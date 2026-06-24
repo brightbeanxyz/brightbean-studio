@@ -106,7 +106,7 @@ def _supports_post_fallback(metric_key: str) -> bool:
     """Which metric keys can be derived by summing per-post deltas.
 
     Counts and minutes sum linearly. Account-only growth (subscribers,
-    follows, profile_visits) is undefined for posts; rate-style metrics
+    follows, followers) is undefined for posts; rate-style metrics
     (avg_view_pct, engagement) cannot be summed; and unique-user metrics
     (reach) double-count users when summed across posts. Unknown metric
     keys (not registered in :data:`METRICS`) return False so a forgotten

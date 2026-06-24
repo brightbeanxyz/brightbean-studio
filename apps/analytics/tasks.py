@@ -221,7 +221,6 @@ def _account_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
     for src, key in (
         ("impressions", "impressions"),
         ("reach", "reach"),
-        ("profile_views", "profile_visits"),
     ):
         v = getattr(metrics, src, 0) or 0
         if v:
