@@ -404,20 +404,34 @@ class TestPublishPost:
         assert result.platform_post_id == "v_pub_url~123"
 
     @patch.object(TikTokProvider, "_request")
-    def test_unaudited_options_block_public_post_before_init(self, mock_request):
-        # Unaudited apps only get SELF_ONLY back — a public post must fail
-        # fast with retryable=False, without ever hitting video/init.
+    def test_unaudited_options_block_explicit_public_post_before_init(self, mock_request):
+        # Unaudited apps only get SELF_ONLY back — an explicitly public post
+        # must fail fast with retryable=False, without ever hitting video/init.
         mock_request.return_value = _creator_info_response(["SELF_ONLY"])
 
         provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
         with pytest.raises(PublishError) as excinfo:
-            provider.publish_post("tok", _video_content())
+            provider.publish_post("tok", _video_content(privacy_level="PUBLIC_TO_EVERYONE"))
 
         assert excinfo.value.retryable is False
         assert "audit" in str(excinfo.value)
         assert "SELF_ONLY" in str(excinfo.value)
         urls = [call.args[1] for call in mock_request.call_args_list]
         assert VIDEO_INIT_URL not in urls
+
+    @patch.object(TikTokProvider, "_request")
+    def test_unaudited_options_use_self_only_for_implicit_default(self, mock_request):
+        mock_request.side_effect = [
+            _creator_info_response(["SELF_ONLY"]),
+            _init_response(),
+        ]
+
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        result = provider.publish_post("tok", _video_content())
+
+        assert result.platform_post_id == "v_pub_url~123"
+        init_call = mock_request.call_args_list[1]
+        assert init_call.kwargs["json"]["post_info"]["privacy_level"] == "SELF_ONLY"
 
     @patch.object(TikTokProvider, "_request")
     def test_self_only_post_allowed_when_unaudited(self, mock_request):

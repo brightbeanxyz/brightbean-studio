@@ -818,6 +818,7 @@
                                          if (data.duet_disabled) ttAllowDuet = false;
                                          if (data.stitch_disabled) ttAllowStitch = false;
                                          const opts = data.privacy_level_options || [];
+                                         if (!ttPrivacy && opts.length === 1 && opts[0] === 'SELF_ONLY') ttPrivacy = 'SELF_ONLY';
                                          if (ttPrivacy && opts.length && !opts.includes(ttPrivacy)) ttPrivacy = '';
                                      }
                                      ttLoaded = true;

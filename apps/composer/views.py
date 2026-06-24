@@ -172,8 +172,11 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
             }
 
         elif account.platform == "pinterest":
+            board_id = request.POST.get(f"pin_board_id_{acc_id}", "").strip()
+            if not board_id:
+                board_id = (pp.platform_extra or {}).get("board_id") or None
             pp.platform_extra = {
-                "board_id": request.POST.get(f"pin_board_id_{acc_id}", "").strip() or None,
+                "board_id": board_id,
                 "link_url": request.POST.get(f"pin_link_url_{acc_id}", "").strip() or None,
                 "alt_text": request.POST.get(f"pin_alt_text_{acc_id}", "").strip() or None,
                 "tag_products": request.POST.get(f"pin_tag_products_{acc_id}", "").strip() or None,
@@ -219,6 +222,31 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
             pp.platform_extra = extra
 
         pp.save()
+
+
+def _validate_pinterest_board_selection(request, post, workspace):
+    """Selected Pinterest accounts need a board before composer save/submit."""
+    selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
+    if not selected_ids:
+        return None
+
+    accounts = SocialAccount.objects.filter(id__in=selected_ids, workspace=workspace, platform="pinterest")
+    for account in accounts:
+        acc_id = str(account.id)
+        board_id = request.POST.get(f"pin_board_id_{acc_id}", "").strip()
+        if not board_id and post.pk:
+            board_id = (
+                PlatformPost.objects.filter(post=post, social_account=account)
+                .values_list("platform_extra__board_id", flat=True)
+                .first()
+                or ""
+            )
+        if not board_id:
+            return JsonResponse(
+                {"errors": {"pinterest_board": f"Select a Pinterest board for {account.account_name}."}},
+                status=400,
+            )
+    return None
 
 
 def _save_version(post, user):
@@ -701,6 +729,10 @@ def save_post(request, workspace_id, post_id=None):
     post.workspace = workspace
     if not post_id:
         post.author = request.user
+
+    pinterest_board_error = _validate_pinterest_board_selection(request, post, workspace)
+    if pinterest_board_error is not None:
+        return pinterest_board_error
 
     # Handle action — note that Post itself no longer carries an editorial
     # status: every transition below operates on the PlatformPost children,
