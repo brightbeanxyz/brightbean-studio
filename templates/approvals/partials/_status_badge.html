@@ -1,0 +1,5 @@
+{% comment %}Editorial-status pill: dot + label. `meta` = {bg,fg,bd,dot,label} from approval_extras.status_badge.{% endcomment %}
+<span class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[0.6875rem] font-semibold rounded-full"
+      style="background:{{ meta.bg }};color:{{ meta.fg }};border:1px solid {{ meta.bd }};">
+    <span class="w-1.5 h-1.5 rounded-full" style="background:{{ meta.dot }};"></span>{{ meta.label }}
+</span>

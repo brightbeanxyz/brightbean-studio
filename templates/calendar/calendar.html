@@ -101,6 +101,8 @@
     .status-partially_published .chip-dot { background: #EAB308; }
     .status-failed     { background: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; }
     .status-failed .chip-dot { background: #EF4444; }
+    .status-on_hold    { background: #F5F3FF; color: #6D28D9; border: 1px solid #DDD6FE; }
+    .status-on_hold .chip-dot { background: #7C3AED; }
 
     /* View switcher */
     .view-btn {
@@ -318,6 +320,8 @@
         {% include "calendar/partials/publish_calendar_shell.html" %}
     {% endif %}
 </div>
+{# Toast host — outside #tab-content so an approval action's list refresh doesn't tear down the toast #}
+{% include "approvals/partials/_toasts.html" %}
 {% endblock %}
 
 {% block extra_js %}

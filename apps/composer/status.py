@@ -13,6 +13,10 @@ _WORKFLOW_ORDER = [
     "draft",
     "changes_requested",
     "rejected",
+    # A client-requested hold is action-required, so it ranks low (wins over
+    # approved/scheduled) — a partially-held post surfaces as "on_hold" rather
+    # than letting an un-held sibling mask it at the Post level.
+    "on_hold",
     "pending_review",
     "pending_client",
     "approved",

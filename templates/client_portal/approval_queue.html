@@ -5,144 +5,46 @@
 {% block content %}
 <div hx-trigger="portalAction from:body"
      hx-get="{% url 'client_portal:approval_queue' %}"
-     hx-target="#portal-posts"
-     hx-select="#portal-posts"
-     hx-swap="outerHTML">
+     hx-target="#portal-posts" hx-select="#portal-posts" hx-swap="outerHTML">
 
     <div class="mb-6">
-        <h1 class="text-xl font-bold tracking-tight" style="color: var(--text-primary);">Posts for Review</h1>
-        <p class="text-sm mt-0.5" style="color: var(--text-secondary);">Approve or request changes on scheduled content</p>
+        <h1 class="text-[1.375rem] font-bold tracking-tight" style="color: var(--text-primary);">Posts for your review</h1>
+        <p class="text-[0.875rem] mt-0.5" style="color: var(--text-secondary);">Approve or request changes before anything goes live.</p>
     </div>
 
-    <div id="portal-posts" class="space-y-4">
-        {% for post in posts %}
-        <div class="rounded-xl border overflow-hidden transition-all hover:shadow-md"
-             style="background: var(--surface-0); border-color: var(--border);"
-             x-data="{ showDetail: false, showRejectForm: false, showChangesForm: false }">
-
-            <!-- Post header -->
-            <div class="p-5 cursor-pointer" @click="showDetail = !showDetail">
-                <div class="flex items-center gap-2 mb-2">
-                    {% for pp in post.platform_posts.all %}
-                    <span class="text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full" style="background: var(--surface-2); color: var(--text-secondary);">
-                        {{ pp.social_account.get_platform_display }}
-                    </span>
-                    {% endfor %}
-                    {% if post.scheduled_at %}
-                    <span class="text-[0.6875rem] ml-auto" style="color: var(--text-tertiary);">
-                        Scheduled for {% timezone workspace.effective_timezone|default:"UTC" %}{{ post.scheduled_at|date:"M j, Y \a\t g:i A" }}{% endtimezone %}
-                    </span>
-                    {% elif post.proposed_publish_at %}
-                    <span class="text-[0.6875rem] ml-auto" style="color: var(--text-tertiary);">
-                        Proposed for {% timezone workspace.effective_timezone|default:"UTC" %}{{ post.proposed_publish_at|date:"M j, Y \a\t g:i A" }}{% endtimezone %}
-                    </span>
-                    {% endif %}
-                </div>
-
-                <p class="text-[0.9375rem] leading-relaxed" style="color: var(--text-primary);"
-                   :class="showDetail ? '' : 'line-clamp-3'">
-                    {{ post.caption }}
-                </p>
-
-                <!-- Media preview -->
-                {% if post.media_attachments.all %}
-                <div class="flex gap-2 mt-3 flex-wrap">
-                    {% for pm in post.media_attachments.all %}
-                    {% if pm.media_asset.thumbnail %}
-                    <img src="{{ pm.media_asset.thumbnail.url }}" alt="{{ pm.alt_text }}"
-                         class="w-20 h-20 rounded-lg object-cover" style="border: 1px solid var(--border);">
-                    {% elif pm.media_asset.file %}
-                    <div class="w-20 h-20 rounded-lg flex items-center justify-center" style="background: var(--surface-1); border: 1px solid var(--border);">
-                        <svg class="w-6 h-6" style="color: var(--text-ghost);" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z"/></svg>
-                    </div>
-                    {% endif %}
-                    {% endfor %}
-                </div>
-                {% endif %}
-
-                <div class="flex items-center gap-1.5 mt-3">
-                    <span class="text-[0.75rem]" style="color: var(--text-tertiary);">by {{ post.author.display_name }}</span>
-                    <svg class="w-3.5 h-3.5 ml-auto transition-transform" :class="showDetail && 'rotate-180'" style="color: var(--text-ghost);" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
-                </div>
+    <div id="portal-posts" class="max-w-[680px]">
+        {% if pending_posts %}
+        <div class="mb-8">
+            <div class="flex items-center gap-2 mb-3">
+                <h2 class="text-[0.75rem] font-bold uppercase tracking-wider" style="color: var(--text-tertiary);">Needs your approval</h2>
+                <span class="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[0.6875rem] font-bold">{{ pending_posts|length }}</span>
             </div>
-
-            <!-- Expanded detail -->
-            <div x-show="showDetail" x-cloak x-collapse>
-                <!-- Comments (external only) -->
-                {% if post.visible_comments %}
-                <div class="px-5 pb-3 border-t" style="border-color: var(--surface-2);">
-                    <p class="text-[0.75rem] font-semibold mt-3 mb-2" style="color: var(--text-tertiary);">Comments</p>
-                    {% for comment in post.visible_comments %}
-                    <div class="flex gap-2 mb-2">
-                        <div class="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0" style="background: var(--primary);">
-                            {{ comment.author.display_name|default:"?"|make_list|first|upper }}
-                        </div>
-                        <div>
-                            <span class="text-[0.75rem] font-semibold" style="color: var(--text-primary);">{{ comment.author.display_name|default:"Unknown" }}</span>
-                            <p class="text-[0.8125rem]" style="color: var(--text-secondary);">{{ comment.body }}</p>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% endif %}
-
-                <!-- Actions -->
-                <div class="px-5 py-4 flex flex-wrap gap-2 border-t" style="border-color: var(--surface-2); background: var(--surface-1);">
-                    <button hx-post="{% url 'client_portal:approve' post_id=post.id %}"
-                            class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full text-white transition-all hover:-translate-y-0.5"
-                            style="background: var(--success-500);">
-                        Approve
-                    </button>
-                    <button @click="showChangesForm = !showChangesForm; showRejectForm = false"
-                            class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full transition-colors"
-                            style="background: var(--warning-50); color: var(--warning-700); border: 1px solid rgba(234,179,8,0.2);">
-                        Request Changes
-                    </button>
-                    <button @click="showRejectForm = !showRejectForm; showChangesForm = false"
-                            class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full transition-colors"
-                            style="background: var(--error-50); color: var(--error-700); border: 1px solid rgba(239,68,68,0.15);">
-                        Reject
-                    </button>
-                </div>
-
-                <!-- Request changes form -->
-                <div x-show="showChangesForm" x-cloak x-collapse class="px-5 py-4 border-t" style="border-color: var(--surface-2);">
-                    <form hx-post="{% url 'client_portal:request_changes' post_id=post.id %}" class="space-y-3">
-                        <label class="text-[0.8125rem] font-semibold block" style="color: var(--text-primary);">What changes would you like?</label>
-                        <textarea name="comment" rows="3" required
-                                  class="w-full px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 resize-none"
-                                  style="border: 1.5px solid var(--border); background: var(--surface-0); color: var(--text-primary);"
-                                  placeholder="Describe the changes you'd like to see..."></textarea>
-                        <div class="flex gap-2">
-                            <button type="submit" class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full text-white" style="background: var(--warning-500);">Submit Feedback</button>
-                            <button type="button" @click="showChangesForm = false" class="px-4 py-2 text-[0.8125rem] font-medium rounded-full" style="color: var(--text-secondary);">Cancel</button>
-                        </div>
-                    </form>
-                </div>
-
-                <!-- Reject form -->
-                <div x-show="showRejectForm" x-cloak x-collapse class="px-5 py-4 border-t" style="border-color: var(--surface-2);">
-                    <form hx-post="{% url 'client_portal:reject' post_id=post.id %}" class="space-y-3">
-                        <label class="text-[0.8125rem] font-semibold block" style="color: var(--text-primary);">Reason for rejection</label>
-                        <textarea name="comment" rows="3" required
-                                  class="w-full px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 resize-none"
-                                  style="border: 1.5px solid var(--border); background: var(--surface-0); color: var(--text-primary);"
-                                  placeholder="Explain why this post should be rejected..."></textarea>
-                        <div class="flex gap-2">
-                            <button type="submit" class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full text-white" style="background: var(--error-500);">Reject Post</button>
-                            <button type="button" @click="showRejectForm = false" class="px-4 py-2 text-[0.8125rem] font-medium rounded-full" style="color: var(--text-secondary);">Cancel</button>
-                        </div>
-                    </form>
-                </div>
+            <div class="space-y-4">
+                {% for post in pending_posts %}{% include "client_portal/_client_card.html" %}{% endfor %}
             </div>
         </div>
-        {% empty %}
-        <div class="text-center py-16">
-            <svg class="mx-auto w-14 h-14 mb-3" style="color: var(--neutral-300);" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-            <p class="font-medium" style="color: var(--text-secondary);">All caught up!</p>
+        {% endif %}
+
+        {% if decided_posts %}
+        <div>
+            <h2 class="text-[0.75rem] font-bold uppercase tracking-wider mb-3" style="color: var(--text-tertiary);">Approved &amp; scheduled</h2>
+            <div class="space-y-4">
+                {% for post in decided_posts %}{% include "client_portal/_client_card.html" %}{% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if not pending_posts and not decided_posts %}
+        <div class="text-center py-20">
+            <div class="mx-auto w-12 h-12 mb-3" style="color: var(--neutral-300, #D6D3D1);">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+            </div>
+            <p class="font-medium" style="color: var(--text-secondary);">All caught up</p>
             <p class="text-sm mt-1" style="color: var(--text-tertiary);">No posts are waiting for your review right now</p>
         </div>
-        {% endfor %}
+        {% endif %}
     </div>
+
+    <p class="text-center text-[0.6875rem] mt-10 w-full" style="color: var(--text-tertiary);">Powered by BrightBean · Secure approval link</p>
 </div>
 {% endblock %}

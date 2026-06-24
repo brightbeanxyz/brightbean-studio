@@ -482,10 +482,16 @@ def compose(request, workspace_id, post_id=None):
     # Approval history and comments for existing posts
     approval_history = []
     post_comments = []
+    latest_feedback = None
     if post:
         from apps.approvals.models import ApprovalAction
 
-        approval_history = ApprovalAction.objects.filter(post=post).select_related("user").order_by("-created_at")[:10]
+        approval_history = list(ApprovalAction.objects.filter(post=post).select_related("user").order_by("-created_at"))
+        # Most recent reviewer feedback to surface in the edit banner.
+        latest_feedback = next(
+            (a for a in approval_history if a.action in ("changes_requested", "rejected") and a.comment),
+            None,
+        )
         from apps.approvals.comments import get_comments_for_post
 
         post_comments = get_comments_for_post(post, request.user)
@@ -570,6 +576,7 @@ def compose(request, workspace_id, post_id=None):
         "show_submit_button": show_submit_button,
         "show_resubmit_button": show_resubmit_button,
         "approval_history": approval_history,
+        "latest_feedback": latest_feedback,
         "post_comments": post_comments,
         "pending_assets": pending_assets,
         "all_tags": all_tags,
