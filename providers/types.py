@@ -86,11 +86,10 @@ class PostMetrics:
 
 @dataclass(frozen=True)
 class AccountMetrics:
-    followers: int = 0
+    followers: int | None = 0
     followers_gained: int = 0
     impressions: int = 0
     reach: int = 0
-    profile_views: int = 0
     extra: dict = field(default_factory=dict)
 
 

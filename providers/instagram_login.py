@@ -46,7 +46,6 @@ API_BASE = f"{GRAPH_HOST}/v25.0"
 INSTAGRAM_ACCOUNT_INSIGHTS = [
     "reach",
     "views",
-    "profile_views",
     "accounts_engaged",
     "total_interactions",
 ]
@@ -468,18 +467,19 @@ class InstagramLoginProvider(SocialProvider):
             },
             metric_params={
                 "views": {"metric_type": "total_value"},
-                "profile_views": {"metric_type": "total_value"},
                 "accounts_engaged": {"metric_type": "total_value"},
                 "total_interactions": {"metric_type": "total_value"},
             },
             endpoint_type="account",
         )
-        followers = self._get_profile_fields(access_token).get("followers_count", 0)
+        profile = self._get_profile_fields(access_token)
+        # ``None`` means the fetch FAILED (vs a real 0): leave followers unset so
+        # _account_metrics_to_dict skips it and we don't poison the snapshot with 0.
+        followers = profile.get("followers_count", 0) if profile is not None else None
 
         return AccountMetrics(
             reach=values.get("reach", 0),
             followers=followers,
-            profile_views=values.get("profile_views", 0),
             extra={
                 "views": values.get("views", 0),
                 "accounts_engaged": values.get("accounts_engaged", 0),
@@ -534,7 +534,9 @@ class InstagramLoginProvider(SocialProvider):
         data = resp.json()
         return ReplyResult(platform_message_id=data.get("id", ""), extra=data)
 
-    def _get_profile_fields(self, access_token: str) -> dict:
+    def _get_profile_fields(self, access_token: str) -> dict | None:
+        # Returns ``None`` on failure so callers can distinguish a failed fetch
+        # from a successful one with no data (a genuine 0).
         try:
             return self._request(
                 "GET",
@@ -544,7 +546,7 @@ class InstagramLoginProvider(SocialProvider):
             ).json()
         except APIError as exc:
             logger.debug("Instagram Login profile fields unavailable: %s", exc)
-            return {}
+            return None
 
     def _get_media_fields(self, access_token: str, media_id: str) -> dict:
         try:

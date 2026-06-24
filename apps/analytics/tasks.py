@@ -221,7 +221,6 @@ def _account_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
     for src, key in (
         ("impressions", "impressions"),
         ("reach", "reach"),
-        ("profile_views", "profile_visits"),
     ):
         v = getattr(metrics, src, 0) or 0
         if v:
@@ -232,9 +231,10 @@ def _account_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
     if gained:
         out["follows"] = float(gained)
     # ``followers`` = current total follower count, persisted only when the
-    # platform's catalog lists ``followers`` (today: TikTok). Use ``is not
+    # platform's catalog lists ``followers`` (TikTok, Instagram). Use ``is not
     # None`` so brand-new accounts with 0 followers still get a baseline
-    # snapshot — the chart needs the zero day to render a continuous line.
+    # snapshot — the chart needs the zero day to render a continuous line. A
+    # failed fetch yields ``None`` (not 0), so it is skipped rather than written.
     if "followers" in PLATFORM_METRICS.get(platform, []):
         total_followers = getattr(metrics, "followers", None)
         if total_followers is not None:
@@ -395,6 +395,7 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
     """
     from datetime import datetime, time
 
+    from .metrics import PLATFORM_METRICS
     from .models import AccountInsightsSnapshot
 
     provider = _resolve_provider(account)
@@ -405,6 +406,13 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
     # current day for them; backfill of true historical values is impossible
     # without an API that supports it.
     recent_days = _ACCOUNT_METRICS_RECENT_DAYS if getattr(provider, "account_metrics_supports_date_range", True) else 1
+    # ``followers`` is a live point-in-time total: the provider returns the
+    # current count regardless of the requested window, so it is valid only for
+    # the day the sync runs. Capture it from whichever offset returns it (so a
+    # value is recovered even when on_date's own fetch failed or its row already
+    # exists) and write it once, to on_date only, after the loop — never into a
+    # backfilled past date (which would fabricate flat history).
+    current_followers = None
     for offset in range(recent_days):
         target = on_date - timedelta(days=offset)
         if AccountInsightsSnapshot.objects.filter(social_account=account, date=target).exists():
@@ -421,14 +429,26 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
             logger.warning("get_account_metrics failed for %s on %s: %s", account, target, exc)
             return
         _refresh_follower_count(account, metrics)
+        fetched_followers = getattr(metrics, "followers", None)
+        if fetched_followers is not None:
+            current_followers = fetched_followers
         extra = getattr(metrics, "extra", {}) or {}
+        metric_values = _account_metrics_to_dict(metrics, account.platform)
+        # The live followers total is written to on_date after the loop; keep it
+        # out of every dated/backfilled snapshot written here.
+        metric_values.pop("followers", None)
         _write_account_snapshot(
             account,
-            _account_metrics_to_dict(metrics, account.platform),
+            metric_values,
             target,
             raw=extra.get("raw_insights", {}),
             errors=extra.get("insight_errors", {}),
         )
+
+    if current_followers is not None and "followers" in PLATFORM_METRICS.get(account.platform, []):
+        # Live total → on_date only, idempotently: recovers a value fetched at a
+        # later offset and fills it in when on_date's other metrics already exist.
+        _write_account_snapshot(account, {"followers": float(current_followers)}, on_date)
 
     if account.platform == "youtube":
         _sync_youtube_post_analytics(account, provider, on_date)

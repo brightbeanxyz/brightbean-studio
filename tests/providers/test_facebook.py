@@ -1,8 +1,9 @@
 from unittest.mock import MagicMock, call
 
+import httpx
 import pytest
 
-from providers.exceptions import APIError, PublishError
+from providers.exceptions import APIError, PublishError, RateLimitError
 from providers.facebook import FacebookProvider
 from providers.types import PostType, PublishContent
 
@@ -628,3 +629,146 @@ def test_facebook_analytics_uuid_guard_detects_internal_ids():
     assert _looks_like_uuid("0c77c88e-73f4-4986-a93f-87af966bb4ad") is True
     assert _looks_like_uuid("123456789_987654321") is False
     assert _looks_like_uuid("123456789") is False
+
+
+def test_get_post_fields_retries_without_post_id_when_field_rejected():
+    """``post_id`` is a Video-node field, not a Post-node field: on a plain feed
+    post the first request 400s, so we retry without it instead of dropping the
+    comments/shares summaries."""
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            APIError("(#100) nonexisting field (post_id) on node type (Page)", platform="Facebook"),
+            _resp(
+                {
+                    "id": "page-1_post-1",
+                    "comments": {"summary": {"total_count": 7}},
+                    "shares": {"count": 3},
+                }
+            ),
+        ]
+    )
+
+    fields = provider._get_post_fields("page-token", "page-1_post-1")
+
+    assert fields["comments"]["summary"]["total_count"] == 7
+    assert fields["shares"]["count"] == 3
+    first_params = provider._request.call_args_list[0].kwargs["params"]
+    second_params = provider._request.call_args_list[1].kwargs["params"]
+    assert "post_id" in first_params["fields"].split(",")
+    assert "post_id" not in second_params["fields"].split(",")
+
+
+def test_publish_video_resolves_feed_post_id_for_analytics():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "video-1"}),
+            _resp(
+                {
+                    "post_id": "page-1_post-1",
+                    "permalink_url": "https://www.facebook.com/page-1/videos/video-1/",
+                }
+            ),
+        ]
+    )
+
+    result = provider.publish_post(
+        "page-token",
+        PublishContent(
+            text="Video caption",
+            media_urls=["https://cdn.example.com/clip.mp4"],
+            post_type=PostType.VIDEO,
+            extra={"page_id": "page-1"},
+        ),
+    )
+
+    assert result.platform_post_id == "page-1_post-1"
+    assert result.url == "https://www.facebook.com/page-1/videos/video-1/"
+    assert result.extra["video_id"] == "video-1"
+    provider._request.assert_has_calls(
+        [
+            call(
+                "POST",
+                "https://graph.facebook.com/v25.0/page-1/videos",
+                access_token="page-token",
+                json={"file_url": "https://cdn.example.com/clip.mp4", "description": "Video caption"},
+            ),
+            call(
+                "GET",
+                "https://graph.facebook.com/v25.0/video-1",
+                access_token="page-token",
+                params={"fields": "post_id,permalink_url"},
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    "lookup_error",
+    [
+        RateLimitError("rate limited", platform="Facebook"),
+        httpx.ConnectError("connection failed"),
+    ],
+)
+def test_publish_video_treats_metadata_lookup_failures_as_best_effort(lookup_error):
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "video-1"}),
+            lookup_error,
+        ]
+    )
+
+    result = provider.publish_post(
+        "page-token",
+        PublishContent(
+            text="Video caption",
+            media_urls=["https://cdn.example.com/clip.mp4"],
+            post_type=PostType.VIDEO,
+            extra={"page_id": "page-1"},
+        ),
+    )
+
+    assert result.platform_post_id == "video-1"
+    assert result.url == "https://www.facebook.com/video-1"
+    assert result.extra["video_id"] == "video-1"
+
+
+def test_publish_video_survives_malformed_metadata_response():
+    """The post-publish metadata GET runs AFTER the video is already live, so a
+    non-API error (e.g. .json() raising on a malformed 2xx body) must NOT
+    propagate — otherwise the publish engine retries and double-posts the video."""
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "video-1"}),
+            MagicMock(json=MagicMock(side_effect=ValueError("not JSON"))),
+        ]
+    )
+
+    result = provider.publish_post(
+        "page-token",
+        PublishContent(
+            text="Video caption",
+            media_urls=["https://cdn.example.com/clip.mp4"],
+            post_type=PostType.VIDEO,
+            extra={"page_id": "page-1"},
+        ),
+    )
+
+    assert result.platform_post_id == "video-1"
+    assert result.url == "https://www.facebook.com/video-1"
+    assert result.extra["video_id"] == "video-1"
+
+
+def test_get_post_fields_does_not_retry_on_non_field_error():
+    """A non-`post_id` error (auth, 5xx, not-found) won't be fixed by dropping
+    post_id, so _get_post_fields must not fire a second doomed request."""
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(side_effect=APIError("(#190) Error validating access token", platform="Facebook"))
+
+    fields = provider._get_post_fields("page-token", "page-1_post-1")
+
+    assert fields == {}
+    assert provider._request.call_count == 1

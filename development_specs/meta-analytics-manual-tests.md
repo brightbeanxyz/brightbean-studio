@@ -30,7 +30,7 @@ IDs/tokens with real values.
 ## Instagram Account Insights
 
 ```text
-/{ig_user_id}/insights?metric=reach,views,profile_views,accounts_engaged,total_interactions&period=day&since={since}&until={until}
+/{ig_user_id}/insights?metric=reach,views,accounts_engaged,total_interactions&period=day&since={since}&until={until}
 ```
 
 ## Instagram Media Fields
@@ -53,3 +53,5 @@ Expected UI checks:
 - Engagement rate is 0 when views and reach are 0.
 - Unsupported metrics log warnings and do not stop the dashboard from loading.
 - 7D, 30D, and 90D filters update totals and chart data.
+- Instagram follower growth derives from the profile `followers_count` total (the deprecated
+  `profile_views` insight is no longer requested, so no per-sync warning for it).

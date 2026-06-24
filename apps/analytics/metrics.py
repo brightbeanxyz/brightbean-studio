@@ -22,7 +22,6 @@ METRICS: dict[str, dict[str, str]] = {
     "saves": {"label": "Saves", "kind": "count"},
     "clicks": {"label": "Link clicks", "kind": "count"},
     "outbound": {"label": "Outbound clicks", "kind": "count"},
-    "profile_visits": {"label": "Profile visits", "kind": "count"},
     "follows": {"label": "New follows", "kind": "count"},
     "followers": {"label": "Followers", "kind": "count"},
     "subscribers": {"label": "Subscribers", "kind": "count"},
@@ -40,9 +39,12 @@ ACCOUNT_ONLY: set[str] = {"follows", "followers", "subscribers"}
 # plan are in place). Verified against each platform's published insights API.
 PLATFORM_METRICS: dict[str, list[str]] = {
     # IG media insights: reach, views (replaced impressions Apr-2025), likes,
-    # comments, saved, shares, total_interactions; follows when daily deltas exist.
-    "instagram": ["reach", "views", "likes", "comments", "saves", "shares", "follows", "engagement"],
-    "instagram_login": ["reach", "views", "likes", "comments", "saves", "shares", "follows", "engagement"],
+    # comments, saved, shares, total_interactions. ``followers`` (total) is
+    # account-only: Meta deprecated the IG ``follower_count`` insight, so we
+    # snapshot the profile follower total and derive growth from day-over-day
+    # deltas (same pattern as TikTok) rather than a per-day ``follows`` metric.
+    "instagram": ["reach", "views", "likes", "comments", "saves", "shares", "followers", "engagement"],
+    "instagram_login": ["reach", "views", "likes", "comments", "saves", "shares", "followers", "engagement"],
     # FB post insights: media views, unique media views, reactions, comments, shares, clicks.
     "facebook": ["views", "reach", "reactions", "comments", "shares", "clicks", "follows", "engagement"],
     # LinkedIn share statistics: impressions, reactions, comments, reposts, clicks, engagement.
