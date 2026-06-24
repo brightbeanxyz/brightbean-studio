@@ -518,7 +518,7 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
     membership = getattr(request, "workspace_membership", None)
     perms = membership.effective_permissions if membership else {}
     can_approve = perms.get("approve_posts", False)
-    is_client = bool(membership) and membership.workspace_role == "client"
+    is_client = bool(membership and membership.workspace_role == "client")
 
     # Batch the expandable-panel comments in one query (avoid a per-post N+1).
     active_replies = PostComment.objects.filter(deleted_at__isnull=True).select_related("author")
