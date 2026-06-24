@@ -472,7 +472,10 @@ class InstagramProvider(SocialProvider):
             },
             endpoint_type="account",
         )
-        followers = self._get_profile_fields(access_token, ig_user_id).get("followers_count", 0)
+        profile = self._get_profile_fields(access_token, ig_user_id)
+        # ``None`` means the fetch FAILED (vs a real 0): leave followers unset so
+        # _account_metrics_to_dict skips it and we don't poison the snapshot with 0.
+        followers = profile.get("followers_count", 0) if profile is not None else None
 
         return AccountMetrics(
             reach=values.get("reach", 0),
@@ -562,7 +565,9 @@ class InstagramProvider(SocialProvider):
             platform=self.platform_name,
         )
 
-    def _get_profile_fields(self, access_token: str, ig_user_id: str) -> dict:
+    def _get_profile_fields(self, access_token: str, ig_user_id: str) -> dict | None:
+        # Returns ``None`` on failure so callers can distinguish a failed fetch
+        # from a successful one with no data (a genuine 0).
         try:
             return self._request(
                 "GET",
@@ -572,7 +577,7 @@ class InstagramProvider(SocialProvider):
             ).json()
         except APIError as exc:
             logger.debug("Instagram profile fields unavailable for %s: %s", ig_user_id, exc)
-            return {}
+            return None
 
     def _get_media_fields(self, access_token: str, media_id: str) -> dict:
         try:

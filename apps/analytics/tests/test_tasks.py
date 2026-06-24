@@ -63,3 +63,55 @@ def test_account_metrics_to_dict_instagram_emits_followers_not_profile_visits():
     assert out["views"] == 70.0
     assert "profile_visits" not in out
     assert "follows" not in out
+
+
+def test_account_metrics_to_dict_skips_followers_when_none():
+    """A failed IG profile fetch yields followers=None; the mapper must skip it so
+    no spurious 0-followers snapshot poisons the growth series."""
+    from apps.analytics.tasks import _account_metrics_to_dict
+    from providers.types import AccountMetrics
+
+    metrics = AccountMetrics(followers=None, reach=50, extra={"views": 70})
+    out = _account_metrics_to_dict(metrics, "instagram")
+
+    assert "followers" not in out
+    assert out["reach"] == 50.0
+    assert out["views"] == 70.0
+
+
+@pytest.mark.django_db
+def test_sync_account_metrics_does_not_backfill_followers_total(workspace):
+    """The cumulative followers total must be written for the current day only, not
+    backfilled into past dates (which would fabricate flat follower history)."""
+    from datetime import date
+    from unittest.mock import MagicMock, patch
+
+    from apps.analytics.models import AccountInsightsSnapshot
+    from apps.analytics.tasks import _sync_account_metrics
+    from providers.types import AccountMetrics
+
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform="instagram",
+        account_platform_id="ig-1",
+        account_name="IG One",
+        oauth_access_token="token",
+        oauth_refresh_token="refresh",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    fake_provider = MagicMock()
+    fake_provider.account_metrics_supports_date_range = True
+    fake_provider.get_account_metrics.return_value = AccountMetrics(followers=1000, reach=5, extra={"views": 7})
+    today = date(2026, 6, 24)
+
+    with patch("apps.analytics.tasks._resolve_provider", return_value=fake_provider):
+        _sync_account_metrics(account, today)
+
+    # Current day persists the followers total...
+    assert AccountInsightsSnapshot.objects.filter(social_account=account, date=today, metric_key="followers").exists()
+    # ...but backfilled past days must NOT (the total isn't a historical value).
+    assert not AccountInsightsSnapshot.objects.filter(
+        social_account=account, date__lt=today, metric_key="followers"
+    ).exists()
+    # Date-ranged metrics ARE still backfilled.
+    assert AccountInsightsSnapshot.objects.filter(social_account=account, date__lt=today, metric_key="reach").exists()

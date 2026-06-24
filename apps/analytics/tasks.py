@@ -231,9 +231,10 @@ def _account_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
     if gained:
         out["follows"] = float(gained)
     # ``followers`` = current total follower count, persisted only when the
-    # platform's catalog lists ``followers`` (today: TikTok). Use ``is not
+    # platform's catalog lists ``followers`` (TikTok, Instagram). Use ``is not
     # None`` so brand-new accounts with 0 followers still get a baseline
-    # snapshot — the chart needs the zero day to render a continuous line.
+    # snapshot — the chart needs the zero day to render a continuous line. A
+    # failed fetch yields ``None`` (not 0), so it is skipped rather than written.
     if "followers" in PLATFORM_METRICS.get(platform, []):
         total_followers = getattr(metrics, "followers", None)
         if total_followers is not None:
@@ -421,9 +422,16 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
             return
         _refresh_follower_count(account, metrics)
         extra = getattr(metrics, "extra", {}) or {}
+        metric_values = _account_metrics_to_dict(metrics, account.platform)
+        if offset > 0:
+            # ``followers`` is a point-in-time cumulative total: the provider
+            # returns today's value regardless of the (start, end) window, so
+            # writing it into a backfilled past date fabricates flat history and
+            # corrupts follower-growth deltas. Persist it for the current day only.
+            metric_values.pop("followers", None)
         _write_account_snapshot(
             account,
-            _account_metrics_to_dict(metrics, account.platform),
+            metric_values,
             target,
             raw=extra.get("raw_insights", {}),
             errors=extra.get("insight_errors", {}),

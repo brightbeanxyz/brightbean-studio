@@ -6,10 +6,8 @@ import logging
 from datetime import datetime
 from urllib.parse import urlencode, urlparse
 
-import httpx
-
 from .base import SocialProvider
-from .exceptions import APIError, OAuthError, PublishError, RateLimitError
+from .exceptions import APIError, OAuthError, PublishError
 from .meta_insights import fetch_insights_safe, parse_insights_response
 from .types import (
     AccountMetrics,
@@ -428,7 +426,11 @@ class FacebookProvider(SocialProvider):
                 access_token=access_token,
                 params={"fields": "post_id,permalink_url"},
             ).json()
-        except (APIError, RateLimitError, httpx.HTTPError) as exc:
+        except Exception as exc:
+            # Best-effort metadata that runs AFTER the video has already
+            # published: nothing here may propagate, or the publish engine would
+            # schedule a retry and double-post the video (e.g. a malformed 2xx
+            # body making .json() raise). Catch broadly; fall back to video_id.
             logger.debug("Facebook video %s post_id unavailable: %s", video_id, exc)
 
         post_id = video_fields.get("post_id") or video_id
@@ -545,6 +547,11 @@ class FacebookProvider(SocialProvider):
                 return fields_resp.json()
             except APIError as exc:
                 logger.debug("Facebook post %s fields unavailable: %s", post_id, exc)
+                if "post_id" not in str(exc):
+                    # Only the invalid-`post_id`-field error is worth retrying
+                    # without it; other errors (auth, 5xx, not-found) fail
+                    # identically, so don't issue a second doomed request.
+                    break
         return {}
 
     @staticmethod

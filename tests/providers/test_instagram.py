@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, call
 
+from providers.exceptions import APIError
 from providers.instagram import InstagramProvider
 from providers.instagram_login import InstagramLoginProvider
 
@@ -289,3 +290,27 @@ def test_instagram_login_account_metrics_use_current_insights_metrics():
             ),
         ]
     )
+
+
+def test_account_metrics_followers_none_when_profile_fetch_fails():
+    """A transient profile-fetch failure must yield followers=None (not 0) so the
+    analytics layer can skip it instead of writing a poisoning 0 snapshot for a
+    real account."""
+    provider = InstagramProvider({"client_id": "id", "client_secret": "secret", "ig_user_id": "ig-1"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"data": [{"name": "reach", "values": [{"value": 12}]}]}),
+            _resp({"data": [{"name": "views", "period": "day", "total_value": {"value": 67}}]}),
+            _resp({"data": [{"name": "accounts_engaged", "values": [{"value": 8}]}]}),
+            _resp({"data": [{"name": "total_interactions", "values": [{"value": 9}]}]}),
+            APIError("(#190) Error validating access token", platform="Instagram"),
+        ]
+    )
+
+    metrics = provider.get_account_metrics(
+        "page-token",
+        (datetime(2026, 6, 18, tzinfo=UTC), datetime(2026, 6, 19, tzinfo=UTC)),
+    )
+
+    assert metrics.followers is None
+    assert metrics.reach == 12

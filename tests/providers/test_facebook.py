@@ -733,3 +733,42 @@ def test_publish_video_treats_metadata_lookup_failures_as_best_effort(lookup_err
     assert result.platform_post_id == "video-1"
     assert result.url == "https://www.facebook.com/video-1"
     assert result.extra["video_id"] == "video-1"
+
+
+def test_publish_video_survives_malformed_metadata_response():
+    """The post-publish metadata GET runs AFTER the video is already live, so a
+    non-API error (e.g. .json() raising on a malformed 2xx body) must NOT
+    propagate — otherwise the publish engine retries and double-posts the video."""
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "video-1"}),
+            MagicMock(json=MagicMock(side_effect=ValueError("not JSON"))),
+        ]
+    )
+
+    result = provider.publish_post(
+        "page-token",
+        PublishContent(
+            text="Video caption",
+            media_urls=["https://cdn.example.com/clip.mp4"],
+            post_type=PostType.VIDEO,
+            extra={"page_id": "page-1"},
+        ),
+    )
+
+    assert result.platform_post_id == "video-1"
+    assert result.url == "https://www.facebook.com/video-1"
+    assert result.extra["video_id"] == "video-1"
+
+
+def test_get_post_fields_does_not_retry_on_non_field_error():
+    """A non-`post_id` error (auth, 5xx, not-found) won't be fixed by dropping
+    post_id, so _get_post_fields must not fire a second doomed request."""
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(side_effect=APIError("(#190) Error validating access token", platform="Facebook"))
+
+    fields = provider._get_post_fields("page-token", "page-1_post-1")
+
+    assert fields == {}
+    assert provider._request.call_count == 1
