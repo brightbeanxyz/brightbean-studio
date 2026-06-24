@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from providers.exceptions import APIError
-from providers.meta_insights import fetch_insights_safe
+from providers.meta_insights import fetch_insights_safe, parse_insights_response
 
 
 def _resp(data):
@@ -60,3 +60,35 @@ def test_fetch_insights_safe_reraises_permission_errors():
         )
 
     assert excinfo.value is permission_error
+
+
+def test_parse_insights_response_prefers_lifetime_when_metric_name_repeats():
+    values = parse_insights_response(
+        {
+            "data": [
+                {
+                    "name": "post_media_view",
+                    "period": "lifetime",
+                    "values": [{"value": 32741}],
+                },
+                {
+                    "name": "post_total_media_view_unique",
+                    "period": "lifetime",
+                    "values": [{"value": 21105}],
+                },
+                {
+                    "name": "post_total_media_view_unique",
+                    "period": "day",
+                    "values": [
+                        {"value": 0, "end_time": "2026-06-21T07:00:00+0000"},
+                        {"value": 0, "end_time": "2026-06-22T07:00:00+0000"},
+                    ],
+                },
+            ]
+        }
+    )
+
+    assert values == {
+        "post_media_view": 32741,
+        "post_total_media_view_unique": 21105,
+    }

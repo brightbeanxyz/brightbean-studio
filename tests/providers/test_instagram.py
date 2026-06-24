@@ -200,8 +200,8 @@ def test_instagram_media_metrics_use_current_metrics_and_field_fallbacks():
 
     metrics = provider.get_post_metrics("page-token", "ig-media-1")
 
-    assert metrics.video_views == 400
-    assert metrics.reach == 250
+    assert metrics.video_views == 250
+    assert metrics.reach == 400
     assert metrics.likes == 12
     assert metrics.comments == 3
     assert metrics.saves == 5

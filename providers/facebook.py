@@ -481,12 +481,12 @@ class FacebookProvider(SocialProvider):
         shares = self._share_count(fields)
 
         return PostMetrics(
-            reach=values.get("post_media_view", 0),
+            reach=values.get("post_total_media_view_unique", 0),
             clicks=values.get("post_clicks", 0),
             likes=0,
             comments=comments,
             shares=shares,
-            video_views=values.get("post_total_media_view_unique", 0),
+            video_views=values.get("post_media_view", 0),
             extra={
                 "reactions": reactions_total,
                 "raw_fields": fields,

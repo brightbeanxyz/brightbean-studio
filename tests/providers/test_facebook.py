@@ -318,8 +318,8 @@ def test_get_post_metrics_uses_v25_media_view_metrics_and_object_counts():
 
     metrics = provider.get_post_metrics("page-token", "page-1_post-1")
 
-    assert metrics.reach == 54
-    assert metrics.video_views == 42
+    assert metrics.reach == 42
+    assert metrics.video_views == 54
     assert metrics.clicks == 4
     assert metrics.likes == 0
     assert metrics.comments == 5
@@ -420,8 +420,8 @@ def test_get_post_metrics_resolves_photo_id_to_feed_post_for_comments_and_shares
 
     metrics = provider.get_post_metrics("page-token", "photo-1")
 
-    assert metrics.reach == 500
-    assert metrics.video_views == 300
+    assert metrics.reach == 300
+    assert metrics.video_views == 500
     assert metrics.clicks == 20
     assert metrics.comments == 4
     assert metrics.shares == 2
@@ -462,8 +462,8 @@ def test_get_post_metrics_tries_page_scoped_feed_id_for_numeric_object_id():
 
     metrics = provider.get_post_metrics("page-token", "1668168861075953")
 
-    assert metrics.reach == 90
-    assert metrics.video_views == 70
+    assert metrics.reach == 70
+    assert metrics.video_views == 90
     assert metrics.comments == 6
     assert metrics.shares == 8
     assert metrics.extra["insight_post_id"] == "page-1_1668168861075953"
@@ -501,8 +501,8 @@ def test_get_post_metrics_tries_next_candidate_when_feed_id_has_no_insights_edge
 
     metrics = provider.get_post_metrics("page-token", "1668168861075953")
 
-    assert metrics.reach == 12
-    assert metrics.video_views == 10
+    assert metrics.reach == 10
+    assert metrics.video_views == 12
     assert metrics.comments == 2
     assert metrics.extra["insight_post_id"] == "1668168861075953"
     assert metrics.extra["attempted_insight_post_ids"] == ["page-1_1668168861075953", "1668168861075953"]
