@@ -54,13 +54,10 @@ PLATFORM_METRICS: dict[str, list[str]] = {
     # YouTube Analytics: views, watch_time, avg_view_pct, likes, comments, shares, subscribers gained.
     "youtube": ["views", "watch_time", "avg_view_pct", "likes", "comments", "shares", "subscribers"],
     # TikTok video metrics: view/like/comment/share counts from /v2/video/query/.
-    # ``followers`` (total) is account-only — TikTok's /v2/user/info/ returns
-    # cumulative counters with no daily delta, so we surface the total rather
-    # than ``follows`` (which is defined as "new follows" per day). watch_time
-    # is intentionally absent: /v2/video/query/ doesn't expose it per-video
-    # and TikTok has no public per-video Analytics-style endpoint yet — listing
-    # it would render an always-zero chart and mislead users.
-    "tiktok": ["views", "likes", "comments", "shares", "followers", "engagement"],
+    # Account-level followers require ``user.info.stats``, which we don't request.
+    # watch_time is intentionally absent: TikTok has no public per-video
+    # Analytics-style endpoint for it yet.
+    "tiktok": ["views", "likes", "comments", "shares", "engagement"],
     # Bluesky / AT Protocol post aggregates: like, repost, reply counts (no impressions/views).
     "bluesky": ["likes", "reposts", "replies", "follows"],
     # Threads insights: views, likes, replies, reposts; account follower growth.

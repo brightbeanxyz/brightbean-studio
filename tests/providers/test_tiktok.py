@@ -1,4 +1,4 @@
-"""Tests for TikTokProvider analytics methods (video.list + user.info.stats)."""
+"""Tests for TikTokProvider analytics methods (video.list)."""
 
 import hashlib
 from datetime import UTC, datetime
@@ -28,6 +28,13 @@ def _date_range() -> tuple[datetime, datetime]:
 class TestGetAuthUrl:
     def test_provider_declares_pkce(self):
         assert TikTokProvider({"client_key": "k", "client_secret": "s"}).uses_pkce is True
+
+    def test_scopes_are_publish_plus_video_analytics_only(self):
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        url = provider.get_auth_url("https://app.example/cb", "state-123")
+
+        query = parse_qs(urlsplit(url).query)
+        assert query["scope"] == ["user.info.basic,video.publish,video.upload,video.list"]
 
     def test_includes_pkce_challenge_when_verifier_given(self):
         provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
@@ -302,92 +309,27 @@ class TestGetPostMetrics:
 
 class TestGetAccountMetrics:
     @patch.object(TikTokProvider, "_request")
-    def test_request_shape(self, mock_request):
-        mock_request.return_value = _make_response({"data": {"user": {}}})
-
+    def test_returns_empty_without_user_info_request(self, mock_request):
+        # TikTok analytics is video-only. Account follower totals require
+        # user.info.stats, which OAuth no longer requests.
         provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
-        provider.get_account_metrics("token-xyz", _date_range())
+        metrics = provider.get_account_metrics("token-xyz", _date_range())
 
-        assert mock_request.call_count == 1
-        args, kwargs = mock_request.call_args
-        assert args[0] == "GET"
-        assert args[1] == "https://open.tiktokapis.com/v2/user/info/"
-        assert kwargs["access_token"] == "token-xyz"
-        # date_range is intentionally NOT sent — /v2/user/info/ returns
-        # lifetime totals with no range filter. Only follower_count is
-        # requested; the other user.info.stats fields (likes_count etc.)
-        # are lifetime cumulatives that would inflate engagement_rate if
-        # snapshotted as daily values.
-        assert kwargs["params"] == {"fields": "follower_count"}
-
-    @patch.object(TikTokProvider, "_request")
-    def test_parses_followers(self, mock_request):
-        mock_request.return_value = _make_response({"data": {"user": {"follower_count": 4200}}})
-
-        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
-        metrics = provider.get_account_metrics("token", _date_range())
-
-        assert metrics.followers == 4200
-        # No extras — TikTok's other lifetime counters would corrupt
-        # engagement_rate if treated as per-day values, so they're not
-        # surfaced until a daily-delta endpoint exists.
+        assert metrics.followers is None
         assert metrics.extra == {}
+        mock_request.assert_not_called()
 
-    @patch.object(TikTokProvider, "_request")
-    def test_zero_followers_still_returns_metrics(self, mock_request):
-        # Brand-new accounts can legitimately have 0 followers; the
-        # AccountMetrics object MUST still carry that value (not None) so
-        # `_account_metrics_to_dict` writes a baseline snapshot.
-        mock_request.return_value = _make_response({"data": {"user": {"follower_count": 0}}})
-
-        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
-        metrics = provider.get_account_metrics("token", _date_range())
-
-        assert metrics.followers == 0
-
-    @patch.object(TikTokProvider, "_request")
-    def test_missing_user_block_returns_empty(self, mock_request):
-        # Defensive: malformed response shouldn't raise — empty AccountMetrics
-        # lets the sync layer treat it as "no data".
-        mock_request.return_value = _make_response({})
-
-        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
-        metrics = provider.get_account_metrics("token", _date_range())
-
-        assert metrics.followers == 0
-        assert metrics.extra == {}
-
-    @patch.object(TikTokProvider, "_request")
-    def test_non_numeric_follower_count_does_not_raise(self, mock_request):
-        # Defensive: if TikTok ever returns a non-coercible value (legacy
-        # locales have been seen to return abbreviated strings like "4.2K"),
-        # the provider must not abort the whole sync — fall back to 0.
-        mock_request.return_value = _make_response({"data": {"user": {"follower_count": "unavailable"}}})
-
-        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
-        metrics = provider.get_account_metrics("token", _date_range())
-
-        assert metrics.followers == 0
-
-    @patch.object(TikTokProvider, "_request")
-    def test_does_not_supports_date_range(self, _mock_request):
-        # The sync layer reads this flag to skip the 3-day backfill loop
-        # for providers whose stats endpoint ignores date_range — otherwise
-        # TikTok's lifetime totals would be replayed into past dates as
-        # if they were historical observations.
+    def test_does_not_supports_date_range(self):
+        # This remains false because account metrics are not date-ranged and
+        # currently not fetched at all.
         provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
         assert provider.account_metrics_supports_date_range is False
 
 
 class TestAccountMetricsPersistence:
-    """Integration check: TikTok ``AccountMetrics`` actually persist to snapshots.
+    """Integration checks for TikTok's video-only analytics catalog."""
 
-    Without these checks, the provider can silently return well-formed
-    ``AccountMetrics`` that the catalog mapper drops on the floor — exactly
-    the Codex finding for issue 2.
-    """
-
-    def test_tiktok_followers_persists(self):
+    def test_tiktok_followers_are_not_persisted(self):
         from apps.analytics.tasks import _account_metrics_to_dict
         from providers.types import AccountMetrics
 
@@ -395,53 +337,23 @@ class TestAccountMetricsPersistence:
 
         out = _account_metrics_to_dict(metrics, "tiktok")
 
-        # Total follower count snapshots under the ``followers`` key the
-        # catalog mapper persists for platforms that list it.
-        assert out["followers"] == 4200.0
-
-    def test_tiktok_zero_followers_persists(self):
-        # Brand-new TikTok account: 0 followers must still be persisted
-        # so the chart series has a baseline (not a gap that jumps to
-        # the first non-zero value).
-        from apps.analytics.tasks import _account_metrics_to_dict
-        from providers.types import AccountMetrics
-
-        metrics = AccountMetrics(followers=0)
-
-        out = _account_metrics_to_dict(metrics, "tiktok")
-
-        assert out["followers"] == 0.0
+        assert "followers" not in out
 
     def test_followers_not_persisted_for_platforms_without_catalog_entry(self):
-        # Facebook/LinkedIn surface follower *growth* via the daily-delta
-        # ``follows`` key (e.g. FB ``page_daily_follows_unique``) and their
-        # catalogs don't list ``followers``, so the lifetime total must not be
-        # persisted under the ``followers`` key. The catalog-membership gate
-        # prevents that leak; this test pins the contract. (Instagram
-        # intentionally DOES persist ``followers`` now — its catalog lists it so
-        # growth derives from the daily total, same as TikTok.)
         from apps.analytics.tasks import _account_metrics_to_dict
         from providers.types import AccountMetrics
 
         metrics = AccountMetrics(followers=42)
 
-        for platform in ("facebook", "linkedin_company"):
+        for platform in ("facebook", "linkedin_company", "tiktok"):
             out = _account_metrics_to_dict(metrics, platform)
             assert "followers" not in out, f"unexpected followers leak for {platform}"
 
-    def test_tiktok_follower_growth_metric_resolves(self):
-        # Regression guard for the catalog-swap bug: when TikTok's catalog
-        # was changed from ``follows`` to ``followers``, the existing
-        # follower_growth_metric iteration over (``subscribers``, ``follows``)
-        # returned None for TikTok, hiding the new follower data from the
-        # analytics header.
-        from apps.analytics.metrics import PLATFORM_METRICS
+    def test_tiktok_catalog_is_video_only(self):
+        from apps.analytics.metrics import PLATFORM_METRICS, post_metrics_for
 
-        platform_metrics = PLATFORM_METRICS["tiktok"]
-        assert any(m in platform_metrics for m in ("subscribers", "follows", "followers")), (
-            "TikTok must list one of the account-level growth metrics for "
-            "follower_growth_metric to surface follower data in the UI header"
-        )
+        assert PLATFORM_METRICS["tiktok"] == ["views", "likes", "comments", "shares", "engagement"]
+        assert post_metrics_for("tiktok") == ["views", "likes", "comments", "shares", "engagement"]
 
 
 CREATOR_INFO_URL = "https://open.tiktokapis.com/v2/post/publish/creator_info/query/"

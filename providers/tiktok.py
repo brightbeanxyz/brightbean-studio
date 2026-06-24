@@ -143,12 +143,9 @@ class TikTokProvider(SocialProvider):
 
     @property
     def analytics_only_scopes(self) -> list[str]:
-        # ``video.list`` lets us read per-video stats; ``user.info.profile`` +
-        # ``user.info.stats`` enable account-level totals via /v2/user/info/.
-        # All three are gated behind the analytics platform toggle so a
-        # publish-only TikTok app (whose review hasn't approved them yet)
-        # can still connect accounts.
-        return ["user.info.profile", "user.info.stats", "video.list"]
+        # ``video.list`` lets us read per-video stats. Keep TikTok analytics
+        # video-only so sandbox apps don't need the profile/stat scopes.
+        return ["video.list"]
 
     @property
     def rate_limits(self) -> RateLimitConfig:
@@ -583,41 +580,14 @@ class TikTokProvider(SocialProvider):
         )
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
-        """Account-level totals from ``/v2/user/info/``.
+        """TikTok account-level analytics are intentionally disabled.
 
-        Requires ``user.info.profile`` + ``user.info.stats``. TikTok exposes
-        only lifetime cumulative counters here (no daily delta), so the
-        ``date_range`` argument is accepted for signature parity with other
-        providers but not sent to the API; the sync layer keys snapshots by
-        the calling date.
-
-        Only ``follower_count`` is propagated — into
-        :attr:`AccountMetrics.followers`, which
-        :func:`apps.analytics.tasks._account_metrics_to_dict` writes as the
-        ``"followers"`` snapshot key for platforms whose
-        ``PLATFORM_METRICS`` lists it. The other ``/v2/user/info/`` fields
-        (``likes_count``, ``video_count``, ``following_count``) are
-        intentionally NOT mapped to ``extra``: their semantics are LIFETIME
-        TOTALS but the analytics catalog mapper's recognised extras
-        (``likes``, ``comments``, ``shares``, …) are DAILY values that
-        :func:`apps.analytics.derive.engagement_rate` sums across the
-        window — feeding a cumulative total in would inflate the rate by N
-        days. If TikTok exposes a daily-delta endpoint in the future, those
-        fields can land here under the correct keys.
+        The implemented TikTok analytics surface is video-only and relies on
+        ``video.list``. Follower totals require ``user.info.stats``, which we
+        do not request, so this returns an empty metrics object.
         """
-        del date_range  # /v2/user/info/ returns lifetime totals, no range filter.
-        resp = self._request(
-            "GET",
-            f"{API_BASE}/user/info/",
-            access_token=access_token,
-            params={"fields": "follower_count"},
-        )
-        body = resp.json()
-        user = body.get("data", {}).get("user", {}) or {}
-        followers = 0
-        with contextlib.suppress(TypeError, ValueError):
-            followers = int(user.get("follower_count", 0) or 0)
-        return AccountMetrics(followers=followers)
+        del access_token, date_range
+        return AccountMetrics(followers=None)
 
     # ------------------------------------------------------------------
     # Token management
