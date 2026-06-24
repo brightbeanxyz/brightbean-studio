@@ -340,6 +340,30 @@ class PublishedPostLeavesQueueTest(TestCase):
         # The QueueEntry is gone (slot freed), but the PlatformPost remains.
         self.assertFalse(QueueEntry.objects.filter(id=self.entry.id).exists())
 
+    def test_publish_success_stores_response_extra_on_platform_extra(self):
+        from apps.composer.models import PlatformPost
+
+        self.pp.platform_extra = {"post_type": "text"}
+        self.pp.save(update_fields=["platform_extra"])
+
+        engine = PublishEngine()
+        success = {
+            "success": True,
+            "platform_post_id": "post-1",
+            "status_code": 200,
+            "response": {"id": "page-1_post-1", "tracking": {"source": "graph"}},
+        }
+        with patch.object(PublishEngine, "_dispatch_to_provider", return_value=success):
+            engine._publish_platform_post(self.pp)
+
+        self.pp.refresh_from_db()
+        self.assertEqual(self.pp.status, PlatformPost.Status.PUBLISHED)
+        self.assertEqual(self.pp.platform_post_id, "post-1")
+        self.assertEqual(
+            self.pp.platform_extra,
+            {"post_type": "text", "id": "page-1_post-1", "tracking": {"source": "graph"}},
+        )
+
     def test_publish_success_survives_queue_cleanup_failure(self):
         from apps.composer.models import PlatformPost
 
