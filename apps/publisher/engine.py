@@ -82,6 +82,8 @@ def _resolve_publish_credentials(account):
                 "Bluesky PDS URL failed SSRF check for account %s",
                 account.id,
             )
+    elif platform == "facebook":
+        credentials["page_id"] = account.account_platform_id
     elif platform == "instagram":
         credentials["ig_user_id"] = account.account_platform_id
 
