@@ -305,8 +305,10 @@ def resume_hold(target, user, workspace):
 
 
 def resubmit_post(target, user, workspace):
-    """Resubmit a post or single platform post after changes/rejection."""
-    post, targets, is_bundled = _resolve_targets(target, eligible_from_states={"changes_requested", "rejected"})
+    """Resubmit a post after changes/rejection — or re-review an edited approved post."""
+    post, targets, is_bundled = _resolve_targets(
+        target, eligible_from_states={"changes_requested", "rejected", "approved"}
+    )
 
     moved = []
     with transaction.atomic():

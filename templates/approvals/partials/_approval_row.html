@@ -104,7 +104,7 @@ can_approve, display_timezone, and the parent Alpine scope (selectedPosts, diffO
                     class="px-3 py-1.5 text-[0.8125rem] font-semibold rounded-full border transition-colors"
                     :class="panel ? 'border-stone-300 bg-stone-50 text-stone-700' : 'border-stone-200 text-stone-600 hover:bg-stone-50'">Review</button>
         </div>
-        {% elif post.status == 'changes_requested' %}
+        {% elif post.status == 'changes_requested' or post.status == 'rejected' or post.status == 'approved' %}
         <div class="flex items-center gap-1.5 flex-shrink-0">
             <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=post.id %}"
                class="px-3.5 py-1.5 text-[0.8125rem] font-semibold rounded-full text-white inline-flex items-center gap-1.5 transition-colors" style="background: var(--primary);">

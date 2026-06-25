@@ -217,3 +217,46 @@ class HoldPublishGuardTests(ApprovalWorkflowBase):
         PublishEngine()._publish_post_group(sched.post, [sched])
         sched.refresh_from_db()
         self.assertEqual(sched.status, "scheduled")
+
+
+class ApprovedEditReReviewTests(ApprovalWorkflowBase):
+    """Editing an approved post must send it back for re-approval (Option A)."""
+
+    def setUp(self):
+        super().setUp()
+        self.post = self._post("approved")
+        self.client.force_login(self.author)
+        self.save_url = reverse("composer:save_post_edit", kwargs={"workspace_id": self.ws.id, "post_id": self.post.id})
+
+    def _payload(self, **overrides):
+        data = {
+            "action": "save_draft",
+            "title": "",
+            "caption": self.post.caption,
+            "tags": "",
+            "selected_accounts": str(self.account.id),
+        }
+        data.update(overrides)
+        return data
+
+    def test_resubmit_service_accepts_approved(self):
+        services.resubmit_post(self.post, self.author, self.ws)
+        self.assertEqual(self.post.platform_posts.get().status, "pending_review")
+
+    def test_editing_approved_post_reverts_to_pending_review(self):
+        resp = self.client.post(self.save_url, data=self._payload(caption="A meaningfully edited caption"))
+        self.assertIn(resp.status_code, (200, 204, 302))
+        self.assertEqual(self.post.platform_posts.get().status, "pending_review")
+
+    def test_unchanged_save_keeps_approved(self):
+        resp = self.client.post(self.save_url, data=self._payload())
+        self.assertIn(resp.status_code, (200, 204, 302))
+        self.assertEqual(self.post.platform_posts.get().status, "approved")
+
+    def test_autosave_edit_reverts_approved(self):
+        url = reverse("composer:autosave_edit", kwargs={"workspace_id": self.ws.id, "post_id": self.post.id})
+        resp = self.client.post(
+            url, data={"title": "", "caption": "Autosaved different text", "selected_accounts": str(self.account.id)}
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.post.platform_posts.get().status, "pending_review")

@@ -363,7 +363,7 @@ class PlatformPost(models.Model):
     VALID_TRANSITIONS = {
         "draft": {"pending_review", "scheduled", "publishing"},
         "pending_review": {"approved", "changes_requested", "rejected"},
-        "approved": {"pending_client", "scheduled", "publishing", "draft", "on_hold"},
+        "approved": {"pending_client", "scheduled", "publishing", "draft", "on_hold", "pending_review"},
         "pending_client": {"approved", "changes_requested", "rejected"},
         "changes_requested": {"pending_review", "draft"},
         "rejected": {"draft", "pending_review"},

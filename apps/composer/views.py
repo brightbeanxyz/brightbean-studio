@@ -467,8 +467,10 @@ def compose(request, workspace_id, post_id=None):
 
     # Approval workflow context
     workflow_mode = workspace.approval_workflow_mode
-    show_submit_button = workflow_mode != "none"
-    show_resubmit_button = any(pp.status in ("changes_requested", "rejected") for pp in platform_post_list)
+    show_resubmit_button = any(pp.status in ("changes_requested", "rejected", "approved") for pp in platform_post_list)
+    # Fresh drafts get "Submit for Approval"; posts already in the workflow
+    # (changes-requested / rejected / approved-but-edited) get "Resubmit" instead.
+    show_submit_button = workflow_mode != "none" and not show_resubmit_button
     # Once the post is committed to publishing, the Schedule Post panel re-times
     # a live schedule; while still a draft it captures a *proposed* time on save.
     # Mirror _capture_proposed_publish_at's guard exactly (scheduled_at OR a
@@ -629,6 +631,28 @@ def _transition_post_children(post, target, *, allow_via_draft=True, only=None):
     return moved, skipped
 
 
+def _base_content_snapshot(post):
+    """Reviewable base content used to detect edits to an approved post."""
+    return (post.title, post.caption, post.first_comment, tuple(post.tags or []))
+
+
+def _revert_approved_to_review(post):
+    """Option A: editing an approved post's content sends it back for re-approval.
+
+    Silently reverts any ``approved`` children to ``pending_review`` so edited
+    content can't publish without a fresh review. (The explicit "Resubmit for
+    review" button additionally notifies reviewers; this is the safety net for
+    plain saves/autosaves.) Returns the reverted children.
+    """
+    reverted = []
+    for pp in post.platform_posts.all():
+        if pp.status == "approved" and pp.can_transition_to("pending_review"):
+            pp.transition_to("pending_review")
+            pp.save(update_fields=["status", "published_at", "updated_at"])
+            reverted.append(pp)
+    return reverted
+
+
 def _platform_status_map(post):
     """Return ``{platform_post_id: status}`` for HTMX response headers."""
     return {str(pp.id): pp.status for pp in post.platform_posts.all()}
@@ -697,8 +721,10 @@ def save_post(request, workspace_id, post_id=None):
         perms = membership.effective_permissions if membership else {}
         if post.author != request.user and not perms.get("edit_others_posts", False):
             raise PermissionDenied("You do not have permission to edit this post.")
+        _orig_content = _base_content_snapshot(post)
         form = PostForm(request.POST, instance=post)
     else:
+        _orig_content = None
         form = PostForm(request.POST)
 
     if not form.is_valid():
@@ -940,6 +966,10 @@ def save_post(request, workspace_id, post_id=None):
     # save_draft — children that are already mid-workflow stay put).
     if pending_target:
         _transition_post_children(post, pending_target, only=scoped_ids)
+    # Option A: a plain save (no workflow action) that changed an approved post's
+    # content sends it back for re-approval, so edits can't publish un-reviewed.
+    elif _orig_content is not None and _base_content_snapshot(post) != _orig_content:
+        _revert_approved_to_review(post)
 
     # Save version
     _save_version(post, request.user)
@@ -1025,6 +1055,7 @@ def autosave(request, workspace_id, post_id=None):
     workspace = _get_workspace(request, workspace_id)
 
     is_new = False
+    orig_content = None
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
         # Enforce edit permissions on existing posts
@@ -1032,6 +1063,7 @@ def autosave(request, workspace_id, post_id=None):
         perms = membership.effective_permissions if membership else {}
         if post.author != request.user and not perms.get("edit_others_posts", False):
             raise PermissionDenied("You do not have permission to edit this post.")
+        orig_content = _base_content_snapshot(post)
     else:
         # Check if a previous autosave already created a draft for this session
         # by looking for the post_id passed from the client
@@ -1082,6 +1114,11 @@ def autosave(request, workspace_id, post_id=None):
             post=post,
             social_account_id=acc_id,
         )
+
+    # Option A: an autosave that changed an approved post's content reverts it to
+    # pending_review so edited content can't publish without a fresh review.
+    if orig_content is not None and _base_content_snapshot(post) != orig_content:
+        _revert_approved_to_review(post)
 
     return HttpResponse(
         f'<span class="text-xs text-gray-400">Saved {timezone.now().strftime("%H:%M")}</span>',

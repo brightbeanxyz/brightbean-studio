@@ -1415,6 +1415,11 @@
                 <svg class="w-4 h-4 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                 <span class="text-sm font-medium text-red-700">Rejected - edit and resubmit or delete</span>
             </div>
+            {% elif post.status == 'approved' %}
+            <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-teal-50 border border-teal-100 mb-3">
+                <svg class="w-4 h-4 text-teal-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span class="text-sm font-medium text-teal-700">Approved - saving changes sends it back for re-approval</span>
+            </div>
             {% endif %}
 
             <!-- Reviewer feedback to address (latest changes-requested / rejected comment) -->
