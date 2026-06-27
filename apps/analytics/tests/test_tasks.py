@@ -157,3 +157,44 @@ def test_sync_account_metrics_recovers_followers_from_later_offset(workspace):
     assert not AccountInsightsSnapshot.objects.filter(
         social_account=account, date__lt=today, metric_key="followers"
     ).exists()
+
+
+@pytest.mark.django_db
+def test_sync_account_metrics_refreshes_empty_follower_count_when_today_rows_exist(workspace):
+    """Existing daily account snapshots must not strand the header follower total
+    at 0. This commonly affects Facebook accounts connected before
+    ``followers_count`` was persisted during page selection.
+    """
+    from datetime import date
+    from unittest.mock import MagicMock, patch
+
+    from apps.analytics.models import AccountInsightsSnapshot
+    from apps.analytics.tasks import _sync_account_metrics
+    from providers.types import AccountMetrics
+
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform="facebook",
+        account_platform_id="page-1",
+        account_name="FB One",
+        follower_count=0,
+        oauth_access_token="token",
+        oauth_refresh_token="refresh",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    today = date(2026, 6, 24)
+    AccountInsightsSnapshot.objects.create(
+        social_account=account,
+        date=today,
+        metric_key="views",
+        value=10,
+    )
+    fake_provider = MagicMock()
+    fake_provider.account_metrics_supports_date_range = True
+    fake_provider.get_account_metrics.return_value = AccountMetrics(followers=1234, followers_gained=2)
+
+    with patch("apps.analytics.tasks._resolve_provider", return_value=fake_provider):
+        _sync_account_metrics(account, today)
+
+    account.refresh_from_db()
+    assert account.follower_count == 1234

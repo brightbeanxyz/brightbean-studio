@@ -380,6 +380,12 @@ _POST_NON_CADENCE_METRICS_BY_PLATFORM: dict[str, frozenset[str]] = {
     "youtube": frozenset({"watch_time", "avg_view_pct", "shares"}),
 }
 
+_FOLLOWER_TOTAL_REFRESH_PLATFORMS: frozenset[str] = frozenset({"facebook", "instagram", "instagram_login"})
+
+
+def _needs_empty_follower_count_refresh(account) -> bool:
+    return account.follower_count <= 0 and account.platform in _FOLLOWER_TOTAL_REFRESH_PLATFORMS
+
 
 def _sync_account_metrics(account, on_date: dt_date) -> None:
     """Fetch account-level metrics for ``on_date`` and any recent missing days.
@@ -415,7 +421,9 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
     current_followers = None
     for offset in range(recent_days):
         target = on_date - timedelta(days=offset)
-        if AccountInsightsSnapshot.objects.filter(social_account=account, date=target).exists():
+        has_rows_for_day = AccountInsightsSnapshot.objects.filter(social_account=account, date=target).exists()
+        needs_current_follower_refresh = target == on_date and _needs_empty_follower_count_refresh(account)
+        if has_rows_for_day and not needs_current_follower_refresh:
             continue
         start = datetime.combine(target, time.min, tzinfo=tz)
         end = datetime.combine(target, time.max, tzinfo=tz)
@@ -687,9 +695,9 @@ def sync_all_account_analytics() -> None:
         # backfill (see backfill_account_analytics), so the cron resumes on its
         # own. The per-post Data-API loop below still runs (it uses the
         # publish/read scopes the account already has).
-        if (
-            not account.analytics_needs_reconnect
-            and not AccountInsightsSnapshot.objects.filter(social_account=account, date=today).exists()
+        has_today_rows = AccountInsightsSnapshot.objects.filter(social_account=account, date=today).exists()
+        if not account.analytics_needs_reconnect and (
+            not has_today_rows or _needs_empty_follower_count_refresh(account)
         ):
             _sync_account_metrics(account, today)
 
