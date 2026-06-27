@@ -4,7 +4,23 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
 {% endcomment %}
 {% load tz %}
 
-<div{% if is_htmx %} class="tab-slide-in"{% endif %}>
+<div x-data="{ selectedPosts: [] }"{% if is_htmx %} class="tab-slide-in"{% endif %}>
+    <!-- Bulk Actions Header -->
+    <div class="flex items-center gap-3 mb-3">
+        <select x-ref="queueBulkSelect" class="text-[0.8125rem] px-3 py-1.5 rounded-lg border border-stone-200 bg-white text-stone-700 focus:outline-none" :disabled="selectedPosts.length === 0">
+            <option value="">Bulk Actions</option>
+            <option value="delete">Delete</option>
+        </select>
+        <button @click="
+            const val = $refs.queueBulkSelect.value;
+            if (!val || selectedPosts.length === 0) return;
+            if (val === 'delete') $refs.queueBulkDeleteModal.showModal();
+        " class="px-3 py-1.5 text-[0.8125rem] font-medium rounded-full transition-colors"
+           :class="selectedPosts.length === 0 ? 'bg-stone-100 text-stone-400 cursor-not-allowed' : 'bg-stone-900 text-white hover:bg-stone-800 cursor-pointer'"
+        >Apply</button>
+        <span x-show="selectedPosts.length > 0" x-cloak class="text-sm text-stone-500" x-text="selectedPosts.length + ' selected'"></span>
+    </div>
+
     {% if platform_posts %}
     {% regroup platform_posts by effective_at.date as date_groups %}
     {% for group in date_groups %}
@@ -16,7 +32,14 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
 
         <div class="space-y-4">
             {% for pp in group.list %}
-            <div class="flex gap-4">
+            <div class="flex gap-4 items-start">
+                <!-- Checkbox column -->
+                <div class="pt-6 shrink-0">
+                    <input type="checkbox" value="{{ pp.id }}" @change="if($el.checked){if(!selectedPosts.includes($el.value))selectedPosts.push($el.value)}else{selectedPosts=selectedPosts.filter(v=>v!==$el.value)}"
+                           class="post-checkbox w-4 h-4 rounded border-stone-300 cursor-pointer"
+                           style="accent-color: var(--primary);"
+                           @click.stop>
+                </div>
                 <!-- Left: time + source -->
                 <div class="w-20 shrink-0 pt-3 text-right">
                     <div class="text-sm font-semibold text-stone-700 tabular-nums">
@@ -65,6 +88,11 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
                                     </div>
                                 </div>
                                 {% endif %}
+                                {% if pp.post.media_attachments.count > 1 %}
+                                <div class="absolute bottom-0 right-0 bg-black/60 text-white text-[9px] font-bold px-1 rounded-tl">
+                                    +{{ pp.post.media_attachments.count|add:"-1" }}
+                                </div>
+                                {% endif %}
                             </div>
                             {% endfor %}
                             {% with extra=pp.post.media_attachments.count %}
@@ -89,7 +117,44 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
                                 <svg class="w-3.5 h-3.5 rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
                                 Publish
                             </a>
-                            {% include "calendar/partials/_post_actions_menu.html" with post_id=pp.post_id account_id=pp.social_account_id %}
+                            <div x-data="{ open: false, menuStyle: {} }" class="relative"
+                                 @click.outside="open = false"
+                                 @scroll.window="open = false"
+                                 @keydown.escape.window="open = false">
+                                <button @click.stop="
+                                    open = !open;
+                                    if (open) {
+                                        const r = $el.getBoundingClientRect();
+                                        menuStyle = { position: 'fixed', top: (r.bottom + 4) + 'px', left: (r.right - 144) + 'px', zIndex: 9999 };
+                                    }
+                                "
+                                        class="p-1.5 rounded-full border border-stone-200 text-stone-400 hover:border-stone-300 hover:text-stone-600 transition-colors cursor-pointer">
+                                    <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><circle cx="10" cy="4" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="10" cy="16" r="1.5"/></svg>
+                                </button>
+                                <template x-teleport="body">
+                                    <div x-show="open"
+                                         :style="menuStyle"
+                                         @click.outside="open = false"
+                                         x-transition:enter="transition ease-out duration-100"
+                                         x-transition:enter-start="opacity-0 scale-95"
+                                         x-transition:enter-end="opacity-100 scale-100"
+                                         x-transition:leave="transition ease-in duration-75"
+                                         x-transition:leave-start="opacity-100 scale-100"
+                                         x-transition:leave-end="opacity-0 scale-95"
+                                         class="w-36 bg-white rounded-xl border border-stone-200 shadow-lg py-1">
+                                        <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}"
+                                           class="flex items-center gap-2 px-3 py-2 text-sm text-stone-700 hover:bg-stone-50 transition-colors">
+                                            <svg class="w-4 h-4 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                                            Edit
+                                        </a>
+                                        <button @click.stop="open = false; $dispatch('open-delete-modal', { postId: '{{ pp.post_id }}', accountId: '{{ pp.social_account_id }}' })"
+                                                class="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors cursor-pointer">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                            Delete
+                                        </button>
+                                    </div>
+                                </template>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -104,7 +169,7 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
     {% else %}
     <div class="text-center py-20 px-6">
         <div class="w-16 h-16 mx-auto rounded-2xl bg-stone-100 flex items-center justify-center mb-4">
-            <svg class="w-7 h-7 text-stone-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <svg class="w-7 h-7 text-stone-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
         </div>
         <p class="text-sm font-medium text-stone-500 mb-1">No queued posts</p>
         <p class="text-xs text-stone-400 mb-5 max-w-[240px] mx-auto">Queued posts will appear here when you queue them</p>
@@ -116,6 +181,108 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
     </div>
     {% endif %}
     {% endif %}
-</div>
 
-{% include "calendar/partials/_delete_post_modal.html" %}
+    <!-- Hidden HTMX Bulk Form -->
+    <form x-ref="queueBulkForm" class="hidden"></form>
+
+    <!-- Bulk Delete Confirmation Modal -->
+    <dialog x-ref="queueBulkDeleteModal" class="rounded-xl shadow-xl p-0 max-w-lg w-full backdrop:bg-black/30 border-0">
+        <form method="dialog" class="p-6">
+            <h3 class="text-lg font-bold text-stone-900 mb-2">Delete Selected Posts</h3>
+            <p class="text-sm text-stone-600 mb-4">
+                You are about to delete <strong x-text="selectedPosts.length"></strong> post(s) and their associated publishing tasks.
+                This action is irreversible. Proceed?
+            </p>
+            <div class="flex justify-end gap-2">
+                <button type="button" @click="$refs.queueBulkDeleteModal.close()"
+                        class="px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-100 rounded-full transition-colors">Cancel</button>
+                <button type="submit"
+                        class="px-5 py-2 text-sm font-semibold text-white rounded-full bg-red-500 hover:bg-red-600 transition-colors"
+                        @click="
+                            $refs.queueBulkDeleteModal.close();
+                            const form = $refs.queueBulkForm;
+                            form.innerHTML = '';
+                            selectedPosts.forEach(function(id) {
+                                const inp = document.createElement('input');
+                                inp.type = 'hidden';
+                                inp.name = 'platform_post_ids';
+                                inp.value = id;
+                                form.appendChild(inp);
+                            });
+                            const actionInp = document.createElement('input');
+                            actionInp.type = 'hidden';
+                            actionInp.name = 'action';
+                            actionInp.value = 'delete';
+                            form.appendChild(actionInp);
+                            const tabInp = document.createElement('input');
+                            tabInp.type = 'hidden';
+                            tabInp.name = 'current_tab';
+                            tabInp.value = 'queue';
+                            form.appendChild(tabInp);
+                            htmx.trigger(form, 'submit');
+                            selectedPosts = [];
+                        ">
+                    Delete <span x-text="selectedPosts.length"></span> Post(s)
+                </button>
+            </div>
+        </form>
+    </dialog>
+
+    <!-- Single-delete modal (existing) -->
+    <div x-data="{ showDeleteModal: false, deletePostId: null, deleteAccountId: null, deleting: false }" style="display: contents;"
+         @open-delete-modal.window="showDeleteModal = true; deletePostId = $event.detail.postId; deleteAccountId = $event.detail.accountId || null">
+        <template x-teleport="body">
+            <div x-show="showDeleteModal" class="fixed inset-0 z-[60] flex items-center justify-center"
+                 @keydown.escape.window="showDeleteModal = false"
+                 style="display: none;">
+                <div class="fixed inset-0 bg-black/30 backdrop-blur-sm" @click="showDeleteModal = false"
+                     x-show="showDeleteModal"
+                     x-transition:enter="transition ease-out duration-150"
+                     x-transition:enter-start="opacity-0"
+                     x-transition:enter-end="opacity-100"
+                     x-transition:leave="transition ease-in duration-100"
+                     x-transition:leave-start="opacity-100"
+                     x-transition:leave-end="opacity-0"></div>
+                <div class="relative bg-white rounded-2xl shadow-xl border border-stone-200 p-6 w-full max-w-sm mx-4"
+                     x-show="showDeleteModal"
+                     x-transition:enter="transition ease-out duration-150"
+                     x-transition:enter-start="opacity-0 scale-95"
+                     x-transition:enter-end="opacity-100 scale-100"
+                     x-transition:leave="transition ease-in duration-100"
+                     x-transition:leave-start="opacity-100 scale-100"
+                     x-transition:leave-end="opacity-0 scale-95">
+                    <div class="text-center">
+                        <div class="w-12 h-12 mx-auto rounded-full bg-red-50 flex items-center justify-center mb-4">
+                            <svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        </div>
+                        <h3 class="text-base font-semibold text-stone-900 mb-1">Delete post?</h3>
+                        <p class="text-sm text-stone-500 mb-6">This action cannot be undone. The post and all associated data will be permanently removed.</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <button @click="showDeleteModal = false"
+                                class="flex-1 px-4 py-2 text-sm font-semibold text-stone-700 bg-stone-100 rounded-full hover:bg-stone-200 transition-colors cursor-pointer">
+                            Cancel
+                        </button>
+                        <button :disabled="deleting"
+                                @click="
+                                    deleting = true;
+                                    const acctParam = deleteAccountId ? '?account=' + deleteAccountId : '';
+                                    fetch('/workspace/{{ workspace.id }}/compose/' + deletePostId + '/delete/' + acctParam, {
+                                        method: 'POST',
+                                        headers: { 'X-CSRFToken': '{{ csrf_token }}' }
+                                    }).then(() => {
+                                        showDeleteModal = false;
+                                        deleting = false;
+                                        window.dispatchEvent(new CustomEvent('post-deleted'));
+                                    }).catch(() => { deleting = false; });
+                                "
+                                :class="deleting && 'opacity-50 cursor-not-allowed'"
+                                class="flex-1 px-4 py-2 text-sm font-semibold text-white bg-red-500 rounded-full hover:bg-red-600 transition-colors cursor-pointer">
+                            <span x-text="deleting ? 'Deleting...' : 'Delete'"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+</div>

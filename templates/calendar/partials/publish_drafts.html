@@ -2,25 +2,71 @@
 Drafts tab partial for the Publish page.
 Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
 {% endcomment %}
-{% load tz %}
 
-<div x-data{% if is_htmx %} class="tab-slide-in"{% endif %}>
+<div x-data="{ selectedPosts: [], rejectReason: '' }"{% if is_htmx %} class="tab-slide-in"{% endif %}>
+    <!-- Bulk Actions Header -->
+    <div class="flex items-center gap-3 mb-3">
+        <select x-ref="bulkSelect" class="text-[0.8125rem] px-3 py-1.5 rounded-lg border border-stone-200 bg-white text-stone-700 focus:outline-none" :disabled="selectedPosts.length === 0">
+            <option value="">Bulk Actions</option>
+            <option value="delete">Delete</option>
+            <option value="send_to_queue">Send to Queue</option>
+        </select>
+        <button @click="
+            val = $refs.bulkSelect.value;
+            if (!val || selectedPosts.length === 0) return;
+            if (val === 'delete') $refs.deleteConfirmModal.showModal();
+            else if (val === 'send_to_queue') {
+                $refs.bulkForm.innerHTML = '';
+                selectedPosts.forEach(function(id) {
+                    var inp = document.createElement('input');
+                    inp.type = 'hidden'; inp.name = 'platform_post_ids'; inp.value = id;
+                    $refs.bulkForm.appendChild(inp);
+                });
+                var act = document.createElement('input');
+                act.type = 'hidden'; act.name = 'action'; act.value = 'send_to_queue';
+                $refs.bulkForm.appendChild(act);
+                var tab = document.createElement('input');
+                tab.type = 'hidden'; tab.name = 'current_tab'; tab.value = 'drafts';
+                $refs.bulkForm.appendChild(tab);
+                htmx.trigger($refs.bulkForm, 'submit');
+                selectedPosts = [];
+            }
+        " class="px-3 py-1.5 text-[0.8125rem] font-medium rounded-full transition-colors"
+           :class="selectedPosts.length === 0 ? 'bg-stone-100 text-stone-400 cursor-not-allowed' : 'bg-orange-50 text-orange-600 hover:bg-orange-100 cursor-pointer'"
+        >Apply</button>
+        <span x-show="selectedPosts.length > 0" class="text-sm text-stone-500" x-text="selectedPosts.length + ' selected'"></span>
+    </div>
     {% if platform_posts %}
     <table class="w-full">
         <thead>
             <tr class="border-b border-stone-200 text-left">
+                <th class="px-4 py-3" style="width:40px">
+                                    <input type="checkbox" @change="
+                                        const cbs = document.querySelectorAll('.post-checkbox');
+                                        cbs.forEach(cb => cb.checked = $el.checked);
+                                        selectedPosts = $el.checked ? Array.from(cbs).map(cb => cb.value) : [];
+                                    " class="w-4 h-4 rounded border-stone-300 cursor-pointer" style="accent-color: var(--primary);">
+                                </th>
                 <th class="px-4 py-3 text-xs font-semibold text-stone-400 uppercase tracking-wider">Media</th>
                 <th class="px-4 py-3 text-xs font-semibold text-stone-400 uppercase tracking-wider">Caption</th>
                 <th class="px-4 py-3 text-xs font-semibold text-stone-400 uppercase tracking-wider">Platform</th>
                 <th class="px-4 py-3 text-xs font-semibold text-stone-400 uppercase tracking-wider">Author</th>
                 <th class="px-4 py-3 text-xs font-semibold text-stone-400 uppercase tracking-wider">Last Updated</th>
-                <th class="px-4 py-3 w-10"></th>
             </tr>
         </thead>
         <tbody>
             {% for pp in platform_posts %}
             <tr class="border-b border-stone-100 hover:bg-stone-50 transition-colors duration-100 cursor-pointer"
                 @click="window.location='{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}'">
+                <td class="px-4 py-3" @click.stop>
+                    <input type="checkbox" value="{{ pp.id }}" @change="
+                        if ($el.checked) {
+                            if (!selectedPosts.includes($el.value)) selectedPosts.push($el.value);
+                        } else {
+                            selectedPosts = selectedPosts.filter(v => v !== $el.value);
+                        }
+                    " class="post-checkbox w-4 h-4 rounded border-stone-300" style="accent-color:var(--primary)">
+                </td>
                 <td class="px-4 py-3">
                     {% with first_att=pp.post.media_attachments.all.0 %}
                     {% if first_att %}
@@ -68,12 +114,6 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
                 </td>
                 <td class="px-4 py-3 text-xs text-stone-500 tabular-nums whitespace-nowrap">
                     {{ pp.post.updated_at|timesince }} ago
-                    {% if pp.post.proposed_publish_at %}
-                    <span class="block text-[0.6875rem] text-orange-500" title="Proposed publishing time">Proposed Publishing {% timezone display_timezone %}{{ pp.post.proposed_publish_at|date:"M j, g:i A" }}{% endtimezone %}</span>
-                    {% endif %}
-                </td>
-                <td class="px-4 py-3 text-right" @click.stop>
-                    {% include "calendar/partials/_post_actions_menu.html" with post_id=pp.post_id account_id=pp.social_account_id %}
                 </td>
             </tr>
             {% endfor %}
@@ -97,5 +137,82 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
     </div>
     {% endif %}
     {% endif %}
-    {% include "calendar/partials/_delete_post_modal.html" %}
+
+    <!-- Hidden HTMX Bulk Form -->
+    <form x-ref="bulkForm" hx-post="{% url 'calendar:publish_bulk_action' workspace_id=workspace.id %}" hx-trigger="submit" hx-target="#tab-content" hx-swap="innerHTML" hx-on::after-request="selectedPosts = []; $refs.bulkSelect.selectedIndex = 0;" class="hidden"></form>
+
+    <!-- Delete Confirmation Modal -->
+    <dialog x-ref="deleteConfirmModal" class="rounded-2xl border border-stone-200 shadow-xl p-0 max-w-md backdrop:bg-black/40">
+        <div class="p-6">
+            <h3 class="text-lg font-semibold text-stone-800 mb-2">Delete Drafts</h3>
+            <p class="text-sm text-stone-500 mb-6" x-text="'You are about to delete ' + selectedPosts.length + ' posts and their associated publishing tasks.'"></p>
+            <div class="flex items-center justify-end gap-3">
+                <button @click="$refs.deleteConfirmModal.close()" class="px-4 py-2 text-sm font-medium text-stone-600 bg-stone-100 rounded-full hover:bg-stone-200 transition-colors">Cancel</button>
+                <button @click="
+                    $refs.deleteConfirmModal.close();
+                    $refs.bulkForm.innerHTML = '';
+                    selectedPosts.forEach(function(id) {
+                        var inp = document.createElement('input');
+                        inp.type = 'hidden';
+                        inp.name = 'platform_post_ids';
+                        inp.value = id;
+                        $refs.bulkForm.appendChild(inp);
+                    });
+                    var act = document.createElement('input');
+                    act.type = 'hidden';
+                    act.name = 'action';
+                    act.value = 'delete';
+                    $refs.bulkForm.appendChild(act);
+                    var tab = document.createElement('input');
+                    tab.type = 'hidden';
+                    tab.name = 'current_tab';
+                    tab.value = 'drafts';
+                    $refs.bulkForm.appendChild(tab);
+                    htmx.trigger($refs.bulkForm, 'submit');
+                    selectedPosts = [];
+                " class="px-4 py-2 text-sm font-medium text-white bg-red-500 rounded-full hover:bg-red-600 transition-colors">Delete</button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Reject Comment Modal -->
+    <dialog x-ref="rejectCommentModal" class="rounded-2xl border border-stone-200 shadow-xl p-0 max-w-md backdrop:bg-black/40">
+        <div class="p-6">
+            <h3 class="text-lg font-semibold text-stone-800 mb-2">Reject Drafts</h3>
+            <p class="text-xs text-stone-400 mb-4">Provide a reason for rejection (optional, max 255 characters)</p>
+            <textarea maxlength="255" placeholder="Reason for rejection..." class="w-full text-sm px-3 py-2 rounded-lg border border-stone-200 resize-none focus:outline-none focus:border-orange-300" rows="3" x-model="rejectReason"></textarea>
+            <div class="flex items-center justify-end gap-3 mt-4">
+                <button @click="$refs.rejectCommentModal.close()" class="px-4 py-2 text-sm font-medium text-stone-600 bg-stone-100 rounded-full hover:bg-stone-200 transition-colors">Cancel</button>
+                <button @click="
+                    $refs.rejectCommentModal.close();
+                    $refs.bulkForm.innerHTML = '';
+                    selectedPosts.forEach(function(id) {
+                        var inp = document.createElement('input');
+                        inp.type = 'hidden';
+                        inp.name = 'platform_post_ids';
+                        inp.value = id;
+                        $refs.bulkForm.appendChild(inp);
+                    });
+                    var act = document.createElement('input');
+                    act.type = 'hidden';
+                    act.name = 'action';
+                    act.value = 'reject';
+                    $refs.bulkForm.appendChild(act);
+                    var tab = document.createElement('input');
+                    tab.type = 'hidden';
+                    tab.name = 'current_tab';
+                    tab.value = 'drafts';
+                    $refs.bulkForm.appendChild(tab);
+                    var cmt = document.createElement('input');
+                    cmt.type = 'hidden';
+                    cmt.name = 'comment';
+                    cmt.value = rejectReason;
+                    $refs.bulkForm.appendChild(cmt);
+                    htmx.trigger($refs.bulkForm, 'submit');
+                    selectedPosts = [];
+                    rejectReason = '';
+                " class="px-4 py-2 text-sm font-medium text-white bg-orange-500 rounded-full hover:bg-orange-600 transition-colors">Reject</button>
+            </div>
+        </div>
+    </dialog>
 </div>
