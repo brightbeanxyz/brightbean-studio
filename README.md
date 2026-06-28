@@ -136,9 +136,11 @@ Then start everything:
 
 ```bash
 docker compose up -d --build
-docker compose exec app python manage.py migrate
 docker compose exec app python manage.py createsuperuser
 ```
+
+Database migrations run automatically via the `migrate` Compose service before
+the `app` and `worker` services start, so there is no separate migrate step.
 
 Tailwind compiles automatically via the `tailwind` Compose service. First build
 takes ~60–90 seconds (running `npm install` in a fresh container); subsequent
