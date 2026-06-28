@@ -899,7 +899,7 @@
             }
         });
     </script>
-    <script src="{% static 'js/unsplash-modal.js' %}" defer></script>
+    {# <script src="{% static 'js/unsplash-modal.js' %}" defer></script> #}
     <script src="{% static 'js/alpine.min.js' %}" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
     <script nonce="{{ request.csp_nonce }}">
@@ -1264,6 +1264,6 @@
         </div>
     </div>
     {% endif %}
-    {{ unsplash_modal_html|default:'' }}
+    {# {{ unsplash_modal_html|default:'' }} #}
 </body>
 </html>
