@@ -1222,6 +1222,55 @@ def publish_bulk_action(request, workspace_id):
                     post.delete()
         case "send_to_queue":
             pps.filter(status="draft").update(status="pending_review")
+        case "submit_for_approval":
+            pps.filter(status="draft").update(status="pending_review")
+        case "add_to_queue":
+            from datetime import datetime, time, timedelta
+            from django.utils import timezone as djtz
+            # Default to next 9 AM in workspace timezone (ET) if no scheduled_at set
+            now = djtz.now()
+            target = now.replace(hour=9, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target = target + timedelta(days=1)
+            for pp in pps.filter(status="draft"):
+                pp.status = "scheduled"
+                if not pp.scheduled_at:
+                    pp.scheduled_at = target
+                pp.save(update_fields=["status", "scheduled_at"])
+        case "next_available":
+            from apps.calendar.models import PostingSlot
+            from datetime import datetime, timedelta
+            from django.utils import timezone as djtz
+            now = djtz.now()
+            for pp in pps.filter(status="draft"):
+                account = pp.social_account
+                slots = PostingSlot.objects.filter(
+                    social_account=account, is_active=True
+                ).order_by("day_of_week", "time")
+                if not slots.exists():
+                    # No slots configured — fall back to next 9 AM
+                    target = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+                else:
+                    # Find next slot datetime after now
+                    target = None
+                    for offset in range(14):  # search up to 2 weeks ahead
+                        candidate_day = (now + timedelta(days=offset)).date()
+                        candidate_dow = candidate_day.weekday()
+                        for slot in slots.filter(day_of_week=candidate_dow):
+                            slot_dt = datetime.combine(
+                                candidate_day, slot.time,
+                                tzinfo=now.tzinfo,
+                            )
+                            if slot_dt > now:
+                                target = slot_dt
+                                break
+                        if target:
+                            break
+                    if not target:
+                        target = (now + timedelta(days=14)).replace(hour=9, minute=0, second=0, microsecond=0)
+                pp.status = "scheduled"
+                pp.scheduled_at = target
+                pp.save(update_fields=["status", "scheduled_at"])
         case "approve":
             pps.filter(status__in=["pending_review", "pending_client"]).update(status="approved")
         case "reject":

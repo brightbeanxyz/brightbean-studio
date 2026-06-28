@@ -60,27 +60,27 @@ All members can view; action buttons shown conditionally based on can_approve pe
             <option value="publish">Publish</option>
         </select>
         <button @click="
-                var act = $refs.approvalBulkSelect.value;
-                if (!act || selectedPosts.length === 0) return;
-                if (act === 'delete') {
-                    $refs.approvalDeleteModal.showModal();
-                } else if (act === 'reject') {
-                    $refs.approvalRejectModal.showModal();
-                } else {
-                    var form = $refs.approvalBulkForm;
-                    form.innerHTML = '';
-                    selectedPosts.forEach(function(id) {
-                        var inp = document.createElement('input');
-                        inp.type = 'hidden'; inp.name = 'post_ids'; inp.value = id;
-                        form.appendChild(inp);
-                    });
-                    var aInp = document.createElement('input');
-                    aInp.type = 'hidden'; aInp.name = 'action'; aInp.value = act;
-                    form.appendChild(aInp);
-                    htmx.trigger(form, 'submit');
-                    selectedPosts = [];
-                }
-            "
+                        var act = $refs.approvalBulkSelect.value;
+                        if (!act || selectedPosts.length === 0) return;
+                        if (act === 'delete') { $refs.approvalDeleteModal.showModal(); return; }
+                        if (act === 'reject') { $refs.approvalRejectModal.showModal(); return; }
+                        var form = $refs.approvalBulkForm;
+                        form.innerHTML = '';
+                        selectedPosts.forEach(function(id) {
+                            var inp = document.createElement('input');
+                            inp.type = 'hidden';
+                            inp.name = 'post_ids';
+                            inp.value = id;
+                            form.appendChild(inp);
+                        });
+                        var aInp = document.createElement('input');
+                        aInp.type = 'hidden';
+                        aInp.name = 'action';
+                        aInp.value = act;
+                        form.appendChild(aInp);
+                        htmx.trigger(form, 'submit');
+                        selectedPosts = [];
+                    "
                 class="px-3 py-1.5 text-[0.8125rem] font-medium rounded-full transition-colors"
                 :class="selectedPosts.length > 0 ? 'bg-stone-900 text-white hover:bg-stone-800 cursor-pointer' : 'bg-stone-100 text-stone-400 cursor-not-allowed'"
                 :disabled="selectedPosts.length === 0">
@@ -93,7 +93,7 @@ All members can view; action buttons shown conditionally based on can_approve pe
     <!-- Hidden bulk form (HTMX POST to existing approvals endpoint) -->
     <form x-ref="approvalBulkForm"
           hx-post="{% url 'approvals:bulk_action' workspace_id=workspace.id %}"
-          hx-trigger="none"
+          hx-trigger="submit"
           hx-target="#tab-content"
           hx-swap="innerHTML"
           hx-on::after-request="selectedPosts = []; if(document.querySelector('[x-ref=approvalBulkSelect]')) document.querySelector('[x-ref=approvalBulkSelect]').selectedIndex = 0;"

@@ -183,7 +183,13 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
     {% endif %}
 
     <!-- Hidden HTMX Bulk Form -->
-    <form x-ref="queueBulkForm" class="hidden"></form>
+    <form x-ref="queueBulkForm"
+          hx-post="{% url 'calendar:publish_bulk_action' workspace_id=workspace.id %}"
+          hx-trigger="submit"
+          hx-target="#tab-content"
+          hx-swap="innerHTML"
+          hx-on::after-request="selectedPosts = []"
+          class="hidden"></form>
 
     <!-- Bulk Delete Confirmation Modal -->
     <dialog x-ref="queueBulkDeleteModal" class="rounded-xl shadow-xl p-0 max-w-lg w-full backdrop:bg-black/30 border-0">

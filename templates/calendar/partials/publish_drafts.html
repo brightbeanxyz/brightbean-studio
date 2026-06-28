@@ -8,6 +8,9 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
     <div class="flex items-center gap-3 mb-3">
         <select x-ref="bulkSelect" class="text-[0.8125rem] px-3 py-1.5 rounded-lg border border-stone-200 bg-white text-stone-700 focus:outline-none" :disabled="selectedPosts.length === 0">
             <option value="">Bulk Actions</option>
+            <option value="submit_for_approval">Submit for Approval</option>
+            <option value="add_to_queue">Add to Queue</option>
+            <option value="next_available">Next Available</option>
             <option value="delete">Delete</option>
             <option value="send_to_queue">Send to Queue</option>
         </select>
