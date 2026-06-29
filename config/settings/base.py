@@ -81,7 +81,6 @@ LOCAL_APPS = [
     "apps.mcp",
     "apps.oauth_server",
     "apps.analytics",
-    "apps.unsplash",
     "theme",
 ]
 
@@ -131,7 +130,6 @@ TEMPLATES = [
                 "apps.common.context_processors.sidebar_context",
                 "apps.onboarding.context_processors.onboarding_checklist",
                 "apps.intelligence.context_processors.intelligence_flag",
-                "apps.unsplash.context_processors.unsplash_modal",
             ],
         },
     },
