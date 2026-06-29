@@ -2,6 +2,9 @@
 set -e
 echo "Running migrations..."
 python manage.py migrate --noinput
+echo "Syncing media to volume..."
+mkdir -p /data/media
+cp -rn /app/media/* /data/media/ || true
 echo "Setting up superuser..."
 set +e
 python manage.py shell -c "
