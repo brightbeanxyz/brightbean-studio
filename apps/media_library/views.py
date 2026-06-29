@@ -759,7 +759,8 @@ def processing_status(request, workspace_id, asset_id):
         {
             "status": asset.processing_status,
             "thumbnail_url": asset.thumbnail.url if asset.thumbnail else None,
-        }
+        },
+        headers={"HX-Reswap": "none"},
     )
 
 
