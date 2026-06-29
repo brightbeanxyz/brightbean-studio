@@ -5,12 +5,18 @@ python manage.py migrate --noinput
 echo "Syncing media to volume..."
 mkdir -p /data/media
 cp -rn /app/media/* /data/media/ || true
-echo "Verify file access:"
-ls -la /data/media/media_library/2026/06/img_1782623940773.jpg 2>&1 || echo "NOT FOUND"
-file /data/media/media_library/2026/06/img_1782623940773.jpg 2>&1 || echo "FILE CMD FAILED"
-echo "MEDIA_ROOT env: $MEDIA_ROOT"
-echo "Python MEDIA_ROOT:"
-python3 -c "from django.conf import settings; print(settings.MEDIA_ROOT)" 2>&1 || echo "DJANGO IMPORT FAILED"
+echo "Check URL patterns for /media/:"
+python3 -c "
+import os, django
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.production')
+django.setup()
+from django.urls import get_resolver
+resolver = get_resolver()
+# Check if /media/ is in url patterns
+for p in resolver.url_patterns:
+    if 'media' in str(p.pattern):
+        print(f'  {p.pattern} -> {p.callback}')
+" 2>&1 || echo "URL CHECK FAILED"
 echo "Setting up superuser..."
 set +e
 python manage.py shell -c "
