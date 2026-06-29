@@ -33,6 +33,21 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
                 $refs.bulkForm.appendChild(tab);
                 htmx.trigger($refs.bulkForm, 'submit');
                 selectedPosts = [];
+            } else {
+                $refs.bulkForm.innerHTML = '';
+                selectedPosts.forEach(function(id) {
+                    var inp = document.createElement('input');
+                    inp.type = 'hidden'; inp.name = 'platform_post_ids'; inp.value = id;
+                    $refs.bulkForm.appendChild(inp);
+                });
+                var act = document.createElement('input');
+                act.type = 'hidden'; act.name = 'action'; act.value = val;
+                $refs.bulkForm.appendChild(act);
+                var tab = document.createElement('input');
+                tab.type = 'hidden'; tab.name = 'current_tab'; tab.value = 'drafts';
+                $refs.bulkForm.appendChild(tab);
+                htmx.trigger($refs.bulkForm, 'submit');
+                selectedPosts = [];
             }
         " class="px-3 py-1.5 text-[0.8125rem] font-medium rounded-full transition-colors"
            :class="selectedPosts.length === 0 ? 'bg-stone-100 text-stone-400 cursor-not-allowed' : 'bg-orange-50 text-orange-600 hover:bg-orange-100 cursor-pointer'"
