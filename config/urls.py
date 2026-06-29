@@ -34,9 +34,6 @@ urlpatterns = [
     # is Ninja's (patterns, app_namespace, instance_namespace) tuple,
     # which Django's path() handles natively.
     path("api/v1/", agent_api.urls),
-    # Unsplash stock-media integration — separate DRF-based API mounted under
-    # /api/v1/ alongside the Ninja Agent API.
-    path("api/v1/", include("apps.unsplash.urls")),
     # OAuth 2.1 Authorization Server for the MCP connector flow (native
     # Claude Desktop login). django-oauth-toolkit serves /oauth/authorize/
     # + /oauth/token/ + /oauth/revoke_token/; apps.oauth_server adds DCR
