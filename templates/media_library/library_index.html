@@ -226,11 +226,17 @@
         </button>
       </div>
 
-      <!-- Upload button -->
+      <!-- Upload + Unsplash buttons -->
       <button @click="$refs.fileInput.click()"
               class="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-orange-600 bg-orange-50 border border-orange-200 rounded-full hover:bg-orange-100 hover:border-orange-300 active:bg-orange-100 transition-all duration-150 cursor-pointer">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
         Upload
+      </button>
+      <button type="button"
+              @click.prevent="$dispatch('open-unsplash-modal', { query: '', workspaceId: '{{ workspace.id }}' })"
+              class="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-orange-600 bg-orange-50 border border-orange-200 rounded-full hover:bg-orange-100 hover:border-orange-300 active:bg-orange-100 transition-all duration-150 cursor-pointer">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        Search Unsplash
       </button>
       <input type="file" x-ref="fileInput" @change="handleFiles($event.target.files)" multiple
              accept="{{ accepted_file_types }}" class="hidden">

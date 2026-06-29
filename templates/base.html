@@ -899,7 +899,7 @@
             }
         });
     </script>
-    {# Unsplash modal JS — the compose page has its own inline Alpine.js modal; no external JS needed #}
+    <script src="{% static 'js/unsplash-modal.js' %}" defer></script>
     <script src="{% static 'js/alpine.min.js' %}" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
     <script nonce="{{ request.csp_nonce }}">
@@ -1264,6 +1264,6 @@
         </div>
     </div>
     {% endif %}
-    {# Unsplash modal HTML — compose page has its own inline modal #}
+    {{ unsplash_modal_html|default:'' }}
 </body>
 </html>
