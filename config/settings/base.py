@@ -33,11 +33,6 @@ DJANGO_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.sites",
     "django.contrib.humanize",
-    # DRF — required by the Unsplash integration views (apps.unsplash.views
-    # imports permissions, status, generics from rest_framework, plus
-    # authtoken is needed for the DRF TokenAuthentication class).
-    "rest_framework",
-    "rest_framework.authtoken",
 ]
 
 THIRD_PARTY_APPS = [
@@ -85,16 +80,6 @@ LOCAL_APPS = [
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
-
-REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.TokenAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
-    ],
-    "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
-    ],
-}
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
