@@ -65,8 +65,9 @@ All members can view; action buttons shown conditionally based on can_approve pe
                         if (act === 'delete') { $refs.approvalDeleteModal.showModal(); return; }
                         if (act === 'reject') { $refs.approvalRejectModal.showModal(); return; }
                         var form = $refs.approvalBulkForm;
+                        var csrfEl = form.querySelector('input[name=csrfmiddlewaretoken]');
                         form.innerHTML = '';
-                        form.insertAdjacentHTML('beforeend', '{% csrf_token %}');
+                        if (csrfEl) form.appendChild(csrfEl.cloneNode(true));
                         var tabInp = document.createElement('input');
                         tabInp.type = 'hidden'; tabInp.name = 'current_tab'; tabInp.value = 'approvals';
                         form.appendChild(tabInp);
@@ -121,8 +122,9 @@ All members can view; action buttons shown conditionally based on can_approve pe
                         class="px-5 py-2 text-sm font-semibold text-white rounded-full bg-red-500 hover:bg-red-600 transition-colors"
                         @click="
                             var form = $refs.approvalBulkForm;
+                            var csrfEl = form.querySelector('input[name=csrfmiddlewaretoken]');
                             form.innerHTML = '';
-                            form.insertAdjacentHTML('beforeend', '{% csrf_token %}');
+                            if (csrfEl) form.appendChild(csrfEl.cloneNode(true));
                             var tabInp = document.createElement('input');
                             tabInp.type = 'hidden'; tabInp.name = 'current_tab'; tabInp.value = 'approvals';
                             form.appendChild(tabInp);
@@ -158,8 +160,9 @@ All members can view; action buttons shown conditionally based on can_approve pe
                         class="px-5 py-2 text-sm font-semibold text-white rounded-full bg-red-500 hover:bg-red-600 transition-colors"
                         @click="
                             var form = $refs.approvalBulkForm;
+                            var csrfEl = form.querySelector('input[name=csrfmiddlewaretoken]');
                             form.innerHTML = '';
-                            form.insertAdjacentHTML('beforeend', '{% csrf_token %}');
+                            if (csrfEl) form.appendChild(csrfEl.cloneNode(true));
                             var tabInp = document.createElement('input');
                             tabInp.type = 'hidden'; tabInp.name = 'current_tab'; tabInp.value = 'approvals';
                             form.appendChild(tabInp);
