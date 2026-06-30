@@ -82,6 +82,8 @@ def _resolve_publish_credentials(account):
                 "Bluesky PDS URL failed SSRF check for account %s",
                 account.id,
             )
+    elif platform == "facebook":
+        credentials["page_id"] = account.account_platform_id
     elif platform == "instagram":
         credentials["ig_user_id"] = account.account_platform_id
 
@@ -230,6 +232,12 @@ class PublishEngine:
 
             if result["success"]:
                 platform_post.platform_post_id = result.get("platform_post_id", "")
+                response_extra = result.get("response")
+                if isinstance(response_extra, dict) and response_extra:
+                    platform_post.platform_extra = {
+                        **(platform_post.platform_extra or {}),
+                        **response_extra,
+                    }
                 platform_post.status = PlatformPost.Status.PUBLISHED
                 platform_post.published_at = timezone.now()
                 platform_post.save()

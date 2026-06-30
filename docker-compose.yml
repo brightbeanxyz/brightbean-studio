@@ -1,4 +1,13 @@
 services:
+  migrate:
+    build: .
+    command: python manage.py migrate --noinput
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   app:
     build: .
     volumes:
@@ -8,8 +17,9 @@ services:
     env_file:
       - .env
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
   worker:
     build: .
@@ -19,8 +29,9 @@ services:
     env_file:
       - .env
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine

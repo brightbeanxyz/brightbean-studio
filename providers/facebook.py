@@ -294,8 +294,9 @@ class FacebookProvider(SocialProvider):
             json=payload,
         )
         data = resp.json()
+        post_id = self._stored_post_id(data["id"])
         return PublishResult(
-            platform_post_id=data["id"],
+            platform_post_id=post_id,
             url=f"https://www.facebook.com/{data['id']}",
             extra=data,
         )
@@ -314,8 +315,13 @@ class FacebookProvider(SocialProvider):
             json=payload,
         )
         data = resp.json()
-        post_id = data.get("post_id", data["id"])
-        return PublishResult(platform_post_id=post_id, url=f"https://www.facebook.com/{post_id}", extra=data)
+        graph_post_id = data.get("post_id", data["id"])
+        post_id = self._stored_post_id(graph_post_id)
+        return PublishResult(
+            platform_post_id=post_id,
+            url=f"https://www.facebook.com/{graph_post_id}",
+            extra=data,
+        )
 
     def _publish_multi_photo(self, access_token: str, page_id: str, content: PublishContent) -> PublishResult:
         urls = content.media_urls
@@ -363,8 +369,8 @@ class FacebookProvider(SocialProvider):
                 access_token=access_token,
                 json=payload,
             ).json()
-            post_id = data.get("id")
-            if not post_id:
+            graph_post_id = data.get("id")
+            if not graph_post_id:
                 raise PublishError(
                     "Failed to publish Facebook multi-photo post",
                     platform=self.platform_name,
@@ -378,8 +384,8 @@ class FacebookProvider(SocialProvider):
             raise
 
         return PublishResult(
-            platform_post_id=post_id,
-            url=f"https://www.facebook.com/{post_id}",
+            platform_post_id=self._stored_post_id(graph_post_id),
+            url=f"https://www.facebook.com/{graph_post_id}",
             extra={**data, "photo_ids": photo_ids},
         )
 
@@ -433,8 +439,9 @@ class FacebookProvider(SocialProvider):
             # body making .json() raise). Catch broadly; fall back to video_id.
             logger.debug("Facebook video %s post_id unavailable: %s", video_id, exc)
 
-        post_id = video_fields.get("post_id") or video_id
-        url = video_fields.get("permalink_url") or f"https://www.facebook.com/{post_id}"
+        graph_post_id = video_fields.get("post_id") or video_id
+        post_id = self._stored_post_id(graph_post_id)
+        url = video_fields.get("permalink_url") or f"https://www.facebook.com/{graph_post_id}"
         return PublishResult(
             platform_post_id=post_id,
             url=url,
@@ -446,6 +453,7 @@ class FacebookProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def publish_comment(self, access_token: str, post_id: str, text: str) -> CommentResult:
+        post_id = self._page_scoped_post_id(post_id)
         resp = self._request(
             "POST",
             f"{BASE_URL}/{post_id}/comments",
@@ -553,6 +561,23 @@ class FacebookProvider(SocialProvider):
                     # identically, so don't issue a second doomed request.
                     break
         return {}
+
+    @staticmethod
+    def _stored_post_id(graph_post_id: str) -> str:
+        """Store only Facebook's post object id from PAGEID_POSTID values."""
+        post_id = str(graph_post_id or "")
+        if "_" in post_id:
+            return post_id.rsplit("_", 1)[1]
+        return post_id
+
+    def _page_scoped_post_id(self, post_id: str) -> str:
+        post_id = str(post_id or "")
+        if "_" in post_id:
+            return post_id
+        page_id = self.credentials.get("page_id")
+        if page_id and post_id:
+            return f"{page_id}_{post_id}"
+        return post_id
 
     @staticmethod
     def _summary_total(data: dict, key: str) -> int:

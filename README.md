@@ -136,9 +136,11 @@ Then start everything:
 
 ```bash
 docker compose up -d --build
-docker compose exec app python manage.py migrate
 docker compose exec app python manage.py createsuperuser
 ```
+
+Database migrations run automatically via the `migrate` Compose service before
+the `app` and `worker` services start, so there is no separate migrate step.
 
 Tailwind compiles automatically via the `tailwind` Compose service. First build
 takes ~60–90 seconds (running `npm install` in a fresh container); subsequent
@@ -485,7 +487,7 @@ If you set only the Path B (Company) credentials, Brightbean Studio automaticall
    ```
    {APP_URL}/social-accounts/callback/social1/
    ```
-4. Required scopes: `user.info.basic`, `user.info.profile`, `user.info.stats`, `video.publish`, `video.upload`, `video.list`
+4. Required scopes: `user.info.basic`, `video.publish`, `video.upload`, `video.list`
 5. Note: TikTok uses **Client Key** (not Client ID). Copy the **Client Key** and **Client Secret** from your app dashboard
 6. Set the environment variables:
    ```

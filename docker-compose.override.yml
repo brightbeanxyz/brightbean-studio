@@ -1,4 +1,11 @@
 services:
+  migrate:
+    volumes:
+      - .:/app
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/brightbean
+
   app:
     command: python manage.py runserver 0.0.0.0:8000
     volumes:

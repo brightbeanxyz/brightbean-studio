@@ -25,14 +25,22 @@ META_PERMISSION_ERROR_MARKERS = (
 
 def parse_insights_response(data: dict[str, Any]) -> dict[str, Any]:
     values: dict[str, Any] = {}
+    periods: dict[str, str] = {}
     for entry in data.get("data", []):
         name = entry.get("name", "")
         if not name:
             continue
-        if "total_value" in entry:
-            values[name] = entry.get("total_value", {}).get("value", 0)
+        period = entry.get("period", "")
+        if periods.get(name) == "lifetime" and period != "lifetime":
             continue
-        values[name] = entry.get("values", [{}])[0].get("value", 0)
+        if "total_value" in entry:
+            value = entry.get("total_value", {}).get("value", 0)
+        else:
+            value = entry.get("values", [{}])[0].get("value", 0)
+        if name not in values or period == "lifetime":
+            values[name] = value
+            periods[name] = period
+            continue
     return values
 
 

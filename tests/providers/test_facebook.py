@@ -38,7 +38,7 @@ def test_publish_multi_photo_post_stages_photos_then_publishes_feed_post():
         ),
     )
 
-    assert result.platform_post_id == "page-1_post-1"
+    assert result.platform_post_id == "post-1"
     assert result.url == "https://www.facebook.com/page-1_post-1"
     assert result.extra["photo_ids"] == ["photo-1", "photo-2"]
     provider._request.assert_has_calls(
@@ -124,7 +124,7 @@ def test_publish_single_photo_uses_photos_edge_without_staging():
         ),
     )
 
-    assert result.platform_post_id == "page-1_post-1"
+    assert result.platform_post_id == "post-1"
     assert result.url == "https://www.facebook.com/page-1_post-1"
     provider._request.assert_called_once_with(
         "POST",
@@ -318,8 +318,8 @@ def test_get_post_metrics_uses_v25_media_view_metrics_and_object_counts():
 
     metrics = provider.get_post_metrics("page-token", "page-1_post-1")
 
-    assert metrics.video_views == 54
     assert metrics.reach == 42
+    assert metrics.video_views == 54
     assert metrics.clicks == 4
     assert metrics.likes == 0
     assert metrics.comments == 5
@@ -420,8 +420,8 @@ def test_get_post_metrics_resolves_photo_id_to_feed_post_for_comments_and_shares
 
     metrics = provider.get_post_metrics("page-token", "photo-1")
 
-    assert metrics.video_views == 500
     assert metrics.reach == 300
+    assert metrics.video_views == 500
     assert metrics.clicks == 20
     assert metrics.comments == 4
     assert metrics.shares == 2
@@ -462,8 +462,8 @@ def test_get_post_metrics_tries_page_scoped_feed_id_for_numeric_object_id():
 
     metrics = provider.get_post_metrics("page-token", "1668168861075953")
 
-    assert metrics.video_views == 90
     assert metrics.reach == 70
+    assert metrics.video_views == 90
     assert metrics.comments == 6
     assert metrics.shares == 8
     assert metrics.extra["insight_post_id"] == "page-1_1668168861075953"
@@ -501,8 +501,8 @@ def test_get_post_metrics_tries_next_candidate_when_feed_id_has_no_insights_edge
 
     metrics = provider.get_post_metrics("page-token", "1668168861075953")
 
-    assert metrics.video_views == 12
     assert metrics.reach == 10
+    assert metrics.video_views == 12
     assert metrics.comments == 2
     assert metrics.extra["insight_post_id"] == "1668168861075953"
     assert metrics.extra["attempted_insight_post_ids"] == ["page-1_1668168861075953", "1668168861075953"]
@@ -537,6 +537,21 @@ def test_get_post_metrics_reports_batched_insights_failure_for_each_metric():
     assert metrics.comments == 1
     assert metrics.extra["reactions"] == 0
     assert "post_total_media_view_unique" in metrics.extra["insight_errors"]
+
+
+def test_publish_comment_reconstructs_page_scoped_facebook_post_id():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret", "page_id": "page-1"})
+    provider._request = MagicMock(return_value=_resp({"id": "comment-1"}))
+
+    result = provider.publish_comment("page-token", "post-1", "Nice")
+
+    assert result.platform_comment_id == "comment-1"
+    provider._request.assert_called_once_with(
+        "POST",
+        "https://graph.facebook.com/v25.0/page-1_post-1/comments",
+        access_token="page-token",
+        json={"message": "Nice"},
+    )
 
 
 def test_get_account_metrics_uses_v25_page_media_view_metrics_and_followers_count():
@@ -683,7 +698,7 @@ def test_publish_video_resolves_feed_post_id_for_analytics():
         ),
     )
 
-    assert result.platform_post_id == "page-1_post-1"
+    assert result.platform_post_id == "post-1"
     assert result.url == "https://www.facebook.com/page-1/videos/video-1/"
     assert result.extra["video_id"] == "video-1"
     provider._request.assert_has_calls(

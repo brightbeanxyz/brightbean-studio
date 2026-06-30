@@ -266,6 +266,52 @@ class TikTokExtrasSyncTests(AccountScopeTestsBase):
         self.assertEqual(self.tt_pp.platform_extra, {"privacy_level": "SELF_ONLY"})
 
 
+class PinterestBoardSelectionTests(AccountScopeTestsBase):
+    def setUp(self):
+        super().setUp()
+        self.pinterest = SocialAccount.objects.create(
+            workspace=self.workspace,
+            platform="pinterest",
+            account_platform_id="pin-1",
+            account_name="Pinterest",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        self.pin_pp = PlatformPost.objects.create(
+            post=self.post,
+            social_account=self.pinterest,
+            status=PlatformPost.Status.DRAFT,
+        )
+
+    def _pinterest_payload(self, **fields):
+        acc = str(self.pinterest.id)
+        payload = self._payload(selected_accounts=acc, account_scope=acc)
+        payload.update({f"pin_{key}_{acc}": value for key, value in fields.items()})
+        return payload
+
+    def test_selected_pinterest_account_requires_board(self):
+        response = self.client.post(self.save_url, data=self._pinterest_payload())
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("pinterest_board", response.json()["errors"])
+
+    def test_selected_pinterest_account_saves_board(self):
+        response = self.client.post(self.save_url, data=self._pinterest_payload(board_id="board-123"))
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.pin_pp.refresh_from_db()
+        self.assertEqual(self.pin_pp.platform_extra["board_id"], "board-123")
+
+    def test_missing_board_field_preserves_existing_board(self):
+        self.pin_pp.platform_extra = {"board_id": "board-123"}
+        self.pin_pp.save(update_fields=["platform_extra"])
+
+        response = self.client.post(self.save_url, data=self._pinterest_payload())
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.pin_pp.refresh_from_db()
+        self.assertEqual(self.pin_pp.platform_extra["board_id"], "board-123")
+
+
 class TikTokComposerDefaultsTests(AccountScopeTestsBase):
     """TikTok's audit requires the composer to ship NO default privacy level and
     NO pre-checked interaction toggles. The defaults live in the Alpine init in
@@ -284,7 +330,10 @@ class TikTokComposerDefaultsTests(AccountScopeTestsBase):
         # No pre-selected privacy level (TikTok "no default value" rule)…
         self.assertIn("privacy_level || ''", html)
         self.assertNotIn("privacy_level || 'PUBLIC_TO_EVERYONE'", html)
-        # …and the creator-info effect must not auto-select an option either.
+        # …except when creator-info says SELF_ONLY is the sole legal option for
+        # an unaudited app, in which case the form must submit the only valid
+        # value instead of falling back to PUBLIC_TO_EVERYONE server-side.
+        self.assertIn("opts.length === 1 && opts[0] === 'SELF_ONLY'", html)
         self.assertNotIn("ttPrivacy = opts[0]", html)
 
     def test_interaction_toggles_unchecked_by_default(self):
