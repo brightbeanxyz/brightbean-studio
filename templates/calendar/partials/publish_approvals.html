@@ -110,7 +110,7 @@ All members can view; action buttons shown conditionally based on can_approve pe
           hx-trigger="submit"
           hx-target="#tab-content"
           hx-swap="innerHTML"
-          hx-on::after-request="selectedPosts = []; if(document.querySelector('[x-ref=approvalBulkSelect]')) document.querySelector('[x-ref=approvalBulkSelect]').selectedIndex = 0;"
+          hx-on::after-request="selectedPosts = []; if(document.querySelector('[x-ref=approvalBulkSelect]')) document.querySelector('[x-ref=approvalBulkSelect]').selectedIndex = 0; htmx.ajax('GET', '{% url 'calendar:publish_tab_approvals' workspace_id=workspace.id %}?approval_status={{ status_filter|default:'all' }}', {target: '#tab-content', swap: 'innerHTML'});"
           class="hidden">
         {% csrf_token %}
         <input type="hidden" name="current_tab" value="approvals">
