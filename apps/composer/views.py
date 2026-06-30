@@ -1838,6 +1838,9 @@ def attach_media(request, workspace_id, post_id):
         defaults={"position": position},
     )
 
+    # Option A: changing media on an approved post sends it back for re-approval.
+    _revert_approved_to_review(post)
+
     response = render(
         request,
         "composer/partials/media_list.html",
@@ -1965,6 +1968,8 @@ def upload_media(request, workspace_id, post_id=None):
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
         attachment = _attach_asset_for_composer(request, workspace, asset, post)
+        # Option A: changing media on an approved post sends it back for re-approval.
+        _revert_approved_to_review(post)
         response = render(
             request,
             "composer/partials/media_list.html",
@@ -1997,6 +2002,9 @@ def remove_media(request, workspace_id, post_id, media_id):
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
     PostMedia.objects.filter(id=media_id, post=post).delete()
+
+    # Option A: changing media on an approved post sends it back for re-approval.
+    _revert_approved_to_review(post)
 
     response = render(
         request,

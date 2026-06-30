@@ -260,3 +260,35 @@ class ApprovedEditReReviewTests(ApprovalWorkflowBase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(self.post.platform_posts.get().status, "pending_review")
+
+    def _image_asset(self):
+        from django.core.files.base import ContentFile
+
+        from apps.media_library.models import MediaAsset
+
+        return MediaAsset.objects.create(
+            organization=self.org,
+            workspace=self.ws,
+            file=ContentFile(b"x", name="pic.png"),
+            filename="pic.png",
+            media_type=MediaAsset.MediaType.IMAGE,
+        )
+
+    def test_attaching_media_reverts_approved(self):
+        asset = self._image_asset()
+        url = reverse("composer:attach_media", kwargs={"workspace_id": self.ws.id, "post_id": self.post.id})
+        resp = self.client.post(url, data={"media_asset_id": str(asset.id)})
+        self.assertIn(resp.status_code, (200, 204))
+        self.assertEqual(self.post.platform_posts.get().status, "pending_review")
+
+    def test_removing_media_reverts_approved(self):
+        from apps.composer.models import PostMedia
+
+        pm = PostMedia.objects.create(post=self.post, media_asset=self._image_asset(), position=0)
+        url = reverse(
+            "composer:remove_media",
+            kwargs={"workspace_id": self.ws.id, "post_id": self.post.id, "media_id": pm.id},
+        )
+        resp = self.client.post(url)
+        self.assertIn(resp.status_code, (200, 204))
+        self.assertEqual(self.post.platform_posts.get().status, "pending_review")
