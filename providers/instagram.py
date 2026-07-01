@@ -288,7 +288,12 @@ class InstagramProvider(SocialProvider):
         if content.text:
             payload["caption"] = content.text
 
-        if content.post_type == PostType.REEL:
+        if content.post_type in (PostType.REEL, PostType.VIDEO):
+            # Instagram no longer supports standalone feed videos: a single
+            # video is published as a Reel. PostType.VIDEO (the engine's
+            # fallback for a lone video asset) must take the REELS path too,
+            # otherwise it falls through to the IMAGE branch and the .mp4 is
+            # sent as image_url ("The image format is not supported").
             payload["media_type"] = "REELS"
             payload["video_url"] = content.media_urls[0]
         elif content.post_type == PostType.STORY:
