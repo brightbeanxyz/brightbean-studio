@@ -373,19 +373,6 @@ def _get_publish_context(workspace, request):
     }
 
 
-def _apply_publish_filters(qs, request):
-    """Apply channel and tag filters from publish page dropdowns."""
-    channel = request.GET.get("channel")
-    if channel:
-        qs = qs.filter(platform_posts__social_account_id=channel).distinct()
-
-    tag = request.GET.get("tag")
-    if tag:
-        qs = qs.filter(tags__contains=[tag])
-
-    return qs
-
-
 def _apply_pp_publish_filters(qs, request):
     """Apply channel and tag filters to a PlatformPost queryset."""
     channel = request.GET.get("channel")
@@ -492,7 +479,7 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
     # to the team under "All".
     from collections import defaultdict
 
-    from django.db.models import Count, Prefetch, Q
+    from django.db.models import Count, Exists, OuterRef, Prefetch, Q
     from django.utils.http import urlencode
 
     from apps.approvals.models import PostComment
@@ -500,18 +487,32 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
     approval_statuses = ["pending_review", "pending_client", "approved", "rejected", "changes_requested", "on_hold"]
     status_filter = request.GET.get("approval_status", "all")
 
+    # Population + channel + status must all be satisfied by the SAME PlatformPost
+    # row. Chaining .filter(platform_posts__...) spawns a separate join per call, so
+    # Django could otherwise match a post whose pending child is on a different
+    # channel than the one filtered — surfacing (and letting bulk actions target) a
+    # post that isn't actually pending for the selected channel. An Exists subquery
+    # anchors every condition to one child row.
+    pp_match = PlatformPost.objects.filter(post_id=OuterRef("pk"))
+    if status_filter != "all" and status_filter in approval_statuses:
+        pp_match = pp_match.filter(status=status_filter)
+    else:
+        pp_match = pp_match.filter(status__in=approval_statuses)
+    channel = request.GET.get("channel")
+    if channel:
+        pp_match = pp_match.filter(social_account_id=channel)
+
     posts_qs = (
         Post.objects.for_workspace(workspace.id)
-        .filter(platform_posts__status__in=approval_statuses)
-        .distinct()
+        .filter(Exists(pp_match))
         .select_related("author")
         .prefetch_related("platform_posts__social_account", "media_attachments__media_asset", "versions")
         .order_by("scheduled_at", "-created_at")
     )
-    # Honour the publish toolbar's channel/tag filters (parity with the other tabs).
-    posts_qs = _apply_publish_filters(posts_qs, request)
-    if status_filter != "all" and status_filter in approval_statuses:
-        posts_qs = posts_qs.filter(platform_posts__status=status_filter).distinct()
+    # Tag is a Post-level attribute (can't cross child rows) — apply it directly.
+    tag = request.GET.get("tag")
+    if tag:
+        posts_qs = posts_qs.filter(tags__contains=[tag])
 
     posts = list(posts_qs[:200])
 

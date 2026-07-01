@@ -126,9 +126,16 @@ def portal_approval_queue(request):
         .order_by("scheduled_at", "-created_at")[:50]
     )
 
-    # Annotate each post with visible comments (external only for clients)
+    # Annotate each post with visible comments (external only for clients) and the
+    # client-facing affordance flags. These follow the child platforms, not the
+    # derived Post.status: a lower-ranked sibling (draft/changes_requested/on_hold)
+    # would otherwise mask a pending_client child and hide the action buttons.
     for post in pending_posts + decided_posts:
         post.visible_comments = list(comment_service.get_comments_for_post(post, request.user))
+        child_statuses = {pp.status for pp in post.platform_posts.all()}
+        post.client_pending = "pending_client" in child_statuses
+        post.client_on_hold = "on_hold" in child_statuses
+        post.client_approved = "approved" in child_statuses
 
     return render(
         request,

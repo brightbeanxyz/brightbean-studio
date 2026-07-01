@@ -11,7 +11,7 @@ already-approved posts get "Put on hold"; held posts show their state.
             {% for pp in post.platform_posts.all %}
             <span class="text-[0.6875rem] font-semibold px-2.5 py-0.5 rounded-full bg-stone-100 text-stone-600">{{ pp.social_account.get_platform_display }}</span>
             {% endfor %}
-            {% if post.status == 'approved' or post.status == 'on_hold' %}{% status_badge post.status %}{% endif %}
+            {% if post.client_pending %}{% status_badge 'pending_client' %}{% elif post.client_on_hold %}{% status_badge 'on_hold' %}{% elif post.client_approved %}{% status_badge 'approved' %}{% endif %}
             {% if post.scheduled_at %}
             <span class="text-[0.6875rem] text-stone-400 ml-auto inline-flex items-center gap-1">
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -59,14 +59,19 @@ already-approved posts get "Put on hold"; held posts show their state.
         {% endif %}
 
         <div class="px-5 py-4 border-t border-stone-100 flex flex-wrap items-center gap-2 bg-stone-50">
-            {% if post.status == 'pending_client' %}
+            {% if post.client_pending %}
             <button hx-post="{% url 'client_portal:approve' post_id=post.id %}" hx-swap="none"
                     class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full text-white transition-all hover:-translate-y-px" style="background:#22C55E;">Approve</button>
             <button @click="panel = panel === 'changes' ? null : 'changes'"
                     class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full" style="background:#FEFCE8;color:#A16207;border:1px solid rgba(234,179,8,0.25);">Request changes</button>
             <button @click="panel = panel === 'reject' ? null : 'reject'"
                     class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full" style="background:#FEF2F2;color:#B91C1C;border:1px solid rgba(239,68,68,0.18);">Reject</button>
-            {% elif post.status == 'approved' %}
+            {% elif post.client_on_hold %}
+            <span class="text-[0.8125rem] text-stone-500 inline-flex items-center gap-1.5">
+                <svg class="w-[15px] h-[15px]" style="color:#7C3AED;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                On hold — the team has been notified.
+            </span>
+            {% elif post.client_approved %}
             <span class="text-[0.8125rem] text-stone-500 inline-flex items-center gap-1.5 mr-1">
                 <svg class="w-[15px] h-[15px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
                 You approved this. Scheduled to publish
@@ -76,15 +81,10 @@ already-approved posts get "Put on hold"; held posts show their state.
                 <svg class="w-[13px] h-[13px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
                 Put on hold
             </button>
-            {% elif post.status == 'on_hold' %}
-            <span class="text-[0.8125rem] text-stone-500 inline-flex items-center gap-1.5">
-                <svg class="w-[15px] h-[15px]" style="color:#7C3AED;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
-                On hold — the team has been notified.
-            </span>
             {% endif %}
         </div>
 
-        {% if post.status == 'pending_client' or post.status == 'approved' %}
+        {% if post.client_pending or post.client_approved %}
         <div x-show="panel" x-cloak class="px-5 py-4 border-t border-stone-100 anim-collapse">
             <label class="text-[0.8125rem] font-semibold text-stone-700 block mb-2"
                    x-text="panel === 'changes' ? 'What changes would you like?' : panel === 'reject' ? 'Why are you rejecting this?' : 'Why put this on hold? The team is notified, and nothing publishes while held.'"></label>

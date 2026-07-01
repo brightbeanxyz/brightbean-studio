@@ -994,14 +994,25 @@ def save_post(request, workspace_id, post_id=None):
             propagate_qs = propagate_qs.filter(id__in=scoped_ids)
         propagate_qs.update(scheduled_at=propagate_dt)
 
-    # Move existing children to the requested target state (no-op for
-    # save_draft — children that are already mid-workflow stay put).
+    # Option A: editing an approved post's reviewable content sends it back for
+    # re-approval so edits can't publish un-reviewed. Run this BEFORE applying any
+    # publish target — otherwise a schedule/publish_now in the *same* save would
+    # push the just-edited (no-longer-approved) content straight to scheduled.
+    # Only ``approved`` children are reverted; anything else is a no-op.
+    content_changed = _orig_content is not None and _base_content_snapshot(post) != _orig_content
+    reverted_ids = {str(pp.id) for pp in _revert_approved_to_review(post)} if content_changed else set()
+
+    # Move existing children to the requested target state (no-op for save_draft —
+    # children that are already mid-workflow stay put). Children just reverted for
+    # re-review are excluded so a same-save publish action can't drag them back
+    # out of review.
     if pending_target:
-        _transition_post_children(post, pending_target, only=scoped_ids)
-    # Option A: a plain save (no workflow action) that changed an approved post's
-    # content sends it back for re-approval, so edits can't publish un-reviewed.
-    elif _orig_content is not None and _base_content_snapshot(post) != _orig_content:
-        _revert_approved_to_review(post)
+        if reverted_ids:
+            candidates = scoped_ids if scoped_ids is not None else [pp.id for pp in post.platform_posts.all()]
+            target_only = [pid for pid in candidates if str(pid) not in reverted_ids]
+        else:
+            target_only = scoped_ids
+        _transition_post_children(post, pending_target, only=target_only)
 
     # Save version
     _save_version(post, request.user)

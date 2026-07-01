@@ -253,6 +253,42 @@ class ApprovedEditReReviewTests(ApprovalWorkflowBase):
         self.assertIn(resp.status_code, (200, 204, 302))
         self.assertEqual(self.post.platform_posts.get().status, "approved")
 
+    def test_scheduling_edited_approved_post_does_not_publish(self):
+        # Finding 1: a schedule action in the SAME save as a content edit must not
+        # push the edited (no-longer-approved) content straight to scheduled — it
+        # goes back for re-review instead.
+        from datetime import timedelta
+
+        when = timezone.now() + timedelta(days=1)
+        resp = self.client.post(
+            self.save_url,
+            data=self._payload(
+                action="schedule",
+                caption="Edited and scheduled in one save",
+                scheduled_date=when.strftime("%Y-%m-%d"),
+                scheduled_time=when.strftime("%H:%M"),
+            ),
+        )
+        self.assertIn(resp.status_code, (200, 204, 302))
+        self.assertEqual(self.post.platform_posts.get().status, "pending_review")
+
+    def test_scheduling_unchanged_approved_post_still_schedules(self):
+        # Happy path preserved: scheduling an approved post whose content is
+        # unchanged proceeds straight to scheduled.
+        from datetime import timedelta
+
+        when = timezone.now() + timedelta(days=1)
+        resp = self.client.post(
+            self.save_url,
+            data=self._payload(
+                action="schedule",
+                scheduled_date=when.strftime("%Y-%m-%d"),
+                scheduled_time=when.strftime("%H:%M"),
+            ),
+        )
+        self.assertIn(resp.status_code, (200, 204, 302))
+        self.assertEqual(self.post.platform_posts.get().status, "scheduled")
+
     def test_autosave_edit_reverts_approved(self):
         url = reverse("composer:autosave_edit", kwargs={"workspace_id": self.ws.id, "post_id": self.post.id})
         resp = self.client.post(
@@ -292,3 +328,84 @@ class ApprovedEditReReviewTests(ApprovalWorkflowBase):
         resp = self.client.post(url)
         self.assertIn(resp.status_code, (200, 204))
         self.assertEqual(self.post.platform_posts.get().status, "pending_review")
+
+
+class ApprovalTabChannelFilterTests(ApprovalWorkflowBase):
+    """The approvals tab's channel + status filters must match the SAME child row.
+
+    A post with an Instagram child pending review and a LinkedIn child in draft
+    must NOT surface (or be bulk-actionable) under a LinkedIn + pending_review
+    filter — otherwise actions target a channel that isn't actually pending.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.other = SocialAccount.objects.create(
+            workspace=self.ws,
+            platform="instagram_business",
+            account_platform_id="ig-1",
+            account_name="IG",
+            connection_status="connected",
+        )
+        self.post = Post.objects.create(workspace=self.ws, author=self.author, title="MIXEDROW", caption="c")
+        PlatformPost.objects.create(post=self.post, social_account=self.other, status="pending_review")  # IG pending
+        PlatformPost.objects.create(post=self.post, social_account=self.account, status="draft")  # LinkedIn draft
+        self.client.force_login(self.reviewer)
+        self.url = reverse("calendar:publish_tab_approvals", kwargs={"workspace_id": self.ws.id})
+
+    def test_channel_filter_hides_row_pending_on_other_channel(self):
+        resp = self.client.get(self.url, {"approval_status": "pending_review", "channel": str(self.account.id)})
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, "MIXEDROW")
+
+    def test_channel_filter_surfaces_row_pending_on_that_channel(self):
+        resp = self.client.get(self.url, {"approval_status": "pending_review", "channel": str(self.other.id)})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "MIXEDROW")
+
+
+class PortalMixedPostActionTests(TestCase):
+    """A pending_client child must expose client actions even when a lower-ranked
+    sibling makes the derived Post.status something else (finding 3)."""
+
+    def setUp(self):
+        self.org = Organization.objects.create(name="Org")
+        self.ws = Workspace.objects.create(organization=self.org, name="WS")
+        self.client_user = _make_user("client@example.com")
+        WorkspaceMembership.objects.create(user=self.client_user, workspace=self.ws, workspace_role="client")
+        self.author = _make_user("author2@example.com")
+        WorkspaceMembership.objects.create(user=self.author, workspace=self.ws, workspace_role="contributor")
+        self.ig = SocialAccount.objects.create(
+            workspace=self.ws,
+            platform="instagram_business",
+            account_platform_id="ig-1",
+            account_name="IG",
+            connection_status="connected",
+        )
+        self.li = SocialAccount.objects.create(
+            workspace=self.ws,
+            platform="linkedin_personal",
+            account_platform_id="li-1",
+            account_name="LI",
+            connection_status="connected",
+        )
+
+    def _login_portal(self):
+        self.client.force_login(self.client_user)
+        session = self.client.session
+        session["is_portal_session"] = True
+        session["portal_workspace_id"] = str(self.ws.id)
+        session.save()
+
+    def test_mixed_pending_post_exposes_client_actions(self):
+        post = Post.objects.create(workspace=self.ws, author=self.author, title="MIXEDCLIENT", caption="c")
+        PlatformPost.objects.create(post=post, social_account=self.ig, status="pending_client")
+        PlatformPost.objects.create(post=post, social_account=self.li, status="draft")  # lower-ranked sibling
+        # Derived status is the lower-ranked 'draft', which previously hid the buttons.
+        self.assertEqual(post.status, "draft")
+
+        self._login_portal()
+        resp = self.client.get(reverse("client_portal:approval_queue"))
+        self.assertEqual(resp.status_code, 200)
+        approve_url = reverse("client_portal:approve", kwargs={"post_id": post.id})
+        self.assertContains(resp, approve_url)
