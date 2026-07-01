@@ -180,16 +180,12 @@ class TwoStageFlowTests(ApprovalWorkflowBase):
         # be told "approved" yet.
         services.approve_post(post, self.reviewer, self.ws)
         self.assertEqual(post.platform_posts.get().status, "pending_client")
-        self.assertFalse(
-            Notification.objects.filter(user=self.author, event_type=EventType.POST_APPROVED).exists()
-        )
+        self.assertFalse(Notification.objects.filter(user=self.author, event_type=EventType.POST_APPROVED).exists())
 
         # Client sign-off reaches approved — now the author is notified.
         services.approve_post(post, self.reviewer, self.ws)
         self.assertEqual(post.platform_posts.get().status, "approved")
-        self.assertTrue(
-            Notification.objects.filter(user=self.author, event_type=EventType.POST_APPROVED).exists()
-        )
+        self.assertTrue(Notification.objects.filter(user=self.author, event_type=EventType.POST_APPROVED).exists())
 
 
 class DerivedStatusTests(TestCase):
