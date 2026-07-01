@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from urllib.parse import urlencode
 
 from .base import SocialProvider
@@ -25,6 +26,12 @@ logger = logging.getLogger(__name__)
 AUTH_URL = "https://www.threads.com/oauth/authorize"
 TOKEN_URL = "https://graph.threads.net/oauth/access_token"
 API_BASE = "https://graph.threads.net/v1.0"
+
+# Threads ingests media (esp. video) asynchronously: the container must reach
+# status FINISHED before it can be published, otherwise threads_publish fails
+# with "The requested resource does not exist" (code 24 / media not found).
+CONTAINER_POLL_INTERVAL = 3  # seconds
+CONTAINER_POLL_MAX_ATTEMPTS = 40  # up to ~2 min for video processing
 
 
 class ThreadsProvider(SocialProvider):
@@ -259,6 +266,13 @@ class ThreadsProvider(SocialProvider):
                 raw_response=create_body,
             )
 
+        # Step 1b: wait for media containers to finish processing before
+        # publishing. Text-only threads publish instantly, but image/video
+        # containers are ingested asynchronously; publishing too early fails
+        # with "media not found".
+        if container_payload["media_type"] != "TEXT":
+            self._wait_for_container(access_token, creation_id)
+
         # Step 2: Publish the container
         publish_resp = self._request(
             "POST",
@@ -271,6 +285,40 @@ class ThreadsProvider(SocialProvider):
         return PublishResult(
             platform_post_id=thread_id,
             extra=publish_body,
+        )
+
+    def _wait_for_container(self, access_token: str, creation_id: str) -> None:
+        """Poll a Threads media container until it is FINISHED.
+
+        Threads exposes the ingest state via the container's ``status`` field
+        (values: IN_PROGRESS, FINISHED, ERROR, EXPIRED, PUBLISHED). Video
+        containers stay IN_PROGRESS while Meta transcodes the upload; calling
+        threads_publish before FINISHED returns "media not found".
+        """
+        for _ in range(CONTAINER_POLL_MAX_ATTEMPTS):
+            resp = self._request(
+                "GET",
+                f"{API_BASE}/{creation_id}",
+                access_token=access_token,
+                params={"fields": "status,error_message"},
+            )
+            data = resp.json()
+            status = data.get("status", "")
+
+            if status in ("FINISHED", "PUBLISHED"):
+                return
+            if status in ("ERROR", "EXPIRED"):
+                raise PublishError(
+                    f"Threads container failed: {data.get('error_message', status)}",
+                    platform=self.platform_name,
+                    raw_response=data,
+                )
+
+            time.sleep(CONTAINER_POLL_INTERVAL)
+
+        raise PublishError(
+            "Threads container processing timed out",
+            platform=self.platform_name,
         )
 
     def _publish_carousel(
@@ -311,6 +359,10 @@ class ThreadsProvider(SocialProvider):
                     platform=self.platform_name,
                     raw_response=item_body,
                 )
+            # Video children ingest asynchronously; wait before they are
+            # referenced by the carousel container.
+            if media_type == "VIDEO":
+                self._wait_for_container(access_token, item_id)
             children_ids.append(item_id)
 
         # Step 2: Create carousel container
@@ -332,6 +384,8 @@ class ThreadsProvider(SocialProvider):
                 platform=self.platform_name,
                 raw_response=carousel_body,
             )
+
+        self._wait_for_container(access_token, creation_id)
 
         # Step 3: Publish
         publish_resp = self._request(
