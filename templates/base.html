@@ -12,6 +12,7 @@
     <link rel="manifest" href="{% static 'favicon/site.webmanifest' %}">
     <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <script nonce="{{ request.csp_nonce }}">
         // Set sidebar state class on <html> before first paint to prevent flash
         if (localStorage.getItem('sidebarCollapsed') === 'true') {
@@ -210,49 +211,6 @@
     <script nonce="{{ request.csp_nonce }}">
         document.body.addEventListener('htmx:configRequest', function(event) {
             event.detail.headers['X-CSRFToken'] = document.querySelector('[name=csrfmiddlewaretoken]').value;
-        });
-    </script>
-
-    {% comment %}
-      Global htmx error surface. htmx does not swap non-2xx responses, so a
-      server's error text would otherwise be silently dropped (only a console
-      error remains). This listener reads that text (XSS-safe via DOMParser)
-      and either routes it to a form's inline container (via
-      data-inline-error="#selector") or shows the dismissible toast below.
-      A context can opt out entirely with data-no-error-toast.
-    {% endcomment %}
-    <div x-data="{ show: false, message: '', timer: null }"
-         x-show="show"
-         x-cloak
-         x-transition.opacity
-         @htmx-error.window="message = $event.detail.message; show = true; clearTimeout(timer); timer = setTimeout(() => show = false, 6000)"
-         class="fixed top-4 right-4 z-[100] max-w-sm"
-         role="alert" aria-live="assertive">
-        <div class="flex items-start gap-3 rounded-lg px-4 py-3 shadow-lg"
-             style="background: #FEF2F2; border: 1px solid #FCA5A5; color: #991B1B;">
-            <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            <p class="text-sm flex-1" x-text="message"></p>
-            <button type="button" @click="show = false" class="flex-shrink-0 cursor-pointer" style="color: #DC2626;" aria-label="Dismiss">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
-        </div>
-    </div>
-    <script nonce="{{ request.csp_nonce }}">
-        document.body.addEventListener('htmx:responseError', function(event) {
-            var elt = event.detail.elt;
-            // Contexts that manage their own error UI opt out entirely.
-            if (elt && elt.closest('[data-no-error-toast]')) return;
-            // Extract plain text from the response without executing or loading it.
-            var responseText = (event.detail.xhr && event.detail.xhr.responseText) || '';
-            var body = new DOMParser().parseFromString(responseText, 'text/html').body;
-            var message = (body.textContent || '').trim() || 'Something went wrong. Please try again.';
-            // Inline opt-in: write into the form's declared container instead of the toast.
-            var inline = elt && elt.closest('[data-inline-error]');
-            if (inline) {
-                var target = document.querySelector(inline.getAttribute('data-inline-error'));
-                if (target) { target.textContent = message; return; }
-            }
-            window.dispatchEvent(new CustomEvent('htmx-error', { detail: { message: message } }));
         });
     </script>
     {% if user.is_authenticated %}
@@ -651,15 +609,6 @@
                     <span class="sidebar-nav-label">Notifications</span>
                 </a>
 
-                {% if request.workspace %}
-                {% if analytics_enabled_platforms %}
-                <a href="{% url 'analytics:index' workspace_id=request.workspace.id %}" class="mb-1 sidebar-nav-item {% if request.resolver_match.app_name == 'analytics' %}active{% endif %}">
-                    <svg class="flex-shrink-0" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 12l4-4 4 4 6-6"/></svg>
-                    <span class="sidebar-nav-label">Analytics</span>
-                </a>
-                {% endif %}
-                {% endif %}
-
                 {% comment %}
                   Intelligence — opt-in via env. INTELLIGENCE_ENABLED is False
                   for self-hosters who haven't configured the integration, so
@@ -949,84 +898,22 @@
                 }
             }
         });
-    </script>
-    <script src="{% static 'js/alpine.min.js' %}" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
-    <script nonce="{{ request.csp_nonce }}">
-        /* Analytics hero chart: read data attrs off the canvas, (re)create Chart.js.
-           Lives in base.html so its CSP nonce matches the parent page — the chart
-           partial re-renders on HTMX swaps via the htmx:afterSwap hook below. */
-        function bbInitHeroChart(retries) {
-            if (typeof Chart === 'undefined') {
-                /* Chart.js is loaded synchronously above this script, so the
-                   poll should never fire in practice. Cap retries anyway —
-                   if the CDN ever fails (adblock, offline), recursing every
-                   30ms forever burns CPU on every page load. */
-                if ((retries || 0) > 30) return;
-                setTimeout(function () { bbInitHeroChart((retries || 0) + 1); }, 30);
-                return;
-            }
-            var canvas = document.getElementById('analytics-area-chart');
-            if (!canvas) return;
-            var data, labels;
-            try {
-                data = JSON.parse(canvas.dataset.series || '[]');
-                labels = JSON.parse(canvas.dataset.labels || '[]');
-            } catch (e) { return; }
-            var color = '#F97316';
-            if (window._bbHeroChart) { window._bbHeroChart.destroy(); }
-            var ctx = canvas.getContext('2d');
-            var gradient = ctx.createLinearGradient(0, 0, 0, 260);
-            function hexToRgba(c, a) {
-                var v = c.replace('#', '');
-                var r = parseInt(v.slice(0, 2), 16), g = parseInt(v.slice(2, 4), 16), b = parseInt(v.slice(4, 6), 16);
-                return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
-            }
-            gradient.addColorStop(0, hexToRgba(color, 0.28));
-            gradient.addColorStop(1, hexToRgba(color, 0.0));
-            window._bbHeroChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        data: data,
-                        borderColor: color,
-                        backgroundColor: gradient,
-                        fill: true,
-                        tension: 0.32,
-                        pointRadius: 0,
-                        pointHoverRadius: 4,
-                        pointHoverBackgroundColor: color,
-                        borderWidth: 2,
-                    }],
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: { mode: 'index', intersect: false },
-                    },
-                    scales: {
-                        x: { grid: { display: false }, ticks: { maxTicksLimit: 6, color: '#78716C' } },
-                        y: { beginAtZero: true, grid: { color: '#F5F5F4' }, ticks: { color: '#78716C' } },
-                    },
-                },
-            });
-        }
-        // Wrap in a no-arg callback so the DOMContentLoaded event object
-        // doesn't get passed as ``retries`` — that would make
-        // ``(retries || 0) + 1`` string-concatenate the event each tick and
-        // the ``> 30`` cap below would never trip when Chart.js is offline.
-        document.addEventListener('DOMContentLoaded', function () { bbInitHeroChart(); });
-        document.body.addEventListener('htmx:afterSwap', function(evt) {
-            var target = evt.detail && evt.detail.target;
-            if (target && target.id === 'analytics-hero-chart') {
-                bbInitHeroChart();
+        // Catch session expiry / server restart: if HTMX gets back a
+        // login redirect or login page HTML, force a full browser reload
+        // instead of injecting the login page into #tab-content.
+        document.body.addEventListener('htmx:beforeSwap', function(evt) {
+            var xhr = evt.detail.xhr;
+            if (!xhr) return;
+            if (xhr.status === 302 || (xhr.responseURL && xhr.responseURL.indexOf('/accounts/login/') !== -1 || (xhr.responseText && xhr.responseText.indexOf('login-form') !== -1))) {
+                evt.preventDefault();
+                window.location.href = '/accounts/login/';
             }
         });
-
+    </script>
+    <script src="{% static 'js/unsplash-modal.js' %}" defer></script>
+    <script src="{% static 'js/alpine.min.js' %}" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+    <script nonce="{{ request.csp_nonce }}">
         document.addEventListener('DOMContentLoaded', function() {
             document.querySelectorAll('.form-datetime[type="date"]').forEach(function(el) {
                 var fp = flatpickr(el, {
@@ -1388,5 +1275,6 @@
         </div>
     </div>
     {% endif %}
+    {{ unsplash_modal_html|default:'' }}
 </body>
 </html>

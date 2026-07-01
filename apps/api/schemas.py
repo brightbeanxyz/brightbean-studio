@@ -177,6 +177,23 @@ class CreatePostRequest(Schema):
         default_factory=list,
         description="MediaAsset IDs already uploaded to the workspace's media library. Position-ordered.",
     )
+    link_url: str = Field(
+        "",
+        max_length=2_000,
+        description=(
+            "Destination URL for the post. For Pinterest this becomes the pin's outbound link. "
+            "For LinkedIn, Threads, etc. it is appended as the URL the post points to. "
+            "Auto-stored in PlatformPost.platform_extra so providers can read it on publish."
+        ),
+    )
+    alt_text: str = Field(
+        "",
+        max_length=2_000,
+        description=(
+            "Accessibility description of the post's primary media. Required by Pinterest. "
+            "If left empty, the linked MediaAsset's alt_text is used as a fallback."
+        ),
+    )
     platform_overrides: list[PlatformOverride] = Field(
         default_factory=list,
         description=(

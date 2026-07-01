@@ -246,6 +246,31 @@ def bulk_action(request, workspace_id):
             results = services.bulk_reject(post_ids, request.user, workspace, comment_text)
         except ValueError as e:
             return HttpResponse(str(e), status=400)
+    elif action == "delete":
+        from apps.composer.models import Post
+        deleted = 0
+        for post_id in post_ids:
+            try:
+                post = Post.objects.get(id=post_id, workspace=workspace)
+                post.delete()
+                deleted += 1
+            except Post.DoesNotExist:
+                pass
+        results = [(post_id, True, None) for post_id in post_ids[:deleted]]
+    elif action == "publish":
+        from apps.composer.models import PlatformPost
+        from django.utils import timezone
+        now = timezone.now()
+        results = []
+        for post_id in post_ids:
+            try:
+                # Transition all platform-post children to scheduled (publish now)
+                updated = PlatformPost.objects.filter(
+                    post_id=post_id, post__workspace=workspace
+                ).update(status="scheduled", scheduled_at=now)
+                results.append((post_id, updated > 0, None))
+            except Exception:
+                results.append((post_id, False, "Publish failed"))
     else:
         return HttpResponse("Invalid action.", status=400)
 

@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import include, path
+from django.urls import include, path, re_path
 
 from apps.accounts.views import health_check
 from apps.api.api import api as agent_api
@@ -34,6 +34,8 @@ urlpatterns = [
     # is Ninja's (patterns, app_namespace, instance_namespace) tuple,
     # which Django's path() handles natively.
     path("api/v1/", agent_api.urls),
+    # Unsplash stock-media integration — DRF-based API for the modal
+    path("api/v1/", include("apps.unsplash.urls")),
     # OAuth 2.1 Authorization Server for the MCP connector flow (native
     # Claude Desktop login). django-oauth-toolkit serves /oauth/authorize/
     # + /oauth/token/ + /oauth/revoke_token/; apps.oauth_server adds DCR
@@ -103,3 +105,10 @@ if settings.INTELLIGENCE_ENABLED:
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+else:
+    # In production, serve media files directly — Railway doesn't have a
+    # reverse proxy to handle /media/ URLs, so Django must serve them.
+    from django.views.static import serve
+    urlpatterns += [
+        re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
+    ]

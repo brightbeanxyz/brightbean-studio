@@ -85,6 +85,8 @@ def create_post(
     author=None,
     status: str = "draft",
     platform_overrides: dict[Any, dict[str, str | None]] | None = None,
+    link_url: str = "",
+    alt_text: str = "",
 ):
     """Create a ``Post`` + one ``PlatformPost`` for ``social_account``.
 
@@ -174,6 +176,31 @@ def create_post(
 
     override = (platform_overrides or {}).get(social_account.id) or {}
 
+    # Pinterest requires destination link + alt text. We persist them on
+    # ``PlatformPost.platform_extra`` so the publisher picks them up at
+    # push time (Pinterest provider reads ``content.link_url`` and
+    # ``content.extra['alt_text']``).
+    #
+    # Fall back to the linked MediaAsset's alt_text if the caller left
+    # it blank — that field is already populated by the auto-media
+    # pipeline when an image is uploaded with descriptive metadata.
+    resolved_alt_text = alt_text
+    if not resolved_alt_text and resolved:
+        # ``resolved`` is a list of (raw_id, UUID | None); the first
+        # entry whose UUID is present in asset_map gives us the asset.
+        for _, u in resolved:
+            if u and u in asset_map:
+                first_asset = asset_map[u]
+                if first_asset.alt_text:
+                    resolved_alt_text = first_asset.alt_text
+                break
+
+    platform_extra: dict[str, Any] = {}
+    if link_url:
+        platform_extra["link_url"] = link_url
+    if resolved_alt_text:
+        platform_extra["alt_text"] = resolved_alt_text
+
     with transaction.atomic():
         post = Post.objects.create(
             workspace=workspace,
@@ -200,6 +227,7 @@ def create_post(
             platform_specific_title=override.get("title"),
             platform_specific_caption=override.get("caption"),
             platform_specific_first_comment=override.get("first_comment"),
+            platform_extra=platform_extra or {},
         )
         for position, (_mid, u) in enumerate(resolved):
             # ``u`` is validated non-None and present in ``asset_map`` above

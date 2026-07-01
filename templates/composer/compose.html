@@ -2551,12 +2551,6 @@ function composerApp() {
             if (event.detail.elt !== event.currentTarget) return;
             const xhr = event.detail.xhr;
             if (event.detail.successful) {
-                const action = document.getElementById('publish-action-btn')?.value;
-                if (action === 'schedule' || action === 'publish_now' || action === 'add_to_queue' || action === 'add_to_queue_priority') {
-                    // Redirect to calendar after scheduling/publishing/queuing
-                    window.location.href = '{% url "calendar:calendar" workspace_id=workspace.id %}';
-                    return;
-                }
                 this.showSaveToast = true;
                 const now = new Date();
                 this.lastSaved = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

@@ -1,1 +1,25 @@
-{% extends "allauth/layouts/entrance.html" %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}BrightBean Studio{% endblock %}</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
+    <script src="{% static 'js/alpine.min.js' %}" defer></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #faf7f2 0%, #f5efe6 50%, #ede4d8 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="font-sans antialiased">
+    {% block auth_content %}{% endblock %}
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
