@@ -1503,6 +1503,11 @@
                 <svg class="w-4 h-4 text-teal-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                 <span class="text-sm font-medium text-teal-700">Approved - saving changes sends it back for re-approval</span>
             </div>
+            {% elif post.status == 'on_hold' %}
+            <div class="flex items-center gap-2 px-3 py-2 rounded-lg mb-3" style="background:#F5F3FF;border:1px solid #DDD6FE;">
+                <svg class="w-4 h-4 flex-shrink-0" style="color:#7C3AED;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                <span class="text-sm font-medium" style="color:#6D28D9;">On hold - a client paused this; resume it from the approvals queue</span>
+            </div>
             {% endif %}
 
             <!-- Reviewer feedback to address (latest changes-requested / rejected comment) -->
@@ -1522,14 +1527,15 @@
 
             <!-- Inline approval actions for reviewers -->
             {% if can_approve and post.status == 'pending_review' or can_approve and post.status == 'pending_client' %}
-            <div class="flex gap-2 mb-3 relative" x-data="{ showReviewComment: false }">
+            <div class="flex gap-2 mb-3 relative" x-data="{ showReviewComment: false, reviewComment: '' }">
                 <button hx-post="{% url 'approvals:approve' workspace_id=workspace.id post_id=post.id %}" hx-swap="none"
                         class="px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500 hover:bg-emerald-600 text-white transition-colors">Approve</button>
                 <button @click="showReviewComment = !showReviewComment" class="px-3 py-1.5 text-xs font-semibold rounded-full border border-stone-200 text-stone-600 hover:bg-stone-50 transition-colors">Request Changes</button>
                 <div x-show="showReviewComment" x-cloak class="absolute mt-9 z-10 bg-white rounded-lg shadow-lg border border-stone-200 p-3 w-80">
-                    <textarea id="composer-review-comment" name="comment" rows="2" required class="w-full px-2 py-1.5 text-sm border border-stone-200 rounded-lg resize-none" placeholder="What needs to change?"></textarea>
+                    <textarea id="composer-review-comment" name="comment" rows="2" x-model="reviewComment" class="w-full px-2 py-1.5 text-sm border border-stone-200 rounded-lg resize-none" placeholder="What needs to change?"></textarea>
                     <button hx-post="{% url 'approvals:request_changes' workspace_id=workspace.id post_id=post.id %}"
                             hx-include="#composer-review-comment" hx-swap="none"
+                            :disabled="!reviewComment.trim()" :class="!reviewComment.trim() && 'opacity-50 cursor-not-allowed'"
                             class="mt-2 px-3 py-1 text-xs font-semibold rounded-full bg-amber-500 text-white">Submit</button>
                 </div>
             </div>

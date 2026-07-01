@@ -140,6 +140,16 @@ class HoldTests(ApprovalWorkflowBase):
         self.assertFalse(pp.can_transition_to("scheduled"))
         self.assertFalse(pp.can_transition_to("publishing"))
 
+    def test_hold_notification_defaults_to_email(self):
+        from apps.notifications.engine import _resolve_channels
+        from apps.notifications.models import Channel, EventType
+
+        # A reviewer with no explicit preferences must still get the client-hold
+        # notice by email (the event needs a DEFAULT_CHANNELS entry).
+        channels = _resolve_channels(self.reviewer, EventType.APPROVAL_HOLD_REQUESTED)
+        self.assertIn(Channel.EMAIL, channels)
+        self.assertIn(Channel.IN_APP, channels)
+
 
 class TwoStageFlowTests(ApprovalWorkflowBase):
     def test_submit_approve_client_hold_path(self):
@@ -159,6 +169,28 @@ class TwoStageFlowTests(ApprovalWorkflowBase):
         services.request_hold(post, self.author, self.ws, "Hold for a sec")
         self.assertEqual(post.platform_posts.get().status, "on_hold")
 
+    def test_two_stage_defers_approved_notification_to_client_signoff(self):
+        from apps.notifications.models import EventType, Notification
+
+        self.ws.approval_workflow_mode = "required_internal_and_client"
+        self.ws.save(update_fields=["approval_workflow_mode"])
+        post = self._post("pending_review")
+
+        # Internal approval only advances to pending_client — the author must NOT
+        # be told "approved" yet.
+        services.approve_post(post, self.reviewer, self.ws)
+        self.assertEqual(post.platform_posts.get().status, "pending_client")
+        self.assertFalse(
+            Notification.objects.filter(user=self.author, event_type=EventType.POST_APPROVED).exists()
+        )
+
+        # Client sign-off reaches approved — now the author is notified.
+        services.approve_post(post, self.reviewer, self.ws)
+        self.assertEqual(post.platform_posts.get().status, "approved")
+        self.assertTrue(
+            Notification.objects.filter(user=self.author, event_type=EventType.POST_APPROVED).exists()
+        )
+
 
 class DerivedStatusTests(TestCase):
     def test_held_child_surfaces_at_post_level(self):
@@ -170,6 +202,14 @@ class DerivedStatusTests(TestCase):
         self.assertEqual(derive_post_status(["on_hold"]), "on_hold")
         self.assertEqual(derive_post_status(["on_hold", "approved"]), "on_hold")
         self.assertEqual(derive_post_status(["on_hold", "scheduled"]), "on_hold")
+
+    def test_on_hold_does_not_mask_published(self):
+        from apps.composer.status import derive_post_status
+
+        # A channel that has already published must not be hidden behind a held
+        # sibling — surface the partial outcome instead of "on_hold".
+        self.assertEqual(derive_post_status(["published", "on_hold"]), "partially_published")
+        self.assertEqual(derive_post_status(["published", "failed", "on_hold"]), "partially_published")
 
 
 class HoldPublishGuardTests(ApprovalWorkflowBase):
@@ -217,6 +257,35 @@ class HoldPublishGuardTests(ApprovalWorkflowBase):
         PublishEngine()._publish_post_group(sched.post, [sched])
         sched.refresh_from_db()
         self.assertEqual(sched.status, "scheduled")
+
+    def test_retry_path_skips_post_with_held_sibling(self):
+        from datetime import timedelta
+
+        from apps.publisher.engine import PublishEngine
+
+        # A retrying scheduled child (retry_count>0) shares status=SCHEDULED with
+        # the primary path; the hold guard must cover it too so a held post's
+        # retrying sibling doesn't publish.
+        post = Post.objects.create(workspace=self.ws, author=self.author, caption="x")
+        retry_pp = PlatformPost.objects.create(
+            post=post,
+            social_account=self.account,
+            status="scheduled",
+            retry_count=1,
+            next_retry_at=timezone.now() - timedelta(minutes=1),
+        )
+        acct2 = SocialAccount.objects.create(
+            workspace=self.ws,
+            platform="instagram_business",
+            account_platform_id="ig-r",
+            account_name="IGr",
+            connection_status="connected",
+        )
+        PlatformPost.objects.create(post=post, social_account=acct2, status="on_hold")
+
+        PublishEngine()._process_retries()
+        retry_pp.refresh_from_db()
+        self.assertEqual(retry_pp.status, "scheduled")
 
 
 class ApprovedEditReReviewTests(ApprovalWorkflowBase):

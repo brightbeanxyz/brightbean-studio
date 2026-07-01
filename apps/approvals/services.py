@@ -72,6 +72,21 @@ def _record_action(post, platform_post, user, action, comment=""):
     )
 
 
+def _notify_reviewers(workspace, actor, *, post, event_type, title, body):
+    """Notify every workspace member with ``approve_posts`` (except the actor)."""
+    reviewers = WorkspaceMembership.objects.filter(workspace=workspace).select_related("user", "custom_role")
+    for membership in reviewers:
+        perms = membership.effective_permissions
+        if perms.get("approve_posts", False) and membership.user != actor:
+            notify(
+                user=membership.user,
+                event_type=event_type,
+                title=title,
+                body=body,
+                data={"post_id": str(post.id), "workspace_id": str(workspace.id)},
+            )
+
+
 # ---------------------------------------------------------------------------
 # Public service functions
 # ---------------------------------------------------------------------------
@@ -104,20 +119,14 @@ def submit_for_review(target, user, workspace):
         )
 
     # Notify all reviewers (members with approve_posts permission)
-    reviewers = WorkspaceMembership.objects.filter(workspace=workspace).select_related("user", "custom_role")
-    for membership in reviewers:
-        perms = membership.effective_permissions
-        if perms.get("approve_posts", False) and membership.user != user:
-            notify(
-                user=membership.user,
-                event_type=EventType.POST_SUBMITTED,
-                title="Post submitted for review",
-                body=f'{user.display_name} submitted a post for your review: "{post.caption_snippet}"',
-                data={
-                    "post_id": str(post.id),
-                    "workspace_id": str(workspace.id),
-                },
-            )
+    _notify_reviewers(
+        workspace,
+        user,
+        post=post,
+        event_type=EventType.POST_SUBMITTED,
+        title="Post submitted for review",
+        body=f'{user.display_name} submitted a post for your review: "{post.caption_snippet}"',
+    )
 
     return post
 
@@ -162,7 +171,10 @@ def approve_post(target, user, workspace, comment=""):
             )
             _notify_clients(post, workspace)
 
-    if post.author and post.author != user:
+    # Only tell the author "approved" when the post actually reached approved —
+    # in two-stage mode an internal approval that advances to pending_client is
+    # not done yet (the client still has to sign off, which re-enters this fn).
+    if post.author and post.author != user and not advanced_to_client:
         notify(
             user=post.author,
             event_type=EventType.POST_APPROVED,
@@ -330,20 +342,14 @@ def resubmit_post(target, user, workspace):
             defaults={"reminder_count": 0, "last_reminder_at": None, "escalated": False},
         )
 
-    reviewers = WorkspaceMembership.objects.filter(workspace=workspace).select_related("user", "custom_role")
-    for membership in reviewers:
-        perms = membership.effective_permissions
-        if perms.get("approve_posts", False) and membership.user != user:
-            notify(
-                user=membership.user,
-                event_type=EventType.POST_SUBMITTED,
-                title="Post resubmitted for review",
-                body=f'{user.display_name} resubmitted a post: "{post.caption_snippet}"',
-                data={
-                    "post_id": str(post.id),
-                    "workspace_id": str(workspace.id),
-                },
-            )
+    _notify_reviewers(
+        workspace,
+        user,
+        post=post,
+        event_type=EventType.POST_SUBMITTED,
+        title="Post resubmitted for review",
+        body=f'{user.display_name} resubmitted a post: "{post.caption_snippet}"',
+    )
 
     return post
 
@@ -391,20 +397,14 @@ def bulk_reject(post_ids, user, workspace, comment):
 
 def _notify_reviewers_of_hold(post, workspace, user, comment):
     """Notify reviewers (approve_posts holders) that a client put a post on hold."""
-    reviewers = WorkspaceMembership.objects.filter(workspace=workspace).select_related("user", "custom_role")
-    for membership in reviewers:
-        perms = membership.effective_permissions
-        if perms.get("approve_posts", False) and membership.user != user:
-            notify(
-                user=membership.user,
-                event_type=EventType.APPROVAL_HOLD_REQUESTED,
-                title="Client requested a hold",
-                body=f'{user.display_name} put a post on hold: "{comment[:100]}"',
-                data={
-                    "post_id": str(post.id),
-                    "workspace_id": str(workspace.id),
-                },
-            )
+    _notify_reviewers(
+        workspace,
+        user,
+        post=post,
+        event_type=EventType.APPROVAL_HOLD_REQUESTED,
+        title="Client requested a hold",
+        body=f'{user.display_name} put a post on hold: "{comment[:100]}"',
+    )
 
 
 def _notify_clients(post, workspace):

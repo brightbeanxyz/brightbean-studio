@@ -24,6 +24,13 @@ STATUS_META = {
     "scheduled": {"label": "Scheduled", "dot": "#3B82F6", "bg": "#EFF6FF", "fg": "#1D4ED8", "bd": "#BFDBFE"},
     "publishing": {"label": "Publishing", "dot": "#6366F1", "bg": "#EEF2FF", "fg": "#4338CA", "bd": "#C7D2FE"},
     "published": {"label": "Published", "dot": "#22C55E", "bg": "#F0FDF4", "fg": "#15803D", "bd": "#BBF7D0"},
+    "partially_published": {
+        "label": "Partially Published",
+        "dot": "#F59E0B",
+        "bg": "#FFFBEB",
+        "fg": "#B45309",
+        "bd": "#FDE68A",
+    },
     "failed": {"label": "Failed", "dot": "#EF4444", "bg": "#FEF2F2", "fg": "#B91C1C", "bd": "#FECACA"},
     "on_hold": {"label": "Hold Requested", "dot": "#7C3AED", "bg": "#F5F3FF", "fg": "#6D28D9", "bd": "#DDD6FE"},
 }

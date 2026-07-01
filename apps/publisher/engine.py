@@ -558,14 +558,23 @@ class PublishEngine:
     def _process_retries(self):
         """Process platform posts that are due for retry."""
         now = timezone.now()
-        retry_posts = PlatformPost.objects.filter(
-            status=PlatformPost.Status.SCHEDULED,
-            retry_count__gt=0,
-            retry_count__lte=MAX_RETRIES,
-            next_retry_at__lte=now,
-        ).select_related("social_account", "post")
+        # Mirror the primary due-query's hold guard: a retrying child must not
+        # publish while any sibling is on_hold (the exclude covers the query
+        # window; the per-row re-check below closes a hold placed after it).
+        retry_posts = (
+            PlatformPost.objects.filter(
+                status=PlatformPost.Status.SCHEDULED,
+                retry_count__gt=0,
+                retry_count__lte=MAX_RETRIES,
+                next_retry_at__lte=now,
+            )
+            .exclude(post__platform_posts__status=PlatformPost.Status.ON_HOLD)
+            .select_related("social_account", "post")
+        )
 
         for pp in retry_posts:
+            if pp.post.platform_posts.filter(status=PlatformPost.Status.ON_HOLD).exists():
+                continue
             try:
                 pp.status = PlatformPost.Status.PUBLISHING
                 pp.save(update_fields=["status", "updated_at"])

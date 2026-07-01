@@ -68,4 +68,10 @@ def derive_post_status(statuses):
         except ValueError:
             return len(_WORKFLOW_ORDER)
 
-    return min(unique, key=_rank)
+    result = min(unique, key=_rank)
+    # A client hold ranks low so it surfaces over approved/scheduled siblings, but
+    # it must not shadow a channel that has already published — report the partial
+    # outcome instead of hiding "published" behind "on_hold".
+    if result == "on_hold" and "published" in unique:
+        return "partially_published"
+    return result

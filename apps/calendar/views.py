@@ -555,6 +555,7 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
             approved=Count("id", filter=Q(platform_posts__status="approved"), distinct=True),
             rejected=Count("id", filter=Q(platform_posts__status="rejected"), distinct=True),
             changes_requested=Count("id", filter=Q(platform_posts__status="changes_requested"), distinct=True),
+            on_hold=Count("id", filter=Q(platform_posts__status="on_hold"), distinct=True),
         )
     )
 
@@ -574,6 +575,7 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
         "approved_count": counts["approved"],
         "rejected_count": counts["rejected"],
         "changes_requested_count": counts["changes_requested"],
+        "on_hold_count": counts["on_hold"],
     }
 
 

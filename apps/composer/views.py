@@ -516,7 +516,11 @@ def compose(request, workspace_id, post_id=None):
     if post:
         from apps.approvals.models import ApprovalAction
 
-        approval_history = list(ApprovalAction.objects.filter(post=post).select_related("user").order_by("-created_at"))
+        # Show recent history (bounded) — a heavily-cycled post can accumulate
+        # unboundedly many actions; 50 is plenty for the timeline.
+        approval_history = list(
+            ApprovalAction.objects.filter(post=post).select_related("user").order_by("-created_at")[:50]
+        )
         # Most recent reviewer feedback to surface in the edit banner.
         latest_feedback = next(
             (a for a in approval_history if a.action in ("changes_requested", "rejected") and a.comment),
