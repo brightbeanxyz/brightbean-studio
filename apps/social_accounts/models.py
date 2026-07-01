@@ -136,6 +136,7 @@ class SocialAccount(models.Model):
         "bluesky": 300,
         "google_business": 1500,
         "mastodon": 500,
+        "devto": 25000,
     }
 
     @property
@@ -166,6 +167,13 @@ class SocialAccount(models.Model):
             "supports_first_comment": False,
         },
         "google_business": {
+            "supports_first_comment": False,
+        },
+        "devto": {
+            "needs_title": True,
+            "title_max_length": 128,
+            "title_label": "Article Title",
+            "caption_label": "Body (Markdown)",
             "supports_first_comment": False,
         },
     }
@@ -218,6 +226,7 @@ class SocialAccount(models.Model):
             "bluesky": "bs",
             "google_business": "gb",
             "mastodon": "ma",
+            "devto": "dv",
         }
         return icons.get(self.platform, self.platform[:2])
 
