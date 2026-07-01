@@ -5,13 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}BrightBean Studio{% endblock %}</title>
     {% load static %}
+    <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
     <script src="{% static 'js/alpine.min.js' %}" defer></script>
-    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        :root {
-            --primary: #ea580c;
-            --primary-hover: #c2410c;
-        }
         body {
             background: linear-gradient(135deg, #faf7f2 0%, #f5efe6 50%, #ede4d8 100%);
             min-height: 100vh;
