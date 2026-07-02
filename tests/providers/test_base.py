@@ -24,6 +24,7 @@ class TestProviderRegistry:
             "bluesky",
             "google_business",
             "mastodon",
+            "devto",
         }
         assert set(PROVIDER_REGISTRY.keys()) == expected
 
