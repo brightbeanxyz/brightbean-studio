@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .bluesky import BlueskyProvider
+from .devto import DevtoProvider
 from .facebook import FacebookProvider
 from .google_business import GoogleBusinessProvider
 from .instagram import InstagramProvider
@@ -37,6 +38,7 @@ PROVIDER_REGISTRY: dict[str, type[SocialProvider]] = {
     "bluesky": BlueskyProvider,
     "google_business": GoogleBusinessProvider,
     "mastodon": MastodonProvider,
+    "devto": DevtoProvider,
 }
 
 

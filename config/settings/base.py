@@ -435,6 +435,9 @@ PLATFORM_CREDENTIALS_FROM_ENV = {
     # on first connect and persisted in MastodonAppRegistration. No repo-wide
     # credentials apply.
     "mastodon": {},
+    # DEV.to - per-account API key (no OAuth). The key is supplied by the user
+    # at connect time, so no app-level credentials apply (same as Bluesky).
+    "devto": {},
 }
 
 # Webhook verification
