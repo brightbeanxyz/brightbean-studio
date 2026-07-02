@@ -30,7 +30,7 @@ from django.utils import timezone
 from apps.composer.models import PlatformPost
 from apps.credentials.models import resolve_platform_credentials
 from providers import get_provider
-from providers.types import AuthType, PostType, PublishContent
+from providers.types import PostType, PublishContent
 
 from .models import PublishLog, RateLimitState
 
@@ -321,11 +321,14 @@ class PublishEngine:
         credentials = _resolve_publish_credentials(account)
         provider = get_provider(platform, credentials)
 
-        # Refresh token if expired or expiring soon (OAuth2 providers only).
+        # Refresh token if expired or expiring soon, for any provider that has
+        # a refresh token stored. This covers OAuth2 providers *and* session
+        # providers like Bluesky, whose accessJwt expires after only a few
+        # hours and must be renewed via refreshSession before each publish.
         # Best-effort: on refresh failure we keep the old token and let the
         # publish attempt surface the real error.
         access_token = account.oauth_access_token
-        if account.token_expires_at and account.is_token_expiring_soon and provider.auth_type == AuthType.OAUTH2:
+        if account.token_expires_at and account.is_token_expiring_soon and account.oauth_refresh_token:
             try:
                 access_token = account.refresh_oauth_token(provider)
                 logger.info("Refreshed token for %s", account)
