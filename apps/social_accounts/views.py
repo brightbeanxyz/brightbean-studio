@@ -611,7 +611,7 @@ def connect_devto(request, workspace_id):
     except Exception:
         logger.exception("DEV.to connection failed")
         messages.error(request, "Failed to connect DEV.to account. Check your API key.")
-        return render(request, "social_accounts/devto_connect.html", context)
+        return render(request, "social_accounts/devto_connect.html", {"workspace_id": workspace_id})
 
     return redirect("calendar:calendar", workspace_id=workspace_id)
 
