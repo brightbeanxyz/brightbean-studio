@@ -33,7 +33,9 @@ def unsplash_modal(request):
     # Inject window.drfToken so the Unsplash JS can auth API calls
     token_script = ""
     if token:
-        token_script = f"<script>window.drfToken = '{token}';</script>"
+        nonce = getattr(request, 'csp_nonce', '')
+        nonce_attr = f' nonce="{nonce}"' if nonce else ''
+        token_script = f"<script{nonce_attr}>window.drfToken = '{token}';</script>"
 
     return {
         "unsplash_modal_html": mark_safe(modal_html + token_script),
