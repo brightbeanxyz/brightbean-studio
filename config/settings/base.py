@@ -276,6 +276,14 @@ if EMAIL_BACKEND_TYPE == "smtp":
     EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
     EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
     EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+elif EMAIL_BACKEND_TYPE == "ses_api":
+    EMAIL_BACKEND = "django_ses.SESBackend"
+    # django-ses pulls AWS credentials from env vars:
+    #   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION
+    # Or from the IMDS / ~/.aws/credentials chain.
+    AWS_ACCESS_KEY_ID = env("AWS_ACCESS_KEY_ID", default="")
+    AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", default="")
+    AWS_DEFAULT_REGION = env("AWS_DEFAULT_REGION", default="us-east-1")
 else:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
