@@ -56,6 +56,31 @@ def _encode_urn(urn: str) -> str:
     return quote(urn, safe="")
 
 
+# Characters LinkedIn treats as reserved in the Posts API "commentary"
+# (little-text) field. If any is sent unescaped, LinkedIn silently truncates the
+# commentary at the first occurrence (e.g. a "(" drops everything after it).
+# Each must be prefixed with a backslash to render literally.
+# https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/posts-api
+_LINKEDIN_RESERVED_CHARS = "|{}@[]()<>#*_~"
+
+
+def _escape_commentary(text: str) -> str:
+    """Escape LinkedIn's reserved little-text characters in post/comment text.
+
+    LinkedIn's Posts API truncates ``commentary`` at the first unescaped
+    reserved character, so a caption like "Va al repo (durable)" would publish
+    as just "Va al repo ". Prefix each reserved char with a backslash so the
+    full text renders literally. The backslash itself is escaped first to avoid
+    double-escaping the escapes we add.
+    """
+    if not text:
+        return text
+    escaped = text.replace("\\", "\\\\")
+    for ch in _LINKEDIN_RESERVED_CHARS:
+        escaped = escaped.replace(ch, "\\" + ch)
+    return escaped
+
+
 class LinkedInProvider(SocialProvider):
     """LinkedIn Marketing API v2 provider."""
 
@@ -228,7 +253,7 @@ class LinkedInProvider(SocialProvider):
     def _build_post_body(self, author: str, commentary: str) -> dict:
         return {
             "author": author,
-            "commentary": commentary,
+            "commentary": _escape_commentary(commentary),
             "visibility": "PUBLIC",
             "distribution": {
                 "feedDistribution": "MAIN_FEED",
@@ -493,7 +518,7 @@ class LinkedInProvider(SocialProvider):
             headers=LINKEDIN_HEADERS,
             json={
                 "actor": actor,
-                "message": {"text": text},
+                "message": {"text": _escape_commentary(text)},
             },
         )
         data = resp.json()
@@ -599,7 +624,7 @@ class LinkedInProvider(SocialProvider):
             headers=LINKEDIN_HEADERS,
             json={
                 "actor": actor,
-                "message": {"text": text},
+                "message": {"text": _escape_commentary(text)},
                 "parentComment": message_id,
             },
         )
