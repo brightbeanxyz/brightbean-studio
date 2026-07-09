@@ -401,6 +401,71 @@ register_tool(
 
 
 # ---------------------------------------------------------------------------
+# Tool: list_posts
+# ---------------------------------------------------------------------------
+
+
+def _list_posts(args: dict, context: dict[str, Any]) -> dict:
+    api_key = context["api_key"]
+    allowed = {sa.id for sa in api_key.social_accounts.all()}
+
+    qs = (
+        Post.objects.filter(workspace_id=api_key.workspace_id)
+        .prefetch_related("platform_posts__social_account")
+        .order_by("-scheduled_at", "-created_at")
+    )
+    status = args.get("status")
+    if status:
+        qs = qs.filter(platform_posts__status=status).distinct()
+
+    try:
+        limit = min(max(int(args.get("limit", 50)), 1), 100)
+    except (TypeError, ValueError):
+        limit = 50
+
+    posts: list[dict] = []
+    # Bound the scan so a huge workspace can't blow up the response; the
+    # allowlist filter runs in Python because it needs every child row.
+    for post in qs[:500]:
+        pp_account_ids = {pp.social_account_id for pp in post.platform_posts.all()}
+        # Same visibility rule as get_post: every child must be allowlisted, so a
+        # partial-scope key never learns about sibling accounts.
+        if not pp_account_ids or not pp_account_ids.issubset(allowed):
+            continue
+        posts.append(_serialize_post(post, context))
+        if len(posts) >= limit:
+            break
+    return _wrap_text({"posts": posts, "count": len(posts)})
+
+
+register_tool(
+    Tool(
+        name="list_posts",
+        description=(
+            "List posts in this API key's workspace, newest first. Fills the gap left by get_post "
+            "(which needs an id you may not have yet). Each item has the same shape as get_post "
+            "(aggregate status + per-platform child state). Only posts whose every platform target is "
+            "in the key's allowlist are returned. Optional `status` filter "
+            "(draft, pending_review, pending_client, approved, scheduled, publishing, published, failed, "
+            "on_hold) and `limit` (default 50, max 100)."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "description": "Optional per-platform status to filter by.",
+                },
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+            },
+            "additionalProperties": False,
+        },
+        handler=_list_posts,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
 # Tool: cancel_post
 # ---------------------------------------------------------------------------
 
