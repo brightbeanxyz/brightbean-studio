@@ -106,11 +106,14 @@ class InstagramProvider(SocialProvider):
 
     @property
     def required_scopes(self) -> list[str]:
+        # Meta renamed Instagram permissions with an "instagram_business_"
+        # prefix; the old names (instagram_basic, instagram_content_publish,
+        # etc.) are now rejected as invalid scopes.
         return [
-            "instagram_basic",
-            "instagram_content_publish",
-            "instagram_manage_comments",
-            "instagram_manage_insights",
+            "instagram_business_basic",
+            "instagram_business_content_publish",
+            "instagram_business_manage_comments",
+            "instagram_business_manage_insights",
             "pages_show_list",
             "pages_read_engagement",
         ]
