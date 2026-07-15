@@ -358,8 +358,13 @@ if SENTRY_DSN:
 
 # Platform credentials env vars (cloud version)
 _META_CREDENTIALS = {
-    "app_id": env("PLATFORM_FACEBOOK_APP_ID", default=""),
-    "app_secret": env("PLATFORM_FACEBOOK_APP_SECRET", default=""),
+    # The existing PnC Meta app is configured through the Instagram Business
+    # use case. Keep the dedicated Instagram variables as a compatibility
+    # fallback so an existing deployment can use the same app without a
+    # destructive secret rotation.
+    "app_id": env("PLATFORM_FACEBOOK_APP_ID", default="") or env("PLATFORM_INSTAGRAM_APP_ID", default=""),
+    "app_secret": env("PLATFORM_FACEBOOK_APP_SECRET", default="")
+    or env("PLATFORM_INSTAGRAM_APP_SECRET", default=""),
 }
 _GOOGLE_CREDENTIALS = {
     "client_id": env("PLATFORM_GOOGLE_CLIENT_ID", default=""),
