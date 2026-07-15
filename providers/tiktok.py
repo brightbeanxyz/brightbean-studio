@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
 import os
 from datetime import datetime
@@ -82,8 +83,23 @@ CONTENT_TYPE_BY_EXT = {
 }
 
 
+def _pkce_code_challenge(code_verifier: str) -> str:
+    """Derive TikTok's PKCE ``code_challenge`` from a ``code_verifier``.
+
+    TikTok deviates from RFC 7636: the challenge is the HEX-encoded SHA256 of
+    the verifier (a 64-char hex string), NOT the base64url encoding that
+    standard PKCE clients use. TikTok only supports the ``S256`` method.
+    See https://developers.tiktok.com/doc/login-kit-desktop/
+    """
+    return hashlib.sha256(code_verifier.encode("ascii")).hexdigest()
+
+
 class TikTokProvider(SocialProvider):
     """TikTok Content Posting API provider using OAuth 2.0."""
+
+    # TikTok requires PKCE on the authorization request (for desktop/native
+    # apps and localhost redirect URIs); see ``_pkce_code_challenge``.
+    uses_pkce = True
 
     # ------------------------------------------------------------------
     # Metadata
@@ -127,12 +143,9 @@ class TikTokProvider(SocialProvider):
 
     @property
     def analytics_only_scopes(self) -> list[str]:
-        # ``video.list`` lets us read per-video stats; ``user.info.profile`` +
-        # ``user.info.stats`` enable account-level totals via /v2/user/info/.
-        # All three are gated behind the analytics platform toggle so a
-        # publish-only TikTok app (whose review hasn't approved them yet)
-        # can still connect accounts.
-        return ["user.info.profile", "user.info.stats", "video.list"]
+        # ``video.list`` lets us read per-video stats. Keep TikTok analytics
+        # video-only so sandbox apps don't need the profile/stat scopes.
+        return ["video.list"]
 
     @property
     def rate_limits(self) -> RateLimitConfig:
@@ -146,7 +159,7 @@ class TikTokProvider(SocialProvider):
     # OAuth
     # ------------------------------------------------------------------
 
-    def get_auth_url(self, redirect_uri: str, state: str) -> str:
+    def get_auth_url(self, redirect_uri: str, state: str, code_verifier: str | None = None) -> str:
         params = {
             "client_key": self.credentials["client_key"],
             "redirect_uri": redirect_uri,
@@ -154,20 +167,22 @@ class TikTokProvider(SocialProvider):
             "scope": ",".join(self.required_scopes),
             "response_type": "code",
         }
+        if code_verifier:
+            params["code_challenge"] = _pkce_code_challenge(code_verifier)
+            params["code_challenge_method"] = "S256"
         return f"{AUTH_URL}?{urlencode(params)}"
 
-    def exchange_code(self, code: str, redirect_uri: str) -> OAuthTokens:
-        resp = self._request(
-            "POST",
-            TOKEN_URL,
-            data={
-                "client_key": self.credentials["client_key"],
-                "client_secret": self.credentials["client_secret"],
-                "code": code,
-                "grant_type": "authorization_code",
-                "redirect_uri": redirect_uri,
-            },
-        )
+    def exchange_code(self, code: str, redirect_uri: str, code_verifier: str | None = None) -> OAuthTokens:
+        data = {
+            "client_key": self.credentials["client_key"],
+            "client_secret": self.credentials["client_secret"],
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+        }
+        if code_verifier:
+            data["code_verifier"] = code_verifier
+        resp = self._request("POST", TOKEN_URL, data=data)
         body = resp.json()
         if "access_token" not in body:
             raise OAuthError(
@@ -262,6 +277,7 @@ class TikTokProvider(SocialProvider):
                 platform=self.platform_name,
             )
 
+        privacy_level_is_explicit = "privacy_level" in content.extra
         privacy_level = content.extra.get("privacy_level", DEFAULT_PRIVACY_LEVEL)
         if privacy_level not in VALID_PRIVACY_LEVELS:
             raise PublishError(
@@ -270,7 +286,12 @@ class TikTokProvider(SocialProvider):
                 retryable=False,
             )
 
-        self._check_creator_constraints(access_token, privacy_level, content)
+        privacy_level = self._check_creator_constraints(
+            access_token,
+            privacy_level,
+            content,
+            privacy_level_is_explicit=privacy_level_is_explicit,
+        )
 
         # Prefer FILE_UPLOAD: PULL_FROM_URL requires the source domain to be
         # verified with TikTok, which presigned S3/R2 URLs can't satisfy.
@@ -284,7 +305,14 @@ class TikTokProvider(SocialProvider):
             retryable=False,
         )
 
-    def _check_creator_constraints(self, access_token: str, privacy_level: str, content: PublishContent) -> None:
+    def _check_creator_constraints(
+        self,
+        access_token: str,
+        privacy_level: str,
+        content: PublishContent,
+        *,
+        privacy_level_is_explicit: bool,
+    ) -> str:
         """Validate privacy level and video duration against creator_info.
 
         A creator_info failure is logged and ignored — a transient outage of
@@ -295,22 +323,25 @@ class TikTokProvider(SocialProvider):
             info = self.query_creator_info(access_token)
         except Exception:
             logger.warning("TikTok creator_info query failed; proceeding with publish", exc_info=True)
-            return
+            return privacy_level
 
         options = info.get("privacy_level_options") or []
         if options and privacy_level not in options:
-            message = (
-                f"TikTok does not allow privacy level '{privacy_level}' for this "
-                f"account (allowed: {', '.join(options)})."
-            )
-            if options == ["SELF_ONLY"]:
-                message = f"{message} {UNAUDITED_CLIENT_HINT}"
-            raise PublishError(
-                message,
-                platform=self.platform_name,
-                raw_response=info,
-                retryable=False,
-            )
+            if not privacy_level_is_explicit and options == ["SELF_ONLY"]:
+                privacy_level = "SELF_ONLY"
+            else:
+                message = (
+                    f"TikTok does not allow privacy level '{privacy_level}' for this "
+                    f"account (allowed: {', '.join(options)})."
+                )
+                if options == ["SELF_ONLY"]:
+                    message = f"{message} {UNAUDITED_CLIENT_HINT}"
+                raise PublishError(
+                    message,
+                    platform=self.platform_name,
+                    raw_response=info,
+                    retryable=False,
+                )
 
         # TikTok's UX guidelines require checking the video against the
         # creator's max post duration before uploading. Skip silently when
@@ -325,6 +356,7 @@ class TikTokProvider(SocialProvider):
                 raw_response=info,
                 retryable=False,
             )
+        return privacy_level
 
     def _init_video_publish(self, access_token: str, payload: dict) -> dict:
         """POST to /post/publish/video/init/ and return the parsed body.
@@ -565,41 +597,14 @@ class TikTokProvider(SocialProvider):
         )
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
-        """Account-level totals from ``/v2/user/info/``.
+        """TikTok account-level analytics are intentionally disabled.
 
-        Requires ``user.info.profile`` + ``user.info.stats``. TikTok exposes
-        only lifetime cumulative counters here (no daily delta), so the
-        ``date_range`` argument is accepted for signature parity with other
-        providers but not sent to the API; the sync layer keys snapshots by
-        the calling date.
-
-        Only ``follower_count`` is propagated — into
-        :attr:`AccountMetrics.followers`, which
-        :func:`apps.analytics.tasks._account_metrics_to_dict` writes as the
-        ``"followers"`` snapshot key for platforms whose
-        ``PLATFORM_METRICS`` lists it. The other ``/v2/user/info/`` fields
-        (``likes_count``, ``video_count``, ``following_count``) are
-        intentionally NOT mapped to ``extra``: their semantics are LIFETIME
-        TOTALS but the analytics catalog mapper's recognised extras
-        (``likes``, ``comments``, ``shares``, …) are DAILY values that
-        :func:`apps.analytics.derive.engagement_rate` sums across the
-        window — feeding a cumulative total in would inflate the rate by N
-        days. If TikTok exposes a daily-delta endpoint in the future, those
-        fields can land here under the correct keys.
+        The implemented TikTok analytics surface is video-only and relies on
+        ``video.list``. Follower totals require ``user.info.stats``, which we
+        do not request, so this returns an empty metrics object.
         """
-        del date_range  # /v2/user/info/ returns lifetime totals, no range filter.
-        resp = self._request(
-            "GET",
-            f"{API_BASE}/user/info/",
-            access_token=access_token,
-            params={"fields": "follower_count"},
-        )
-        body = resp.json()
-        user = body.get("data", {}).get("user", {}) or {}
-        followers = 0
-        with contextlib.suppress(TypeError, ValueError):
-            followers = int(user.get("follower_count", 0) or 0)
-        return AccountMetrics(followers=followers)
+        del access_token, date_range
+        return AccountMetrics(followers=None)
 
     # ------------------------------------------------------------------
     # Token management

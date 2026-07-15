@@ -25,6 +25,7 @@ from apps.members.decorators import require_permission
 
 from .models import MastodonAppRegistration, PlatformVisibility, SocialAccount
 from .oauth_aliases import from_url_slug, redirect_uri_from_request, to_url_slug
+from .oauth_pkce import issue_pkce_verifier, pkce_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +255,8 @@ def connect_platform(request, workspace_id):
         return redirect("social_accounts:connect_bluesky", workspace_id=workspace_id)
     if platform == PlatformCredential.Platform.MASTODON:
         return redirect("social_accounts:connect_mastodon", workspace_id=workspace_id)
+    if platform == PlatformCredential.Platform.DEVTO:
+        return redirect("social_accounts:connect_devto", workspace_id=workspace_id)
 
     # Standard OAuth flow
     provider = _get_provider_for_platform(platform, request.org.id)
@@ -261,15 +264,19 @@ def connect_platform(request, workspace_id):
     nonce = secrets.token_urlsafe(32)
     state = _sign_state(workspace_id, platform, request.user.id, nonce)
 
+    # PKCE verifier (e.g. TikTok); round-trips via the session alongside the nonce.
+    code_verifier = issue_pkce_verifier(provider)
+
     # Store nonce in session to prevent replay
     request.session[OAUTH_SESSION_KEY] = {
         "nonce": nonce,
         "workspace_id": str(workspace_id),
         "platform": platform,
+        "code_verifier": code_verifier,
     }
 
     redirect_uri = _build_redirect_uri(request, platform)
-    auth_url = provider.get_auth_url(redirect_uri, state)
+    auth_url = provider.get_auth_url(redirect_uri, state, **pkce_kwargs(code_verifier))
     return redirect(auth_url)
 
 
@@ -348,7 +355,7 @@ def oauth_callback(request, platform):
 
         provider = _get_provider_for_platform(platform, request.org.id, **extra_creds)
         redirect_uri = redirect_uri_from_request(request)
-        tokens = provider.exchange_code(code, redirect_uri)
+        tokens = provider.exchange_code(code, redirect_uri, **pkce_kwargs(session_data.get("code_verifier")))
 
         # Facebook/Instagram/LinkedIn Company: connect Pages, not personal profiles
         if platform in (
@@ -567,6 +574,49 @@ def connect_bluesky(request, workspace_id):
 
 
 # ------------------------------------------------------------------
+# DEV.to Connect (API-key based, no OAuth)
+# ------------------------------------------------------------------
+
+
+@login_required
+@require_permission("manage_social_accounts")
+def connect_devto(request, workspace_id):
+    """Connect a DEV.to account via a personal API key."""
+    if request.method == "GET":
+        return render(
+            request,
+            "social_accounts/devto_connect.html",
+            {"workspace_id": workspace_id},
+        )
+
+    api_key = request.POST.get("api_key", "").strip()
+    if not api_key:
+        messages.error(request, "A DEV.to API key is required.")
+        return render(
+            request,
+            "social_accounts/devto_connect.html",
+            {"workspace_id": workspace_id},
+        )
+
+    try:
+        provider = _get_provider_for_platform(PlatformCredential.Platform.DEVTO, request.org.id)
+        profile = provider.get_profile(api_key)
+        _create_or_update_account(
+            workspace_id=workspace_id,
+            platform=PlatformCredential.Platform.DEVTO,
+            profile=profile,
+            access_token=api_key,
+        )
+        messages.success(request, f"Connected {profile.name} on DEV.to.")
+    except Exception:
+        logger.exception("DEV.to connection failed")
+        messages.error(request, "Failed to connect DEV.to account. Check your API key.")
+        return render(request, "social_accounts/devto_connect.html", {"workspace_id": workspace_id})
+
+    return redirect("calendar:calendar", workspace_id=workspace_id)
+
+
+# ------------------------------------------------------------------
 # Mastodon Connect (instance-based OAuth)
 # ------------------------------------------------------------------
 
@@ -681,21 +731,25 @@ def reconnect(request, workspace_id, account_id):
         return redirect("social_accounts:connect_bluesky", workspace_id=workspace_id)
     if platform == PlatformCredential.Platform.MASTODON:
         return redirect("social_accounts:connect_mastodon", workspace_id=workspace_id)
+    if platform == PlatformCredential.Platform.DEVTO:
+        return redirect("social_accounts:connect_devto", workspace_id=workspace_id)
 
     # Standard OAuth reconnect
     provider = _get_provider_for_platform(platform, request.org.id)
     _apply_analytics_scope_flag(provider, platform)
     nonce = secrets.token_urlsafe(32)
     state = _sign_state(workspace_id, platform, request.user.id, nonce)
+    code_verifier = issue_pkce_verifier(provider)
 
     request.session[OAUTH_SESSION_KEY] = {
         "nonce": nonce,
         "workspace_id": str(workspace_id),
         "platform": platform,
+        "code_verifier": code_verifier,
     }
 
     redirect_uri = _build_redirect_uri(request, platform)
-    auth_url = provider.get_auth_url(redirect_uri, state)
+    auth_url = provider.get_auth_url(redirect_uri, state, **pkce_kwargs(code_verifier))
     return redirect(auth_url)
 
 

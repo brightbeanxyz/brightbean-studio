@@ -22,6 +22,7 @@ import contextlib
 import logging
 from datetime import date as dt_date
 from datetime import timedelta
+from uuid import UUID
 
 from background_task import background
 from django.db import transaction
@@ -182,6 +183,27 @@ def _post_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
         if v is not None:
             with contextlib.suppress(TypeError, ValueError):
                 out[dest_key] = float(v)
+    from .metrics import PLATFORM_METRICS
+
+    if "engagement" in PLATFORM_METRICS.get(platform, []):
+        from .derive import calculate_engagement_rate
+
+        engagement_parts = (
+            out.get("likes", 0.0)
+            + out.get("reactions", 0.0)
+            + out.get("comments", 0.0)
+            + out.get("replies", 0.0)
+            + out.get("shares", 0.0)
+            + out.get("reposts", 0.0)
+            + out.get("saves", 0.0)
+            + out.get("clicks", 0.0)
+            + out.get("outbound", 0.0)
+        )
+        out["engagement"] = calculate_engagement_rate(
+            engagement_parts,
+            views=out.get("views", 0.0),
+            reach=out.get("reach", 0.0),
+        )
     return out
 
 
@@ -199,7 +221,6 @@ def _account_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
     for src, key in (
         ("impressions", "impressions"),
         ("reach", "reach"),
-        ("profile_views", "profile_visits"),
     ):
         v = getattr(metrics, src, 0) or 0
         if v:
@@ -210,9 +231,10 @@ def _account_metrics_to_dict(metrics, platform: str) -> dict[str, float]:
     if gained:
         out["follows"] = float(gained)
     # ``followers`` = current total follower count, persisted only when the
-    # platform's catalog lists ``followers`` (today: TikTok). Use ``is not
+    # platform's catalog lists ``followers`` (TikTok, Instagram). Use ``is not
     # None`` so brand-new accounts with 0 followers still get a baseline
-    # snapshot — the chart needs the zero day to render a continuous line.
+    # snapshot — the chart needs the zero day to render a continuous line. A
+    # failed fetch yields ``None`` (not 0), so it is skipped rather than written.
     if "followers" in PLATFORM_METRICS.get(platform, []):
         total_followers = getattr(metrics, "followers", None)
         if total_followers is not None:
@@ -253,6 +275,8 @@ def _resolve_provider(account):
             }
         except MastodonAppRegistration.DoesNotExist:
             pass
+    elif account.platform == "facebook":
+        credentials = {**credentials, "page_id": account.account_platform_id}
     elif account.platform == "instagram":
         credentials = {**credentials, "ig_user_id": account.account_platform_id}
     return get_provider(account.platform, credentials)
@@ -278,7 +302,14 @@ def _is_insufficient_scope(exc: Exception) -> bool:
     )
 
 
-def _write_account_snapshot(account, metric_values: dict[str, float], on_date: dt_date) -> int:
+def _write_account_snapshot(
+    account,
+    metric_values: dict[str, float],
+    on_date: dt_date,
+    *,
+    raw: dict | None = None,
+    errors: dict | None = None,
+) -> int:
     from .models import AccountInsightsSnapshot
 
     if not metric_values:
@@ -289,13 +320,20 @@ def _write_account_snapshot(account, metric_values: dict[str, float], on_date: d
             social_account=account,
             metric_key=key,
             date=on_date,
-            defaults={"value": value},
+            defaults={"value": value, "raw": raw or {}, "errors": errors or {}},
         )
         count += 1
     return count
 
 
-def _write_post_snapshot(post, metric_values: dict[str, float], on_date: dt_date) -> int:
+def _write_post_snapshot(
+    post,
+    metric_values: dict[str, float],
+    on_date: dt_date,
+    *,
+    raw: dict | None = None,
+    errors: dict | None = None,
+) -> int:
     from .models import PostInsightsSnapshot
 
     if not metric_values:
@@ -306,7 +344,7 @@ def _write_post_snapshot(post, metric_values: dict[str, float], on_date: dt_date
             platform_post=post,
             metric_key=key,
             date=on_date,
-            defaults={"value": value},
+            defaults={"value": value, "raw": raw or {}, "errors": errors or {}},
         )
         count += 1
     return count
@@ -342,6 +380,12 @@ _POST_NON_CADENCE_METRICS_BY_PLATFORM: dict[str, frozenset[str]] = {
     "youtube": frozenset({"watch_time", "avg_view_pct", "shares"}),
 }
 
+_FOLLOWER_TOTAL_REFRESH_PLATFORMS: frozenset[str] = frozenset({"facebook", "instagram", "instagram_login"})
+
+
+def _needs_empty_follower_count_refresh(account) -> bool:
+    return account.follower_count <= 0 and account.platform in _FOLLOWER_TOTAL_REFRESH_PLATFORMS
+
 
 def _sync_account_metrics(account, on_date: dt_date) -> None:
     """Fetch account-level metrics for ``on_date`` and any recent missing days.
@@ -357,6 +401,7 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
     """
     from datetime import datetime, time
 
+    from .metrics import PLATFORM_METRICS
     from .models import AccountInsightsSnapshot
 
     provider = _resolve_provider(account)
@@ -367,9 +412,18 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
     # current day for them; backfill of true historical values is impossible
     # without an API that supports it.
     recent_days = _ACCOUNT_METRICS_RECENT_DAYS if getattr(provider, "account_metrics_supports_date_range", True) else 1
+    # ``followers`` is a live point-in-time total: the provider returns the
+    # current count regardless of the requested window, so it is valid only for
+    # the day the sync runs. Capture it from whichever offset returns it (so a
+    # value is recovered even when on_date's own fetch failed or its row already
+    # exists) and write it once, to on_date only, after the loop — never into a
+    # backfilled past date (which would fabricate flat history).
+    current_followers = None
     for offset in range(recent_days):
         target = on_date - timedelta(days=offset)
-        if AccountInsightsSnapshot.objects.filter(social_account=account, date=target).exists():
+        has_rows_for_day = AccountInsightsSnapshot.objects.filter(social_account=account, date=target).exists()
+        needs_current_follower_refresh = target == on_date and _needs_empty_follower_count_refresh(account)
+        if has_rows_for_day and not needs_current_follower_refresh:
             continue
         start = datetime.combine(target, time.min, tzinfo=tz)
         end = datetime.combine(target, time.max, tzinfo=tz)
@@ -382,7 +436,27 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
                 _mark_needs_reconnect(account)
             logger.warning("get_account_metrics failed for %s on %s: %s", account, target, exc)
             return
-        _write_account_snapshot(account, _account_metrics_to_dict(metrics, account.platform), target)
+        _refresh_follower_count(account, metrics)
+        fetched_followers = getattr(metrics, "followers", None)
+        if fetched_followers is not None:
+            current_followers = fetched_followers
+        extra = getattr(metrics, "extra", {}) or {}
+        metric_values = _account_metrics_to_dict(metrics, account.platform)
+        # The live followers total is written to on_date after the loop; keep it
+        # out of every dated/backfilled snapshot written here.
+        metric_values.pop("followers", None)
+        _write_account_snapshot(
+            account,
+            metric_values,
+            target,
+            raw=extra.get("raw_insights", {}),
+            errors=extra.get("insight_errors", {}),
+        )
+
+    if current_followers is not None and "followers" in PLATFORM_METRICS.get(account.platform, []):
+        # Live total → on_date only, idempotently: recovers a value fetched at a
+        # later offset and fills it in when on_date's other metrics already exist.
+        _write_account_snapshot(account, {"followers": float(current_followers)}, on_date)
 
     if account.platform == "youtube":
         _sync_youtube_post_analytics(account, provider, on_date)
@@ -445,12 +519,26 @@ def _sync_youtube_post_analytics(account, provider, on_date: dt_date) -> None:
         post = posts_by_pid.get(pid)
         if post is None:
             continue
-        _write_post_snapshot(post, _post_metrics_to_dict(metrics, "youtube"), on_date)
+        extra = getattr(metrics, "extra", {}) or {}
+        _write_post_snapshot(
+            post,
+            _post_metrics_to_dict(metrics, "youtube"),
+            on_date,
+            raw=extra.get("raw_insights", extra),
+            errors=extra.get("insight_errors", {}),
+        )
 
 
 def _sync_post_metrics(post, on_date: dt_date) -> None:
     """Fetch this post's current metrics and write today's snapshot rows."""
     account = post.social_account
+    if account.platform in {"facebook", "instagram", "instagram_login"} and _looks_like_uuid(post.platform_post_id):
+        logger.warning(
+            "Skipping %s analytics for PlatformPost %s because platform_post_id looks like an internal UUID.",
+            account.platform,
+            post.id,
+        )
+        return
     provider = _resolve_provider(account)
     try:
         metrics = provider.get_post_metrics(account.oauth_access_token, post.platform_post_id)
@@ -461,7 +549,39 @@ def _sync_post_metrics(post, on_date: dt_date) -> None:
             _mark_needs_reconnect(account)
         logger.warning("get_post_metrics failed for post %s (%s): %s", post.id, account.platform, exc)
         return
-    _write_post_snapshot(post, _post_metrics_to_dict(metrics, account.platform), on_date)
+    extra = getattr(metrics, "extra", {}) or {}
+    _write_post_snapshot(
+        post,
+        _post_metrics_to_dict(metrics, account.platform),
+        on_date,
+        raw={
+            "fields": extra.get("raw_fields", {}),
+            "insights": extra.get("raw_insights", {}),
+            "insight_post_id": extra.get("insight_post_id"),
+            "attempted_insight_post_ids": extra.get("attempted_insight_post_ids", []),
+        },
+        errors=extra.get("insight_errors", {}),
+    )
+
+
+def _looks_like_uuid(value: str) -> bool:
+    if not value:
+        return False
+    try:
+        UUID(str(value))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _refresh_follower_count(account, metrics) -> None:
+    followers = getattr(metrics, "followers", 0) or 0
+    if followers <= 0 and account.follower_count != 0:
+        return
+    if followers == account.follower_count:
+        return
+    account.follower_count = followers
+    account.save(update_fields=["follower_count", "updated_at"])
 
 
 def _mark_needs_reconnect(account):
@@ -575,9 +695,9 @@ def sync_all_account_analytics() -> None:
         # backfill (see backfill_account_analytics), so the cron resumes on its
         # own. The per-post Data-API loop below still runs (it uses the
         # publish/read scopes the account already has).
-        if (
-            not account.analytics_needs_reconnect
-            and not AccountInsightsSnapshot.objects.filter(social_account=account, date=today).exists()
+        has_today_rows = AccountInsightsSnapshot.objects.filter(social_account=account, date=today).exists()
+        if not account.analytics_needs_reconnect and (
+            not has_today_rows or _needs_empty_follower_count_refresh(account)
         ):
             _sync_account_metrics(account, today)
 

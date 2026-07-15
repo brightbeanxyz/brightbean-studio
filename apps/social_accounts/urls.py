@@ -26,6 +26,11 @@ urlpatterns = [
         views.connect_mastodon,
         name="connect_mastodon",
     ),
+    path(
+        "<uuid:workspace_id>/connect/devto/",
+        views.connect_devto,
+        name="connect_devto",
+    ),
     # OAuth callback (not workspace-scoped - platform redirects here)
     path(
         "callback/<str:platform>/",

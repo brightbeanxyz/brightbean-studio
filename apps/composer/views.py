@@ -172,8 +172,11 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
             }
 
         elif account.platform == "pinterest":
+            board_id = request.POST.get(f"pin_board_id_{acc_id}", "").strip()
+            if not board_id:
+                board_id = (pp.platform_extra or {}).get("board_id") or None
             pp.platform_extra = {
-                "board_id": request.POST.get(f"pin_board_id_{acc_id}", "").strip() or None,
+                "board_id": board_id,
                 "link_url": request.POST.get(f"pin_link_url_{acc_id}", "").strip() or None,
                 "alt_text": request.POST.get(f"pin_alt_text_{acc_id}", "").strip() or None,
                 "tag_products": request.POST.get(f"pin_tag_products_{acc_id}", "").strip() or None,
@@ -219,6 +222,31 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
             pp.platform_extra = extra
 
         pp.save()
+
+
+def _validate_pinterest_board_selection(request, post, workspace):
+    """Selected Pinterest accounts need a board before composer save/submit."""
+    selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
+    if not selected_ids:
+        return None
+
+    accounts = SocialAccount.objects.filter(id__in=selected_ids, workspace=workspace, platform="pinterest")
+    for account in accounts:
+        acc_id = str(account.id)
+        board_id = request.POST.get(f"pin_board_id_{acc_id}", "").strip()
+        if not board_id and post.pk:
+            board_id = (
+                PlatformPost.objects.filter(post=post, social_account=account)
+                .values_list("platform_extra__board_id", flat=True)
+                .first()
+                or ""
+            )
+        if not board_id:
+            return JsonResponse(
+                {"errors": {"pinterest_board": f"Select a Pinterest board for {account.account_name}."}},
+                status=400,
+            )
+    return None
 
 
 def _save_version(post, user):
@@ -467,8 +495,10 @@ def compose(request, workspace_id, post_id=None):
 
     # Approval workflow context
     workflow_mode = workspace.approval_workflow_mode
-    show_submit_button = workflow_mode != "none"
-    show_resubmit_button = any(pp.status in ("changes_requested", "rejected") for pp in platform_post_list)
+    show_resubmit_button = any(pp.status in ("changes_requested", "rejected", "approved") for pp in platform_post_list)
+    # Fresh drafts get "Submit for Approval"; posts already in the workflow
+    # (changes-requested / rejected / approved-but-edited) get "Resubmit" instead.
+    show_submit_button = workflow_mode != "none" and not show_resubmit_button
     # Once the post is committed to publishing, the Schedule Post panel re-times
     # a live schedule; while still a draft it captures a *proposed* time on save.
     # Mirror _capture_proposed_publish_at's guard exactly (scheduled_at OR a
@@ -482,10 +512,20 @@ def compose(request, workspace_id, post_id=None):
     # Approval history and comments for existing posts
     approval_history = []
     post_comments = []
+    latest_feedback = None
     if post:
         from apps.approvals.models import ApprovalAction
 
-        approval_history = ApprovalAction.objects.filter(post=post).select_related("user").order_by("-created_at")[:10]
+        # Show recent history (bounded) — a heavily-cycled post can accumulate
+        # unboundedly many actions; 50 is plenty for the timeline.
+        approval_history = list(
+            ApprovalAction.objects.filter(post=post).select_related("user").order_by("-created_at")[:50]
+        )
+        # Most recent reviewer feedback to surface in the edit banner.
+        latest_feedback = next(
+            (a for a in approval_history if a.action in ("changes_requested", "rejected") and a.comment),
+            None,
+        )
         from apps.approvals.comments import get_comments_for_post
 
         post_comments = get_comments_for_post(post, request.user)
@@ -570,6 +610,7 @@ def compose(request, workspace_id, post_id=None):
         "show_submit_button": show_submit_button,
         "show_resubmit_button": show_resubmit_button,
         "approval_history": approval_history,
+        "latest_feedback": latest_feedback,
         "post_comments": post_comments,
         "pending_assets": pending_assets,
         "all_tags": all_tags,
@@ -620,6 +661,28 @@ def _transition_post_children(post, target, *, allow_via_draft=True, only=None):
         except ValueError:
             skipped.append(pp)
     return moved, skipped
+
+
+def _base_content_snapshot(post):
+    """Reviewable base content used to detect edits to an approved post."""
+    return (post.title, post.caption, post.first_comment, tuple(post.tags or []))
+
+
+def _revert_approved_to_review(post):
+    """Option A: editing an approved post's content sends it back for re-approval.
+
+    Silently reverts any ``approved`` children to ``pending_review`` so edited
+    content can't publish without a fresh review. (The explicit "Resubmit for
+    review" button additionally notifies reviewers; this is the safety net for
+    plain saves/autosaves.) Returns the reverted children.
+    """
+    reverted = []
+    for pp in post.platform_posts.all():
+        if pp.status == "approved" and pp.can_transition_to("pending_review"):
+            pp.transition_to("pending_review")
+            pp.save(update_fields=["status", "published_at", "updated_at"])
+            reverted.append(pp)
+    return reverted
 
 
 def _platform_status_map(post):
@@ -690,8 +753,10 @@ def save_post(request, workspace_id, post_id=None):
         perms = membership.effective_permissions if membership else {}
         if post.author != request.user and not perms.get("edit_others_posts", False):
             raise PermissionDenied("You do not have permission to edit this post.")
+        _orig_content = _base_content_snapshot(post)
         form = PostForm(request.POST, instance=post)
     else:
+        _orig_content = None
         form = PostForm(request.POST)
 
     if not form.is_valid():
@@ -701,6 +766,10 @@ def save_post(request, workspace_id, post_id=None):
     post.workspace = workspace
     if not post_id:
         post.author = request.user
+
+    pinterest_board_error = _validate_pinterest_board_selection(request, post, workspace)
+    if pinterest_board_error is not None:
+        return pinterest_board_error
 
     # Handle action — note that Post itself no longer carries an editorial
     # status: every transition below operates on the PlatformPost children,
@@ -929,10 +998,25 @@ def save_post(request, workspace_id, post_id=None):
             propagate_qs = propagate_qs.filter(id__in=scoped_ids)
         propagate_qs.update(scheduled_at=propagate_dt)
 
-    # Move existing children to the requested target state (no-op for
-    # save_draft — children that are already mid-workflow stay put).
+    # Option A: editing an approved post's reviewable content sends it back for
+    # re-approval so edits can't publish un-reviewed. Run this BEFORE applying any
+    # publish target — otherwise a schedule/publish_now in the *same* save would
+    # push the just-edited (no-longer-approved) content straight to scheduled.
+    # Only ``approved`` children are reverted; anything else is a no-op.
+    content_changed = _orig_content is not None and _base_content_snapshot(post) != _orig_content
+    reverted_ids = {str(pp.id) for pp in _revert_approved_to_review(post)} if content_changed else set()
+
+    # Move existing children to the requested target state (no-op for save_draft —
+    # children that are already mid-workflow stay put). Children just reverted for
+    # re-review are excluded so a same-save publish action can't drag them back
+    # out of review.
     if pending_target:
-        _transition_post_children(post, pending_target, only=scoped_ids)
+        if reverted_ids:
+            candidates = scoped_ids if scoped_ids is not None else [pp.id for pp in post.platform_posts.all()]
+            target_only = [pid for pid in candidates if str(pid) not in reverted_ids]
+        else:
+            target_only = scoped_ids
+        _transition_post_children(post, pending_target, only=target_only)
 
     # Save version
     _save_version(post, request.user)
@@ -1018,6 +1102,7 @@ def autosave(request, workspace_id, post_id=None):
     workspace = _get_workspace(request, workspace_id)
 
     is_new = False
+    orig_content = None
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
         # Enforce edit permissions on existing posts
@@ -1025,6 +1110,7 @@ def autosave(request, workspace_id, post_id=None):
         perms = membership.effective_permissions if membership else {}
         if post.author != request.user and not perms.get("edit_others_posts", False):
             raise PermissionDenied("You do not have permission to edit this post.")
+        orig_content = _base_content_snapshot(post)
     else:
         # Check if a previous autosave already created a draft for this session
         # by looking for the post_id passed from the client
@@ -1075,6 +1161,11 @@ def autosave(request, workspace_id, post_id=None):
             post=post,
             social_account_id=acc_id,
         )
+
+    # Option A: an autosave that changed an approved post's content reverts it to
+    # pending_review so edited content can't publish without a fresh review.
+    if orig_content is not None and _base_content_snapshot(post) != orig_content:
+        _revert_approved_to_review(post)
 
     return HttpResponse(
         f'<span class="text-xs text-gray-400">Saved {timezone.now().strftime("%H:%M")}</span>',
@@ -1794,6 +1885,9 @@ def attach_media(request, workspace_id, post_id):
         defaults={"position": position},
     )
 
+    # Option A: changing media on an approved post sends it back for re-approval.
+    _revert_approved_to_review(post)
+
     response = render(
         request,
         "composer/partials/media_list.html",
@@ -1921,6 +2015,8 @@ def upload_media(request, workspace_id, post_id=None):
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
         attachment = _attach_asset_for_composer(request, workspace, asset, post)
+        # Option A: changing media on an approved post sends it back for re-approval.
+        _revert_approved_to_review(post)
         response = render(
             request,
             "composer/partials/media_list.html",
@@ -1953,6 +2049,9 @@ def remove_media(request, workspace_id, post_id, media_id):
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
     PostMedia.objects.filter(id=media_id, post=post).delete()
+
+    # Option A: changing media on an approved post sends it back for re-approval.
+    _revert_approved_to_review(post)
 
     response = render(
         request,

@@ -1,12 +1,14 @@
 """Views for the Approval Workflow (F-2.2)."""
 
-import json
+import difflib
+import re
 
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.common.htmx import toast_response
 from apps.composer.models import Post, PostVersion
 from apps.members.decorators import require_permission, require_workspace_role
 from apps.workspaces.models import Workspace
@@ -29,99 +31,14 @@ def _get_workspace(request, workspace_id):
     return workspace
 
 
-# ---------------------------------------------------------------------------
-# Approval Queue
-# ---------------------------------------------------------------------------
+def _toast_response(*, tone, title, body="", refresh=None):
+    """Return a 204 whose ``HX-Trigger`` carries a toast and an optional refresh event.
 
-
-@login_required
-@require_permission("approve_posts")
-@require_GET
-def approval_queue(request, workspace_id):
-    """Workspace-level approval queue showing pending posts."""
-    workspace = _get_workspace(request, workspace_id)
-
-    status_filter = request.GET.get("status", "all")
-    base_filter = {"platform_posts__status__in": ["pending_review", "pending_client"]}
-    posts = (
-        Post.objects.for_workspace(workspace.id)
-        .filter(**base_filter)
-        .distinct()
-        .select_related("author")
-        .prefetch_related("platform_posts__social_account", "media_attachments__media_asset")
-        .order_by("scheduled_at", "-created_at")
-    )
-
-    if status_filter == "pending_review":
-        posts = posts.filter(platform_posts__status="pending_review").distinct()
-    elif status_filter == "pending_client":
-        posts = posts.filter(platform_posts__status="pending_client").distinct()
-
-    from apps.composer.models import PlatformPost
-
-    pp_qs = PlatformPost.objects.filter(post__workspace=workspace)
-    pending_review_count = pp_qs.filter(status="pending_review").values("post_id").distinct().count()
-    pending_client_count = pp_qs.filter(status="pending_client").values("post_id").distinct().count()
-    counts = {
-        "pending_review_count": pending_review_count,
-        "pending_client_count": pending_client_count,
-    }
-
-    context = {
-        "workspace": workspace,
-        "posts": posts,
-        "status_filter": status_filter,
-        "pending_review_count": counts["pending_review_count"],
-        "pending_client_count": counts["pending_client_count"],
-    }
-
-    if request.htmx:
-        return render(request, "approvals/partials/post_list.html", context)
-
-    return render(request, "approvals/queue.html", context)
-
-
-@login_required
-@require_GET
-def org_approval_queue(request):
-    """Cross-workspace org-level approval queue (read-only)."""
-    org = request.org
-    if not org:
-        from django.core.exceptions import PermissionDenied
-
-        raise PermissionDenied("No organization found.")
-
-    # Only org admins/owners
-    if not request.org_membership or request.org_membership.org_role not in ("owner", "admin"):
-        from django.core.exceptions import PermissionDenied
-
-        raise PermissionDenied("Insufficient role.")
-
-    # Get all workspaces the user's org owns. select_related the org so the
-    # per-group {% timezone group.workspace.effective_timezone %} in the
-    # template doesn't lazily re-fetch it once per workspace.
-    workspaces = Workspace.objects.filter(organization=org, is_archived=False).select_related("organization")
-
-    workspace_posts = []
-    for ws in workspaces:
-        pending = (
-            Post.objects.for_workspace(ws.id)
-            .filter(platform_posts__status__in=["pending_review", "pending_client"])
-            .distinct()
-            .select_related("author")
-            .prefetch_related("platform_posts__social_account")
-            .order_by("scheduled_at", "-created_at")
-        )
-        if pending.exists():
-            workspace_posts.append({"workspace": ws, "posts": pending})
-
-    return render(
-        request,
-        "approvals/org_queue.html",
-        {
-            "workspace_posts": workspace_posts,
-        },
-    )
+    Every approval surface listens for ``showToast`` (renders the toast) and for the
+    ``refresh`` event (``approvalAction`` / ``bulkActionComplete``) to re-fetch its list
+    in place. This single response shape replaces the old per-caller partial branch.
+    """
+    return toast_response(tone=tone, title=title, body=body, events={refresh: True} if refresh else None)
 
 
 # ---------------------------------------------------------------------------
@@ -133,33 +50,24 @@ def org_approval_queue(request):
 @require_permission("approve_posts")
 @require_POST
 def approve(request, workspace_id, post_id):
-    """Approve a post."""
+    """Approve a post (or advance it to client review in two-stage mode)."""
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
     comment_text = request.POST.get("comment", "")
 
     try:
-        services.approve_post(post, request.user, workspace, comment_text)
+        moved = services.approve_post(post, request.user, workspace, comment_text)
     except ValueError as e:
-        return HttpResponse(str(e), status=400)
+        return _toast_response(tone="error", title="Couldn't approve", body=str(e))
 
-    if request.htmx:
-        # Return updated post row partial
-        return render(
-            request,
-            "approvals/partials/post_row.html",
-            {
-                "post": post,
-                "workspace": workspace,
-            },
+    if not moved:
+        return _toast_response(tone="warn", title="Nothing to update", body="This post was already actioned.")
+
+    if post.platform_posts.filter(status="pending_client").exists():
+        return _toast_response(
+            tone="success", title="Approved internally", body="Sent for client sign-off", refresh="approvalAction"
         )
-
-    return HttpResponse(
-        status=204,
-        headers={
-            "HX-Trigger": json.dumps({"approvalAction": {"postId": str(post.id), "action": "approved"}}),
-        },
-    )
+    return _toast_response(tone="success", title="Approved", body="Ready to publish", refresh="approvalAction")
 
 
 @login_required
@@ -172,25 +80,15 @@ def request_changes_view(request, workspace_id, post_id):
     comment_text = request.POST.get("comment", "")
 
     try:
-        services.request_changes(post, request.user, workspace, comment_text)
+        moved = services.request_changes(post, request.user, workspace, comment_text)
     except ValueError as e:
-        return HttpResponse(str(e), status=400)
+        return _toast_response(tone="error", title="Couldn't send back", body=str(e))
 
-    if request.htmx:
-        return render(
-            request,
-            "approvals/partials/post_row.html",
-            {
-                "post": post,
-                "workspace": workspace,
-            },
-        )
+    if not moved:
+        return _toast_response(tone="warn", title="Nothing to update", body="This post was already actioned.")
 
-    return HttpResponse(
-        status=204,
-        headers={
-            "HX-Trigger": json.dumps({"approvalAction": {"postId": str(post.id), "action": "changes_requested"}}),
-        },
+    return _toast_response(
+        tone="info", title="Sent back for changes", body="The author was notified", refresh="approvalAction"
     )
 
 
@@ -204,26 +102,31 @@ def reject(request, workspace_id, post_id):
     comment_text = request.POST.get("comment", "")
 
     try:
-        services.reject_post(post, request.user, workspace, comment_text)
+        moved = services.reject_post(post, request.user, workspace, comment_text)
     except ValueError as e:
-        return HttpResponse(str(e), status=400)
+        return _toast_response(tone="error", title="Couldn't reject", body=str(e))
 
-    if request.htmx:
-        return render(
-            request,
-            "approvals/partials/post_row.html",
-            {
-                "post": post,
-                "workspace": workspace,
-            },
-        )
+    if not moved:
+        return _toast_response(tone="warn", title="Nothing to update", body="This post was already actioned.")
 
-    return HttpResponse(
-        status=204,
-        headers={
-            "HX-Trigger": json.dumps({"approvalAction": {"postId": str(post.id), "action": "rejected"}}),
-        },
+    return _toast_response(
+        tone="error", title="Post rejected", body="The author was notified", refresh="approvalAction"
     )
+
+
+@login_required
+@require_permission("approve_posts")
+@require_POST
+def resume(request, workspace_id, post_id):
+    """Lift a client-requested hold (on_hold → approved)."""
+    workspace = _get_workspace(request, workspace_id)
+    post = get_object_or_404(Post, id=post_id, workspace=workspace)
+
+    moved = services.resume_hold(post, request.user, workspace)
+    if not moved:
+        return _toast_response(tone="warn", title="Nothing to update", body="This post is not on hold.")
+
+    return _toast_response(tone="success", title="Hold lifted", body="Back to approved", refresh="approvalAction")
 
 
 @login_required
@@ -236,7 +139,7 @@ def bulk_action(request, workspace_id):
     post_ids = request.POST.getlist("post_ids")
 
     if not post_ids:
-        return HttpResponse("No posts selected.", status=400)
+        return _toast_response(tone="warn", title="No posts selected")
 
     if action == "approve":
         results = services.bulk_approve(post_ids, request.user, workspace)
@@ -245,25 +148,27 @@ def bulk_action(request, workspace_id):
         try:
             results = services.bulk_reject(post_ids, request.user, workspace, comment_text)
         except ValueError as e:
-            return HttpResponse(str(e), status=400)
+            return _toast_response(tone="error", title="Couldn't reject", body=str(e))
     else:
-        return HttpResponse("Invalid action.", status=400)
+        return _toast_response(tone="error", title="Invalid action")
 
-    success_count = sum(1 for _, success, _ in results if success)
+    n = sum(1 for _, success, _ in results if success)
+    plural = "s" if n != 1 else ""
 
-    if request.htmx:
-        return HttpResponse(
-            status=204,
-            headers={
-                "HX-Trigger": json.dumps(
-                    {
-                        "bulkActionComplete": {"action": action, "count": success_count},
-                    }
-                )
-            },
+    if n == 0:
+        return _toast_response(
+            tone="warn", title="Nothing to update", body="None were still pending.", refresh="bulkActionComplete"
         )
-
-    return JsonResponse({"results": [{"id": r[0], "success": r[1], "error": r[2]} for r in results]})
+    if action == "approve":
+        return _toast_response(
+            tone="success",
+            title=f"{n} post{plural} approved",
+            body="Moved to the next stage",
+            refresh="bulkActionComplete",
+        )
+    return _toast_response(
+        tone="error", title=f"{n} post{plural} rejected", body="Creators notified", refresh="bulkActionComplete"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -418,17 +323,35 @@ def version_diff(request, workspace_id, post_id):
     return render(request, "approvals/version_diff.html", context)
 
 
+def _word_diff(old_str, new_str):
+    """Word-level diff tokens for caption changes.
+
+    Returns a list of ``{"t": text, "k": "same"|"add"|"del"}`` so the template can
+    render additions/removals inline (the approved design's ``DiffText``). Tokens
+    keep their surrounding whitespace so the rendered text reads naturally.
+    """
+    a = re.split(r"(\s+)", old_str or "")
+    b = re.split(r"(\s+)", new_str or "")
+    out = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
+        if tag == "equal":
+            out.append({"t": "".join(a[i1:i2]), "k": "same"})
+            continue
+        if i1 != i2:
+            out.append({"t": "".join(a[i1:i2]), "k": "del"})
+        if j1 != j2:
+            out.append({"t": "".join(b[j1:j2]), "k": "add"})
+    return out
+
+
 def _build_diff(old_snapshot, new_snapshot):
     """Build a structured diff between two version snapshots."""
     diff = {
         "caption_changed": old_snapshot.get("caption", "") != new_snapshot.get("caption", ""),
-        "caption_old": old_snapshot.get("caption", ""),
-        "caption_new": new_snapshot.get("caption", ""),
+        "caption_diff": _word_diff(old_snapshot.get("caption", ""), new_snapshot.get("caption", "")),
         "media_changed": old_snapshot.get("media", []) != new_snapshot.get("media", []),
         "media_old": old_snapshot.get("media", []),
         "media_new": new_snapshot.get("media", []),
         "platforms_changed": old_snapshot.get("platform_posts", []) != new_snapshot.get("platform_posts", []),
-        "platforms_old": old_snapshot.get("platform_posts", []),
-        "platforms_new": new_snapshot.get("platform_posts", []),
     }
     return diff

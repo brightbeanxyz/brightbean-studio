@@ -5,7 +5,6 @@ from django.urls import include, path
 
 from apps.accounts.views import health_check
 from apps.api.api import api as agent_api
-from apps.approvals.views import org_approval_queue
 from apps.oauth_server import views as oauth_views
 
 urlpatterns = [
@@ -63,7 +62,6 @@ urlpatterns = [
     path("workspace/<uuid:workspace_id>/settings/clients/", include("apps.client_portal.urls_admin")),
     # Media Library
     path("workspace/<uuid:workspace_id>/media/", include("apps.media_library.urls")),
-    path("approvals/org/", org_approval_queue, name="org_approval_queue"),
     # Client Portal (Stream F)
     path("portal/", include("apps.client_portal.urls")),
     path("notifications/", include("apps.notifications.urls")),

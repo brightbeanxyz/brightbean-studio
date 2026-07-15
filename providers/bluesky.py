@@ -97,10 +97,10 @@ class BlueskyProvider(SocialProvider):
     # OAuth stubs (not applicable for session auth)
     # ------------------------------------------------------------------
 
-    def get_auth_url(self, redirect_uri: str, state: str) -> str:
+    def get_auth_url(self, redirect_uri: str, state: str, code_verifier: str | None = None) -> str:
         raise NotImplementedError("Bluesky uses session-based auth, not OAuth. Use create_session() instead.")
 
-    def exchange_code(self, code: str, redirect_uri: str) -> OAuthTokens:
+    def exchange_code(self, code: str, redirect_uri: str, code_verifier: str | None = None) -> OAuthTokens:
         raise NotImplementedError("Bluesky uses session-based auth, not OAuth. Use create_session() instead.")
 
     # ------------------------------------------------------------------

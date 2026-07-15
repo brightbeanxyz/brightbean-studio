@@ -1,0 +1,152 @@
+{% comment %}
+One approval row per Post (bundled actions on post.id). Matches the approved
+"ApprovalRow" design. Context: post (+ post.visible_comments), workspace,
+can_approve, display_timezone, and the parent Alpine scope (selectedPosts, diffOpen).
+{% endcomment %}
+{% load tz approval_extras %}
+<div class="bg-white border border-stone-200 rounded-xl hover:border-stone-300 transition-colors"
+     x-data="{ expanded: false, panel: null, comment: '' }">
+    <div class="flex items-start gap-3 p-4">
+        {% if can_approve and post.is_actionable %}
+        <input type="checkbox" :value="'{{ post.id }}'" x-model="selectedPosts"
+               class="mt-1.5 w-4 h-4 rounded border-stone-300 cursor-pointer flex-shrink-0" style="accent-color: var(--primary);">
+        {% endif %}
+
+        {# media thumbnail #}
+        {% with att=post.media_attachments.all.0 %}
+        {% if att.media_asset.thumbnail %}
+        <img src="{{ att.media_asset.thumbnail.url }}" alt="" class="w-12 h-12 rounded-lg object-cover flex-shrink-0">
+        {% elif att.media_asset.file and att.media_asset.media_type == 'image' %}
+        <img src="{{ att.media_asset.file.url }}" alt="" class="w-12 h-12 rounded-lg object-cover flex-shrink-0">
+        {% else %}
+        <div class="w-12 h-12 rounded-lg bg-stone-100 flex items-center justify-center flex-shrink-0 text-stone-300">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1 flex-wrap">
+                {% status_badge post.status %}
+                <div class="flex items-center gap-1">
+                    {% for pp in post.platform_posts.all %}
+                    <span class="w-5 h-5 rounded-[5px] flex items-center justify-center">{% include "partials/_platform_icon.html" with platform=pp.social_account.platform size="sm" %}</span>
+                    {% endfor %}
+                </div>
+                <span class="text-[0.75rem] text-stone-400 inline-flex items-center gap-1 ml-auto tabular-nums flex-shrink-0">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    {% if post.scheduled_at %}{% timezone display_timezone %}{{ post.scheduled_at|date:"M j, g:i A" }}{% endtimezone %}
+                    {% elif post.proposed_publish_at %}<span class="text-orange-500">Proposed {% timezone display_timezone %}{{ post.proposed_publish_at|date:"M j, g:i A" }}{% endtimezone %}</span>{% endif %}
+                </span>
+            </div>
+
+            <p class="text-[0.875rem] text-stone-700 leading-snug cursor-pointer hover:text-stone-900 line-clamp-1" @click="expanded = !expanded">{{ post.title|default:post.caption_snippet|default:"(no caption)" }}</p>
+
+            <div class="flex items-center gap-1.5 mt-1.5">
+                <span class="w-[18px] h-[18px] rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0" style="background: var(--primary);">{{ post.author.display_name|default:"?"|make_list|first|upper }}</span>
+                <span class="text-[0.75rem] text-stone-400">by {{ post.author.display_name|default:"Unknown" }}</span>
+                <button @click="expanded = !expanded" class="text-[0.75rem] text-stone-400 hover:text-stone-600 inline-flex items-center gap-0.5 ml-1">
+                    <span x-text="expanded ? 'Hide' : 'Details'"></span>
+                    <svg class="w-3 h-3 transition-transform" :class="expanded && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg>
+                </button>
+            </div>
+
+            {# expanded preview #}
+            <div x-show="expanded" x-cloak class="mt-3 pt-3 border-t border-stone-100 anim-collapse">
+                <p class="text-[0.8125rem] text-stone-600 whitespace-pre-wrap mb-3">{{ post.caption }}</p>
+                {% if post.media_attachments.all %}
+                <div class="flex gap-2 mb-3 flex-wrap">
+                    {% for pm in post.media_attachments.all %}
+                    {% if pm.media_asset.thumbnail %}
+                    <img src="{{ pm.media_asset.thumbnail.url }}" alt="" class="w-14 h-14 rounded-lg object-cover border border-stone-200">
+                    {% elif pm.media_asset.file and pm.media_asset.media_type == 'image' %}
+                    <img src="{{ pm.media_asset.file.url }}" alt="" class="w-14 h-14 rounded-lg object-cover border border-stone-200">
+                    {% else %}
+                    <div class="w-14 h-14 rounded-lg border border-stone-200 bg-stone-50 flex items-center justify-center text-stone-300"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% if post.visible_comments %}
+                <div class="mb-3 space-y-2">
+                    {% for c in post.visible_comments %}
+                    <div class="flex gap-2">
+                        <span class="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0" style="background: var(--primary);">{{ c.author.display_name|default:"?"|make_list|first|upper }}</span>
+                        <div class="bg-stone-50 rounded-lg px-3 py-1.5 flex-1 min-w-0">
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-[0.6875rem] font-semibold text-stone-700">{{ c.author.display_name|default:"Unknown" }}</span>
+                                {% if c.visibility == 'external' %}<span class="text-[0.5625rem] px-1.5 py-px rounded-full bg-teal-50 text-teal-700 font-semibold">shared with client</span>{% endif %}
+                                <span class="text-[0.625rem] text-stone-400">{{ c.created_at|timesince }} ago</span>
+                            </div>
+                            <p class="text-[0.8125rem] text-stone-600">{{ c.body }}</p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% if post.versions.all|length >= 2 %}
+                <button hx-get="{% url 'approvals:version_diff' workspace_id=workspace.id post_id=post.id %}"
+                        hx-target="#diff-modal-body" hx-swap="innerHTML" @click="diffOpen = true"
+                        class="text-[0.8125rem] font-semibold inline-flex items-center gap-1 hover:underline" style="color: var(--primary);">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M12 3v12"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v6a3 3 0 003 3h6"/></svg>
+                    View changes <span class="text-stone-400 font-normal">· v{{ post.versions.all|length }}</span>
+                </button>
+                {% endif %}
+            </div>
+        </div>
+
+        {# right-hand actions #}
+        {% if can_approve and post.is_actionable %}
+        <div class="flex items-center gap-1.5 flex-shrink-0">
+            <button hx-post="{% url 'approvals:approve' workspace_id=workspace.id post_id=post.id %}" hx-swap="none"
+                    class="px-3 py-1.5 text-[0.8125rem] font-semibold rounded-full bg-emerald-500 hover:bg-emerald-600 text-white transition-colors">Approve</button>
+            <button @click="panel = panel ? null : 'changes'"
+                    class="px-3 py-1.5 text-[0.8125rem] font-semibold rounded-full border transition-colors"
+                    :class="panel ? 'border-stone-300 bg-stone-50 text-stone-700' : 'border-stone-200 text-stone-600 hover:bg-stone-50'">Review</button>
+        </div>
+        {% elif post.status == 'changes_requested' or post.status == 'rejected' or post.status == 'approved' %}
+        <div class="flex items-center gap-1.5 flex-shrink-0">
+            <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=post.id %}"
+               class="px-3.5 py-1.5 text-[0.8125rem] font-semibold rounded-full text-white inline-flex items-center gap-1.5 transition-colors" style="background: var(--primary);">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> Edit
+            </a>
+        </div>
+        {% elif post.status == 'on_hold' and can_approve %}
+        <div class="flex items-center gap-1.5 flex-shrink-0">
+            <button hx-post="{% url 'approvals:resume' workspace_id=workspace.id post_id=post.id %}" hx-swap="none"
+                    class="px-3.5 py-1.5 text-[0.8125rem] font-semibold rounded-full text-white inline-flex items-center gap-1.5 transition-colors" style="background: #7C3AED;">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Resume
+            </button>
+        </div>
+        {% endif %}
+    </div>
+
+    {# inline review panel (request changes / reject) #}
+    {% if can_approve and post.is_actionable %}
+    <div x-show="panel" x-cloak class="px-4 pb-4 anim-collapse">
+        <div class="pt-3 border-t border-stone-100">
+            <div class="flex gap-1.5 mb-2">
+                <button @click="panel = 'changes'" class="px-3 py-1.5 text-[0.75rem] font-semibold rounded-full transition-colors" :class="panel === 'changes' ? 'bg-amber-100 text-amber-800' : 'text-stone-500 hover:bg-stone-100'">Request changes</button>
+                <button @click="panel = 'reject'" class="px-3 py-1.5 text-[0.75rem] font-semibold rounded-full transition-colors" :class="panel === 'reject' ? 'bg-red-100 text-red-800' : 'text-stone-500 hover:bg-stone-100'">Reject</button>
+            </div>
+            <textarea id="review-comment-{{ post.id }}" name="comment" x-model="comment" rows="2"
+                      :placeholder="panel === 'reject' ? 'Reason for rejection (required), shared with the creator…' : 'What needs to change? (required)…'"
+                      class="w-full px-3 py-2 text-[0.8125rem] border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-transparent resize-none"></textarea>
+            <div class="flex items-center gap-2 mt-2">
+                <button x-show="panel === 'changes'"
+                        hx-post="{% url 'approvals:request_changes' workspace_id=workspace.id post_id=post.id %}"
+                        hx-include="#review-comment-{{ post.id }}" hx-swap="none" :disabled="!comment.trim()"
+                        class="px-3.5 py-1.5 text-[0.75rem] font-semibold rounded-full text-white transition-colors"
+                        :class="comment.trim() ? 'bg-amber-500 hover:bg-amber-600' : 'bg-stone-300 cursor-not-allowed'">Send back for changes</button>
+                <button x-show="panel === 'reject'"
+                        hx-post="{% url 'approvals:reject' workspace_id=workspace.id post_id=post.id %}"
+                        hx-include="#review-comment-{{ post.id }}" hx-swap="none" :disabled="!comment.trim()"
+                        class="px-3.5 py-1.5 text-[0.75rem] font-semibold rounded-full text-white transition-colors"
+                        :class="comment.trim() ? 'bg-red-500 hover:bg-red-600' : 'bg-stone-300 cursor-not-allowed'">Reject post</button>
+                <button @click="panel = null; comment = ''" class="px-3 py-1.5 text-[0.75rem] font-medium rounded-full text-stone-500 hover:bg-stone-100">Cancel</button>
+                <span x-show="!comment.trim()" class="text-[0.6875rem] text-stone-400 ml-auto">A comment is required</span>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>

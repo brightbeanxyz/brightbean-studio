@@ -8,7 +8,7 @@ from django.urls import reverse
 
 from apps.social_accounts.models import SocialAccount
 from apps.social_accounts.views import OAUTH_SESSION_KEY, _sign_state, _unsign_state
-from providers.types import OAuthTokens
+from providers.types import AccountProfile, OAuthTokens
 
 
 @pytest.fixture
@@ -113,6 +113,88 @@ class TestConnectPlatformView:
         assert response.status_code == 302
         assert "bluesky" in response.url
 
+    def test_pkce_connect_generates_and_forwards_verifier(self, authenticated_client, workspace):
+        """A PKCE provider (TikTok) gets a code_verifier stashed in the session
+        and forwarded to get_auth_url so it can derive the code_challenge."""
+        from apps.credentials.models import PlatformCredential
+
+        PlatformCredential.objects.create(
+            organization=workspace.organization,
+            platform="tiktok",
+            credentials={"client_key": "k", "client_secret": "s"},
+            is_configured=True,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.uses_pkce = True
+        mock_provider.get_auth_url.return_value = "https://www.tiktok.com/v2/auth/authorize/?ok=1"
+
+        url = reverse("social_accounts:connect", kwargs={"workspace_id": workspace.id})
+        with patch("apps.social_accounts.views._get_provider_for_platform", return_value=mock_provider):
+            response = authenticated_client.post(url, {"platform": "tiktok"})
+
+        assert response.status_code == 302
+        assert response.url == "https://www.tiktok.com/v2/auth/authorize/?ok=1"
+
+        verifier = authenticated_client.session[OAUTH_SESSION_KEY]["code_verifier"]
+        assert verifier  # non-empty
+        _, kwargs = mock_provider.get_auth_url.call_args
+        assert kwargs["code_verifier"] == verifier
+
+    def test_non_pkce_connect_omits_verifier(self, authenticated_client, workspace):
+        """A non-PKCE provider stores code_verifier=None and is called without it."""
+        from apps.credentials.models import PlatformCredential
+
+        PlatformCredential.objects.create(
+            organization=workspace.organization,
+            platform="facebook",
+            credentials={"client_id": "i", "client_secret": "s"},
+            is_configured=True,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.uses_pkce = False
+        mock_provider.get_auth_url.return_value = "https://facebook.example/auth"
+
+        url = reverse("social_accounts:connect", kwargs={"workspace_id": workspace.id})
+        with patch("apps.social_accounts.views._get_provider_for_platform", return_value=mock_provider):
+            response = authenticated_client.post(url, {"platform": "facebook"})
+
+        assert response.status_code == 302
+        assert authenticated_client.session[OAUTH_SESSION_KEY]["code_verifier"] is None
+        _, kwargs = mock_provider.get_auth_url.call_args
+        assert "code_verifier" not in kwargs
+
+
+@pytest.mark.django_db
+class TestReconnectView:
+    def test_pkce_reconnect_generates_and_forwards_verifier(self, authenticated_client, workspace):
+        """Reconnecting a TikTok account must regenerate + forward a PKCE verifier;
+        reconnect previously sent no code_challenge -> TikTok errCode 10007."""
+        account = SocialAccount.objects.create(
+            workspace=workspace,
+            platform="tiktok",
+            account_platform_id="open-1",
+            account_name="My TikTok",
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.uses_pkce = True
+        mock_provider.get_auth_url.return_value = "https://www.tiktok.com/v2/auth/authorize/?ok=1"
+
+        url = reverse(
+            "social_accounts:reconnect",
+            kwargs={"workspace_id": workspace.id, "account_id": account.id},
+        )
+        with patch("apps.social_accounts.views._get_provider_for_platform", return_value=mock_provider):
+            response = authenticated_client.post(url)
+
+        assert response.status_code == 302
+        verifier = authenticated_client.session[OAUTH_SESSION_KEY]["code_verifier"]
+        assert verifier  # non-empty
+        _, kwargs = mock_provider.get_auth_url.call_args
+        assert kwargs["code_verifier"] == verifier
+
 
 @pytest.mark.django_db
 class TestOAuthCallbackView:
@@ -159,6 +241,29 @@ class TestOAuthCallbackView:
         page_data = authenticated_client.session["oauth_page_select"]
         assert page_data["platform"] == "instagram"
         assert page_data["pages"][0]["id"] == "17841400000000000"
+
+    def test_tiktok_callback_replays_pkce_verifier(self, authenticated_client, workspace, user):
+        """The verifier stashed at connect is read from the session and replayed
+        on the TikTok token exchange (callback arrives at the ``social1`` slug)."""
+        nonce = "nonce-tiktok"
+        verifier = "stored-code-verifier"
+        state = _sign_state(workspace.id, "tiktok", user.id, nonce)
+        session = authenticated_client.session
+        session[OAUTH_SESSION_KEY] = {"nonce": nonce, "code_verifier": verifier}
+        session.save()
+
+        mock_provider = MagicMock()
+        mock_provider.exchange_code.return_value = OAuthTokens(access_token="tok", refresh_token="r", expires_in=3600)
+        mock_provider.get_profile.return_value = AccountProfile(platform_id="open-id-1", name="Test TikTok")
+
+        url = reverse("social_accounts:oauth_callback", kwargs={"platform": "social1"})
+        with patch("apps.social_accounts.views._get_provider_for_platform", return_value=mock_provider):
+            response = authenticated_client.get(url, {"code": "auth-code", "state": state})
+
+        assert response.status_code == 302
+        mock_provider.exchange_code.assert_called_once()
+        _, kwargs = mock_provider.exchange_code.call_args
+        assert kwargs["code_verifier"] == verifier
 
 
 @pytest.mark.django_db

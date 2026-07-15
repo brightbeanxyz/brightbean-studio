@@ -97,7 +97,7 @@ class YouTubeProvider(SocialProvider):
     # OAuth
     # ------------------------------------------------------------------
 
-    def get_auth_url(self, redirect_uri: str, state: str) -> str:
+    def get_auth_url(self, redirect_uri: str, state: str, code_verifier: str | None = None) -> str:
         params = {
             "client_id": self.credentials["client_id"],
             "redirect_uri": redirect_uri,
@@ -109,7 +109,7 @@ class YouTubeProvider(SocialProvider):
         }
         return f"{AUTH_URL}?{urlencode(params)}"
 
-    def exchange_code(self, code: str, redirect_uri: str) -> OAuthTokens:
+    def exchange_code(self, code: str, redirect_uri: str, code_verifier: str | None = None) -> OAuthTokens:
         resp = self._request(
             "POST",
             TOKEN_URL,

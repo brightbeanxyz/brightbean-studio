@@ -347,6 +347,7 @@ class PlatformPost(models.Model):
         PUBLISHING = "publishing", "Publishing"
         PUBLISHED = "published", "Published"
         FAILED = "failed", "Failed"
+        ON_HOLD = "on_hold", "On Hold"
 
     # Statuses that must never be removed by *accidental* deletion paths
     # (composer account deselection, autosave sync): a published or
@@ -362,13 +363,18 @@ class PlatformPost(models.Model):
     VALID_TRANSITIONS = {
         "draft": {"pending_review", "scheduled", "publishing"},
         "pending_review": {"approved", "changes_requested", "rejected"},
-        "approved": {"pending_client", "scheduled", "publishing", "draft"},
+        "approved": {"pending_client", "scheduled", "publishing", "draft", "on_hold", "pending_review"},
         "pending_client": {"approved", "changes_requested", "rejected"},
         "changes_requested": {"pending_review", "draft"},
         "rejected": {"draft", "pending_review"},
         "scheduled": {"publishing", "draft"},
         "publishing": {"published", "failed", "scheduled"},  # scheduled = retry
         "failed": {"publishing", "draft", "scheduled"},
+        # Client-requested hold: parked out of the publish path. The team resolves
+        # it back to approved (resume), draft (rework), or changes_requested. There
+        # is deliberately no on_hold → scheduled edge — un-hold to ``approved`` first
+        # so nothing publishes straight out of a hold.
+        "on_hold": {"approved", "draft", "changes_requested"},
         "published": set(),  # terminal
     }
 
@@ -384,6 +390,7 @@ class PlatformPost(models.Model):
         "published": "green",
         "partially_published": "yellow",  # only used by Post-level aggregate
         "failed": "red",
+        "on_hold": "violet",
     }
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

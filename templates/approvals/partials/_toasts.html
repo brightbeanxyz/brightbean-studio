@@ -1,0 +1,55 @@
+{% comment %}
+Scoped toast host for the approval surfaces (publish tab, composer, client portal).
+Fires on an `HX-Trigger: {"showToast": {tone,title,body}}` response header — htmx
+dispatches a `showToast` event whose `event.detail` is the payload. tone ∈
+success|info|warn|error. Self-contained: not added to base.html (app shell untouched).
+Include this ONCE per page, OUTSIDE any htmx-refetched region, so a list refresh
+fired by the same response doesn't tear down the toast before it's seen.
+{% endcomment %}
+<style nonce="{{ request.csp_nonce }}">
+  @keyframes bb-toastPop { from { opacity:0; transform:translateY(8px) scale(.96); } to { opacity:1; transform:translateY(0) scale(1); } }
+  /* Shared approval-surface animations (design parity). Defined here because this
+     partial is included once per page, outside any htmx-refetched region. */
+  @keyframes bb-modalPop { from { opacity:0; transform:translateY(10px) scale(.97); } to { opacity:1; transform:translateY(0) scale(1); } }
+  .modal-pop { animation: bb-modalPop 200ms cubic-bezier(.16,1,.3,1); }
+  @keyframes bb-collapseIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+  .anim-collapse { animation: bb-collapseIn 200ms ease; }
+  /* Every button on the approval surfaces shows a pointer cursor. Low specificity
+     so explicit cursor utilities still win; disabled buttons stay not-allowed. */
+  button { cursor: pointer; }
+  button:disabled, button[disabled] { cursor: not-allowed; }
+  #bb-toast-host { position:fixed; z-index:200; bottom:1.5rem; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:.5rem; pointer-events:none; }
+  .bb-toast { display:flex; align-items:center; gap:.625rem; padding:.625rem 1rem .625rem .75rem; border-radius:.75rem; color:#fff; box-shadow:0 12px 30px rgba(23,20,18,.32); animation:bb-toastPop 240ms cubic-bezier(.16,1,.3,1); pointer-events:auto; }
+  .bb-toast-title { font-size:.8125rem; font-weight:600; line-height:1.2; }
+  .bb-toast-body { font-size:.75rem; color:#A8A29E; line-height:1.2; }
+</style>
+<div id="bb-toast-host" aria-live="polite" aria-atomic="true"></div>
+<script nonce="{{ request.csp_nonce }}">
+(function () {
+  if (window.__bbToastInit) return;
+  window.__bbToastInit = true;
+  var TONES = {
+    success: { accent: '#34D399', bg: '#1C1917', icon: '<circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/>' },
+    info:    { accent: '#FB923C', bg: '#1C1917', icon: '<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>' },
+    warn:    { accent: '#FBBF24', bg: '#1C1917', icon: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>' },
+    error:   { accent: '#FCA5A5', bg: '#7F1D1D', icon: '<path d="M6 18L18 6M6 6l12 12"/>' },
+  };
+  function render(detail) {
+    if (!detail || !detail.title) return;
+    var host = document.getElementById('bb-toast-host');
+    if (!host) return;
+    var t = TONES[detail.tone] || TONES.success;
+    var el = document.createElement('div');
+    el.className = 'bb-toast';
+    el.style.background = t.bg;
+    el.innerHTML =
+      '<span style="color:' + t.accent + ';display:flex"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + t.icon + '</svg></span>' +
+      '<div><div class="bb-toast-title"></div>' + (detail.body ? '<div class="bb-toast-body"></div>' : '') + '</div>';
+    el.querySelector('.bb-toast-title').textContent = detail.title;
+    if (detail.body) el.querySelector('.bb-toast-body').textContent = detail.body;
+    host.appendChild(el);
+    setTimeout(function () { el.remove(); }, detail.duration || 3400);
+  }
+  document.body.addEventListener('showToast', function (e) { render(e.detail); });
+})();
+</script>

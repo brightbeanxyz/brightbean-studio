@@ -106,7 +106,7 @@ def _supports_post_fallback(metric_key: str) -> bool:
     """Which metric keys can be derived by summing per-post deltas.
 
     Counts and minutes sum linearly. Account-only growth (subscribers,
-    follows, profile_visits) is undefined for posts; rate-style metrics
+    follows, followers) is undefined for posts; rate-style metrics
     (avg_view_pct, engagement) cannot be summed; and unique-user metrics
     (reach) double-count users when summed across posts. Unknown metric
     keys (not registered in :data:`METRICS`) return False so a forgotten
@@ -263,27 +263,40 @@ def account_analytics_bundle(account: SocialAccount, days: int) -> dict[str, Any
         )
     )
     by_metric: dict[str, dict[dt_date, float]] = defaultdict(dict)
+    captured_by_metric: dict[str, Any] = {}
     max_captured: Any = None
     metrics_with_account_data: set[str] = set()
     for r in rows:
         by_metric[r.metric_key][r.date] = r.value
         metrics_with_account_data.add(r.metric_key)
+        if r.metric_key not in captured_by_metric or r.captured_at > captured_by_metric[r.metric_key]:
+            captured_by_metric[r.metric_key] = r.captured_at
         if max_captured is None or r.captured_at > max_captured:
             max_captured = r.captured_at
 
-    # Hybrid fallback: for content-attribution metrics without account-level
-    # rows in the window, derive the daily series by summing per-post deltas
-    # so platforms without ``get_account_metrics`` (YouTube, TikTok, etc.)
-    # still get populated hero cards and charts. Roll the per-post
-    # ``captured_at`` into ``max_captured`` so freshness consumers don't
-    # report "no data" while the response is in fact populated.
+    # Hybrid fallback: for content-attribution metrics, derive a daily series
+    # by summing per-post deltas so platforms without ``get_account_metrics``
+    # (YouTube, TikTok, etc.) still get populated hero cards and charts.
+    #
+    # Also prefer the per-post series when it is fresher than account-level
+    # rows. Facebook account insights are synced at most daily, while per-post
+    # metrics can refresh hourly; without this freshness check the main graph
+    # can lag behind the post drawer/table even though newer post snapshots are
+    # already stored.
     for m in platform_metrics:
-        if m in metrics_with_account_data or not _supports_post_fallback(m):
+        if not _supports_post_fallback(m):
             continue
         daily, fallback_captured = _post_summed_series_for_metric(account, m, start, end)
-        by_metric[m].update(daily)
-        if fallback_captured is not None and (max_captured is None or fallback_captured > max_captured):
-            max_captured = fallback_captured
+        if not daily:
+            continue
+        account_captured = captured_by_metric.get(m)
+        should_use_fallback = m not in metrics_with_account_data or (
+            fallback_captured is not None and account_captured is not None and fallback_captured > account_captured
+        )
+        if should_use_fallback:
+            by_metric[m].update(daily)
+            if fallback_captured is not None and (max_captured is None or fallback_captured > max_captured):
+                max_captured = fallback_captured
 
     series_map = {
         m: [by_metric[m].get(start + timedelta(days=i), 0.0) for i in range(2 * days)] for m in platform_metrics
@@ -436,6 +449,50 @@ def follower_growth_metric(
         series = series_map[growth_metric]
     else:
         series = _series_for(account, growth_metric, timezone.now().date(), days)
+    if growth_metric == "followers":
+        end = timezone.now().date()
+        current_start = end - timedelta(days=days - 1)
+        previous_start = end - timedelta(days=(2 * days) - 1)
+        rows = list(
+            AccountInsightsSnapshot.objects.filter(
+                social_account=account,
+                metric_key=growth_metric,
+                date__gte=previous_start,
+                date__lte=end,
+            )
+            .order_by("date")
+            .values_list("date", "value")
+        )
+
+        def window_delta(start: dt_date, stop: dt_date) -> float:
+            values = [value for day, value in rows if start <= day <= stop]
+            if len(values) < 2:
+                return 0.0
+            return max(float(values[-1]) - float(values[0]), 0.0)
+
+        cur_val = window_delta(current_start, end)
+        prev_val = window_delta(previous_start, current_start - timedelta(days=1))
+        delta = ((cur_val - prev_val) / prev_val) * 100 if prev_val else 0.0
+        by_day = {day: float(value) for day, value in rows}
+        previous_value = next(
+            (float(value) for day, value in reversed(rows) if day < current_start),
+            None,
+        )
+        daily_series: list[float] = []
+        for i in range(days):
+            day = current_start + timedelta(days=i)
+            value = by_day.get(day)
+            if value is None:
+                daily_series.append(0.0)
+                continue
+            daily_series.append(max(value - previous_value, 0.0) if previous_value is not None else 0.0)
+            previous_value = value
+        return growth_metric, DerivedMetric(
+            value=cur_val,
+            delta=round(delta, 1),
+            series=daily_series,
+            kind=kind_of(growth_metric),
+        )
     return growth_metric, derive(series, days, kind_of(growth_metric))
 
 

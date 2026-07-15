@@ -72,6 +72,21 @@ def _record_action(post, platform_post, user, action, comment=""):
     )
 
 
+def _notify_reviewers(workspace, actor, *, post, event_type, title, body):
+    """Notify every workspace member with ``approve_posts`` (except the actor)."""
+    reviewers = WorkspaceMembership.objects.filter(workspace=workspace).select_related("user", "custom_role")
+    for membership in reviewers:
+        perms = membership.effective_permissions
+        if perms.get("approve_posts", False) and membership.user != actor:
+            notify(
+                user=membership.user,
+                event_type=event_type,
+                title=title,
+                body=body,
+                data={"post_id": str(post.id), "workspace_id": str(workspace.id)},
+            )
+
+
 # ---------------------------------------------------------------------------
 # Public service functions
 # ---------------------------------------------------------------------------
@@ -89,7 +104,7 @@ def submit_for_review(target, user, workspace):
             if _transition_or_skip(pp, "pending_review"):
                 moved.append(pp)
         if not moved:
-            return post
+            return moved
 
         if is_bundled:
             _record_action(post, None, user, ApprovalAction.ActionType.SUBMITTED)
@@ -104,20 +119,14 @@ def submit_for_review(target, user, workspace):
         )
 
     # Notify all reviewers (members with approve_posts permission)
-    reviewers = WorkspaceMembership.objects.filter(workspace=workspace).select_related("user", "custom_role")
-    for membership in reviewers:
-        perms = membership.effective_permissions
-        if perms.get("approve_posts", False) and membership.user != user:
-            notify(
-                user=membership.user,
-                event_type=EventType.POST_SUBMITTED,
-                title="Post submitted for review",
-                body=f'{user.display_name} submitted a post for your review: "{post.caption_snippet}"',
-                data={
-                    "post_id": str(post.id),
-                    "workspace_id": str(workspace.id),
-                },
-            )
+    _notify_reviewers(
+        workspace,
+        user,
+        post=post,
+        event_type=EventType.POST_SUBMITTED,
+        title="Post submitted for review",
+        body=f'{user.display_name} submitted a post for your review: "{post.caption_snippet}"',
+    )
 
     return post
 
@@ -146,7 +155,7 @@ def approve_post(target, user, workspace, comment=""):
                 advanced_to_client = True
 
         if not moved:
-            return post
+            return moved
 
         if is_bundled:
             _record_action(post, None, user, ApprovalAction.ActionType.APPROVED, comment)
@@ -162,7 +171,10 @@ def approve_post(target, user, workspace, comment=""):
             )
             _notify_clients(post, workspace)
 
-    if post.author and post.author != user:
+    # Only tell the author "approved" when the post actually reached approved —
+    # in two-stage mode an internal approval that advances to pending_client is
+    # not done yet (the client still has to sign off, which re-enters this fn).
+    if post.author and post.author != user and not advanced_to_client:
         notify(
             user=post.author,
             event_type=EventType.POST_APPROVED,
@@ -190,7 +202,7 @@ def request_changes(target, user, workspace, comment):
             if _transition_or_skip(pp, "changes_requested"):
                 moved.append(pp)
         if not moved:
-            return post
+            return moved
 
         if is_bundled:
             _record_action(post, None, user, ApprovalAction.ActionType.CHANGES_REQUESTED, comment)
@@ -226,7 +238,7 @@ def reject_post(target, user, workspace, comment):
             if _transition_or_skip(pp, "rejected"):
                 moved.append(pp)
         if not moved:
-            return post
+            return moved
 
         if is_bundled:
             _record_action(post, None, user, ApprovalAction.ActionType.REJECTED, comment)
@@ -249,9 +261,66 @@ def reject_post(target, user, workspace, comment):
     return post
 
 
+def request_hold(target, user, workspace, comment):
+    """Client requests a hold on an already-approved post. Comment is required.
+
+    Parks the post in ``on_hold`` — out of the publish path (the publisher only
+    picks up ``scheduled`` rows, and there is no ``on_hold → scheduled`` edge) —
+    and notifies the team so they can resume, rework, or drop it.
+    """
+    if not comment.strip():
+        raise ValueError("A comment is required when requesting a hold.")
+
+    post, targets, is_bundled = _resolve_targets(target, eligible_from_states={"approved"})
+
+    moved = []
+    with transaction.atomic():
+        for pp in targets:
+            if _transition_or_skip(pp, "on_hold"):
+                moved.append(pp)
+        if not moved:
+            return moved
+
+        if is_bundled:
+            _record_action(post, None, user, ApprovalAction.ActionType.HELD, comment)
+        else:
+            for pp in moved:
+                _record_action(post, pp, user, ApprovalAction.ActionType.HELD, comment)
+
+    _notify_reviewers_of_hold(post, workspace, user, comment)
+    return post
+
+
+def resume_hold(target, user, workspace):
+    """Lift a client-requested hold — move an ``on_hold`` post back to ``approved``.
+
+    Reviewer-side counterpart to :func:`request_hold`, so a held post is never a
+    dead end for the team.
+    """
+    post, targets, is_bundled = _resolve_targets(target, eligible_from_states={"on_hold"})
+
+    moved = []
+    with transaction.atomic():
+        for pp in targets:
+            if _transition_or_skip(pp, "approved"):
+                moved.append(pp)
+        if not moved:
+            return moved
+
+        if is_bundled:
+            _record_action(post, None, user, ApprovalAction.ActionType.APPROVED, "Hold lifted.")
+        else:
+            for pp in moved:
+                _record_action(post, pp, user, ApprovalAction.ActionType.APPROVED, "Hold lifted.")
+
+    return moved
+
+
 def resubmit_post(target, user, workspace):
-    """Resubmit a post or single platform post after changes/rejection."""
-    post, targets, is_bundled = _resolve_targets(target, eligible_from_states={"changes_requested", "rejected"})
+    """Resubmit a post after changes/rejection — or re-review an edited approved post."""
+    post, targets, is_bundled = _resolve_targets(
+        target, eligible_from_states={"changes_requested", "rejected", "approved"}
+    )
 
     moved = []
     with transaction.atomic():
@@ -259,7 +328,7 @@ def resubmit_post(target, user, workspace):
             if _transition_or_skip(pp, "pending_review"):
                 moved.append(pp)
         if not moved:
-            return post
+            return moved
 
         if is_bundled:
             _record_action(post, None, user, ApprovalAction.ActionType.RESUBMITTED)
@@ -273,20 +342,14 @@ def resubmit_post(target, user, workspace):
             defaults={"reminder_count": 0, "last_reminder_at": None, "escalated": False},
         )
 
-    reviewers = WorkspaceMembership.objects.filter(workspace=workspace).select_related("user", "custom_role")
-    for membership in reviewers:
-        perms = membership.effective_permissions
-        if perms.get("approve_posts", False) and membership.user != user:
-            notify(
-                user=membership.user,
-                event_type=EventType.POST_SUBMITTED,
-                title="Post resubmitted for review",
-                body=f'{user.display_name} resubmitted a post: "{post.caption_snippet}"',
-                data={
-                    "post_id": str(post.id),
-                    "workspace_id": str(workspace.id),
-                },
-            )
+    _notify_reviewers(
+        workspace,
+        user,
+        post=post,
+        event_type=EventType.POST_SUBMITTED,
+        title="Post resubmitted for review",
+        body=f'{user.display_name} resubmitted a post: "{post.caption_snippet}"',
+    )
 
     return post
 
@@ -302,8 +365,8 @@ def bulk_approve(post_ids, user, workspace):
 
     for post in posts:
         try:
-            approve_post(post, user, workspace)
-            results.append((str(post.id), True, None))
+            moved = approve_post(post, user, workspace)
+            results.append((str(post.id), bool(moved), None))
         except ValueError as e:
             results.append((str(post.id), False, str(e)))
 
@@ -324,12 +387,24 @@ def bulk_reject(post_ids, user, workspace, comment):
 
     for post in posts:
         try:
-            reject_post(post, user, workspace, comment)
-            results.append((str(post.id), True, None))
+            moved = reject_post(post, user, workspace, comment)
+            results.append((str(post.id), bool(moved), None))
         except ValueError as e:
             results.append((str(post.id), False, str(e)))
 
     return results
+
+
+def _notify_reviewers_of_hold(post, workspace, user, comment):
+    """Notify reviewers (approve_posts holders) that a client put a post on hold."""
+    _notify_reviewers(
+        workspace,
+        user,
+        post=post,
+        event_type=EventType.APPROVAL_HOLD_REQUESTED,
+        title="Client requested a hold",
+        body=f'{user.display_name} put a post on hold: "{comment[:100]}"',
+    )
 
 
 def _notify_clients(post, workspace):

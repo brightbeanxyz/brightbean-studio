@@ -351,28 +351,26 @@ def _get_publish_context(workspace, request):
         "workspace_timezone": ws_tz,
         "queue_count": PlatformPost.objects.filter(post__workspace_id=workspace.id, status="scheduled").count(),
         "drafts_count": PlatformPost.objects.filter(post__workspace_id=workspace.id, status="draft").count(),
-        "approvals_count": PlatformPost.objects.filter(
-            post__workspace_id=workspace.id,
-            status__in=["pending_review", "pending_client", "approved", "rejected", "changes_requested"],
-        ).count(),
+        # Distinct posts (one row per post in the redesigned tab), incl. on_hold —
+        # matches the tab's "All" pill count.
+        "approvals_count": Post.objects.for_workspace(workspace.id)
+        .filter(
+            platform_posts__status__in=[
+                "pending_review",
+                "pending_client",
+                "approved",
+                "rejected",
+                "changes_requested",
+                "on_hold",
+            ]
+        )
+        .distinct()
+        .count(),
         "sent_count": PlatformPost.objects.filter(
             post__workspace_id=workspace.id,
             status__in=["published", "failed"],
         ).count(),
     }
-
-
-def _apply_publish_filters(qs, request):
-    """Apply channel and tag filters from publish page dropdowns."""
-    channel = request.GET.get("channel")
-    if channel:
-        qs = qs.filter(platform_posts__social_account_id=channel).distinct()
-
-    tag = request.GET.get("tag")
-    if tag:
-        qs = qs.filter(tags__contains=[tag])
-
-    return qs
 
 
 def _apply_pp_publish_filters(qs, request):
@@ -476,39 +474,108 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
         platform_posts = _apply_pp_publish_filters(platform_posts, request)
         return {**base_ctx, "platform_posts": platform_posts[:200]}
 
-    # approvals
-    approval_statuses = ["pending_review", "pending_client", "approved", "rejected", "changes_requested"]
+    # approvals — one row per Post (bundled), matching the approval-action model
+    # and the approved design. on_hold is included so client-held posts surface
+    # to the team under "All".
+    from collections import defaultdict
+
+    from django.db.models import Count, Exists, OuterRef, Prefetch, Q
+    from django.utils.http import urlencode
+
+    from apps.approvals.models import PostComment
+
+    approval_statuses = ["pending_review", "pending_client", "approved", "rejected", "changes_requested", "on_hold"]
     status_filter = request.GET.get("approval_status", "all")
-    platform_posts = (
-        PlatformPost.objects.filter(
-            post__workspace_id=workspace.id,
-            status__in=approval_statuses,
-        )
-        .select_related("post__author", "social_account")
-        .prefetch_related("post__media_attachments__media_asset")
-        .order_by("post__scheduled_at", "-post__created_at")
-    )
-    platform_posts = _apply_pp_publish_filters(platform_posts, request)
+
+    # Population + channel + status must all be satisfied by the SAME PlatformPost
+    # row. Chaining .filter(platform_posts__...) spawns a separate join per call, so
+    # Django could otherwise match a post whose pending child is on a different
+    # channel than the one filtered — surfacing (and letting bulk actions target) a
+    # post that isn't actually pending for the selected channel. An Exists subquery
+    # anchors every condition to one child row.
+    pp_match = PlatformPost.objects.filter(post_id=OuterRef("pk"))
     if status_filter != "all" and status_filter in approval_statuses:
-        platform_posts = platform_posts.filter(status=status_filter)
+        pp_match = pp_match.filter(status=status_filter)
+    else:
+        pp_match = pp_match.filter(status__in=approval_statuses)
+    channel = request.GET.get("channel")
+    if channel:
+        pp_match = pp_match.filter(social_account_id=channel)
+
+    posts_qs = (
+        Post.objects.for_workspace(workspace.id)
+        .filter(Exists(pp_match))
+        .select_related("author")
+        .prefetch_related("platform_posts__social_account", "media_attachments__media_asset", "versions")
+        .order_by("scheduled_at", "-created_at")
+    )
+    # Tag is a Post-level attribute (can't cross child rows) — apply it directly.
+    tag = request.GET.get("tag")
+    if tag:
+        posts_qs = posts_qs.filter(tags__contains=[tag])
+
+    posts = list(posts_qs[:200])
 
     membership = getattr(request, "workspace_membership", None)
     perms = membership.effective_permissions if membership else {}
     can_approve = perms.get("approve_posts", False)
+    is_client = bool(membership and membership.workspace_role == "client")
 
-    def _count(status):
-        return PlatformPost.objects.filter(post__workspace_id=workspace.id, status=status).count()
+    # Batch the expandable-panel comments in one query (avoid a per-post N+1).
+    active_replies = PostComment.objects.filter(deleted_at__isnull=True).select_related("author")
+    comment_qs = (
+        PostComment.objects.filter(
+            post_id__in=[p.id for p in posts],
+            deleted_at__isnull=True,
+            parent_comment__isnull=True,
+        )
+        .select_related("author")
+        .prefetch_related(Prefetch("replies", queryset=active_replies))
+        .order_by("created_at")
+    )
+    if is_client:
+        comment_qs = comment_qs.filter(visibility=PostComment.Visibility.EXTERNAL)
+    comments_by_post = defaultdict(list)
+    for comment in comment_qs:
+        comments_by_post[comment.post_id].append(comment)
+    for post in posts:
+        post.visible_comments = comments_by_post.get(post.id, [])
+        # Actionability follows the child platforms, not the aggregate Post.status
+        # (a lower-ranked sibling like draft must not mask a pending child).
+        post.is_actionable = any(pp.status in ("pending_review", "pending_client") for pp in post.platform_posts.all())
+
+    # Pill counts in one conditional-aggregate query (was 6 separate COUNTs).
+    counts = (
+        Post.objects.for_workspace(workspace.id)
+        .filter(platform_posts__status__in=approval_statuses)
+        .aggregate(
+            all=Count("id", distinct=True),
+            pending_review=Count("id", filter=Q(platform_posts__status="pending_review"), distinct=True),
+            pending_client=Count("id", filter=Q(platform_posts__status="pending_client"), distinct=True),
+            approved=Count("id", filter=Q(platform_posts__status="approved"), distinct=True),
+            rejected=Count("id", filter=Q(platform_posts__status="rejected"), distinct=True),
+            changes_requested=Count("id", filter=Q(platform_posts__status="changes_requested"), distinct=True),
+            on_hold=Count("id", filter=Q(platform_posts__status="on_hold"), distinct=True),
+        )
+    )
+
+    # Preserve the active channel/tag/timezone filters across status pills and the
+    # post-action self-refresh (otherwise acting on a post drops the filter).
+    filter_qs = urlencode({k: request.GET[k] for k in ("channel", "tag", "tz") if request.GET.get(k)})
 
     return {
         **base_ctx,
-        "platform_posts": platform_posts,
+        "posts": posts,
         "status_filter": status_filter,
         "can_approve": can_approve,
-        "pending_review_count": _count("pending_review"),
-        "pending_client_count": _count("pending_client"),
-        "approved_count": _count("approved"),
-        "rejected_count": _count("rejected"),
-        "changes_requested_count": _count("changes_requested"),
+        "approval_filter_qs": filter_qs,
+        "all_count": counts["all"],
+        "pending_review_count": counts["pending_review"],
+        "pending_client_count": counts["pending_client"],
+        "approved_count": counts["approved"],
+        "rejected_count": counts["rejected"],
+        "changes_requested_count": counts["changes_requested"],
+        "on_hold_count": counts["on_hold"],
     }
 
 

@@ -23,7 +23,7 @@
 
 ## About BrightBean Studio
 
-BrightBean Studio is an open-source, self-hostable social media management platform built for creators, agencies and SMBs. It does what Sendible, SocialPilot, or ContentStudio do, but free and without per-seat, per-channel, or per-workspace limits. Plan, compose, schedule, approve, publish, and monitor content across Facebook, Instagram, LinkedIn, TikTok, YouTube, Pinterest, Threads, Bluesky, Google Business Profile, and Mastodon from a single multi-workspace dashboard.
+BrightBean Studio is an open-source, self-hostable social media management platform built for creators, agencies and SMBs. It does what Sendible, SocialPilot, or ContentStudio do, but free and without per-seat, per-channel, or per-workspace limits. Plan, compose, schedule, approve, publish, and monitor content across Facebook, Instagram, LinkedIn, TikTok, YouTube, Pinterest, Threads, Bluesky, Google Business Profile, Mastodon, and DEV.to from a single multi-workspace dashboard.
 
 It's for people managing many client accounts under one roof who'd rather own their social stack than pay $100–300/month to a SaaS vendor. Every feature is available to every user. No paid tier, no feature gate, no upsell.
 
@@ -78,6 +78,7 @@ A free hosted version is available at [brightbean.xyz/studio](https://brightbean
 | <img src="https://cdn.simpleicons.org/bluesky" width="16" height="16"> Bluesky | ✓ | ✓ | — | — |
 | <img src="https://api.iconify.design/logos/google-icon.svg" width="16" height="16"> Google Business Profile | ✓ | — | — | ✓ |
 | <img src="https://cdn.simpleicons.org/mastodon" width="16" height="16"> Mastodon | ✓ | ✓ | — | — |
+| <img src="https://cdn.simpleicons.org/devdotto/000000" width="16" height="16"> DEV.to | ✓ | — | — | — |
 
 ---
 
@@ -136,9 +137,11 @@ Then start everything:
 
 ```bash
 docker compose up -d --build
-docker compose exec app python manage.py migrate
 docker compose exec app python manage.py createsuperuser
 ```
+
+Database migrations run automatically via the `migrate` Compose service before
+the `app` and `worker` services start, so there is no separate migrate step.
 
 Tailwind compiles automatically via the `tailwind` Compose service. First build
 takes ~60–90 seconds (running `npm install` in a fresh container); subsequent
@@ -379,7 +382,7 @@ Facebook, Instagram, and Threads all use the same Meta app credentials.
 
    **Use case: "Manage everything on your Page"** (Facebook)
    - This use case auto-includes `business_management`, `pages_show_list`, and `public_profile`
-   - Add these optional permissions: `pages_manage_posts`, `pages_read_engagement`, `pages_read_user_content`, `pages_manage_metadata`, `read_insights`
+   - Add these optional permissions: `pages_manage_posts`, `pages_manage_engagement`, `pages_read_engagement`, `pages_read_user_content`, `pages_manage_metadata`, `read_insights`
 
    **Use case: "Messenger from Meta"** (Facebook Messaging)
    - Required to enable the `pages_messaging` permission, which is not available under the "Manage Pages" use case
@@ -485,7 +488,7 @@ If you set only the Path B (Company) credentials, Brightbean Studio automaticall
    ```
    {APP_URL}/social-accounts/callback/social1/
    ```
-4. Required scopes: `user.info.basic`, `user.info.profile`, `user.info.stats`, `video.publish`, `video.upload`, `video.list`
+4. Required scopes: `user.info.basic`, `video.publish`, `video.upload`, `video.list`
 5. Note: TikTok uses **Client Key** (not Client ID). Copy the **Client Key** and **Client Secret** from your app dashboard
 6. Set the environment variables:
    ```
@@ -544,6 +547,16 @@ No developer app registration needed. Users connect by entering their Bluesky ha
 ### Mastodon
 
 No developer app registration needed. Brightbean Studio automatically registers an OAuth application on each Mastodon instance when a user connects their account. Users just need to enter their instance URL (e.g., `mastodon.social`).
+
+### DEV.to
+
+No developer app registration needed. Users connect by entering a personal **API key**:
+
+1. Log in to [DEV.to](https://dev.to/) and open **[Settings → Extensions](https://dev.to/settings/extensions)**
+2. Under **DEV Community API Keys**, enter a description (e.g. `Brightbean`) and click **Generate API Key**
+3. Copy the generated key and paste it when connecting your account in Brightbean Studio
+
+Posts publish as DEV.to articles (title + Markdown body). The key can be revoked at any time from the same settings page.
 
 ## Inbox: Backfill Historical Messages
 

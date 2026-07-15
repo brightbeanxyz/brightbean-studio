@@ -1,0 +1,109 @@
+{% comment %}
+Client approval card (design "ClientCard"). Context: post (+ post.visible_comments
+= external/team comments), workspace. Pending posts get approve/request-changes/reject;
+already-approved posts get "Put on hold"; held posts show their state.
+{% endcomment %}
+{% load tz approval_extras %}
+<div class="rounded-2xl border border-stone-200 bg-white overflow-hidden transition-shadow hover:shadow-md"
+     x-data="{ open: false, panel: null, comment: '' }">
+    <div class="p-5 cursor-pointer" @click="open = !open">
+        <div class="flex items-center gap-2 mb-2.5 flex-wrap">
+            {% for pp in post.platform_posts.all %}
+            <span class="text-[0.6875rem] font-semibold px-2.5 py-0.5 rounded-full bg-stone-100 text-stone-600">{{ pp.social_account.get_platform_display }}</span>
+            {% endfor %}
+            {% if post.client_pending %}{% status_badge 'pending_client' %}{% elif post.client_on_hold %}{% status_badge 'on_hold' %}{% elif post.client_approved %}{% status_badge 'approved' %}{% endif %}
+            {% if post.scheduled_at %}
+            <span class="text-[0.6875rem] text-stone-400 ml-auto inline-flex items-center gap-1">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                {% timezone workspace.effective_timezone|default:"UTC" %}{{ post.scheduled_at|date:"M j, Y \a\t g:i A" }}{% endtimezone %}
+            </span>
+            {% elif post.proposed_publish_at %}
+            <span class="text-[0.6875rem] text-stone-400 ml-auto">Proposed {% timezone workspace.effective_timezone|default:"UTC" %}{{ post.proposed_publish_at|date:"M j, Y" }}{% endtimezone %}</span>
+            {% endif %}
+        </div>
+
+        <p class="text-[0.9375rem] leading-relaxed text-stone-800" :class="open ? '' : 'line-clamp-3'">{{ post.caption }}</p>
+
+        {% if post.media_attachments.all %}
+        <div class="flex gap-2 mt-3 flex-wrap">
+            {% for pm in post.media_attachments.all %}
+            {% if pm.media_asset.thumbnail %}
+            <img src="{{ pm.media_asset.thumbnail.url }}" alt="" class="w-20 h-20 rounded-xl object-cover border border-stone-200">
+            {% elif pm.media_asset.file and pm.media_asset.media_type == 'image' %}
+            <img src="{{ pm.media_asset.file.url }}" alt="" class="w-20 h-20 rounded-xl object-cover border border-stone-200">
+            {% else %}
+            <div class="w-20 h-20 rounded-xl border border-stone-200 bg-stone-50 flex items-center justify-center text-stone-300"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>
+            {% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="flex items-center gap-1.5 mt-3">
+            <span class="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0" style="background: var(--primary);">{{ post.author.display_name|default:"?"|make_list|first|upper }}</span>
+            <span class="text-[0.75rem] text-stone-400">by {{ post.author.display_name|default:"Unknown" }} · {{ workspace.name }}</span>
+            <svg class="w-4 h-4 ml-auto text-stone-400 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+        </div>
+    </div>
+
+    <div x-show="open" x-cloak class="anim-collapse">
+        {% if post.visible_comments %}
+        <div class="px-5 pb-2 border-t border-stone-100 pt-3">
+            <p class="text-[0.6875rem] font-semibold text-stone-400 uppercase tracking-wide mb-2">From the team</p>
+            {% for c in post.visible_comments %}
+            <div class="flex gap-2 mb-2">
+                <span class="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0" style="background: var(--primary);">{{ c.author.display_name|default:"?"|make_list|first|upper }}</span>
+                <div class="min-w-0"><span class="text-[0.75rem] font-semibold text-stone-700">{{ c.author.display_name|default:"Team" }}</span><p class="text-[0.8125rem] text-stone-600">{{ c.body }}</p></div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="px-5 py-4 border-t border-stone-100 flex flex-wrap items-center gap-2 bg-stone-50">
+            {% if post.client_pending %}
+            <button hx-post="{% url 'client_portal:approve' post_id=post.id %}" hx-swap="none"
+                    class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full text-white transition-all hover:-translate-y-px" style="background:#22C55E;">Approve</button>
+            <button @click="panel = panel === 'changes' ? null : 'changes'"
+                    class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full" style="background:#FEFCE8;color:#A16207;border:1px solid rgba(234,179,8,0.25);">Request changes</button>
+            <button @click="panel = panel === 'reject' ? null : 'reject'"
+                    class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full" style="background:#FEF2F2;color:#B91C1C;border:1px solid rgba(239,68,68,0.18);">Reject</button>
+            {% elif post.client_on_hold %}
+            <span class="text-[0.8125rem] text-stone-500 inline-flex items-center gap-1.5">
+                <svg class="w-[15px] h-[15px]" style="color:#7C3AED;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                On hold — the team has been notified.
+            </span>
+            {% elif post.client_approved %}
+            <span class="text-[0.8125rem] text-stone-500 inline-flex items-center gap-1.5 mr-1">
+                <svg class="w-[15px] h-[15px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+                You approved this. Scheduled to publish
+            </span>
+            <button @click="panel = panel === 'hold' ? null : 'hold'"
+                    class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full inline-flex items-center gap-1.5" style="background:#F5F3FF;color:#6D28D9;border:1px solid rgba(124,58,237,0.2);">
+                <svg class="w-[13px] h-[13px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                Put on hold
+            </button>
+            {% endif %}
+        </div>
+
+        {% if post.client_pending or post.client_approved %}
+        <div x-show="panel" x-cloak class="px-5 py-4 border-t border-stone-100 anim-collapse">
+            <label class="text-[0.8125rem] font-semibold text-stone-700 block mb-2"
+                   x-text="panel === 'changes' ? 'What changes would you like?' : panel === 'reject' ? 'Why are you rejecting this?' : 'Why put this on hold? The team is notified, and nothing publishes while held.'"></label>
+            <textarea id="client-comment-{{ post.id }}" name="comment" x-model="comment" rows="3"
+                      :placeholder="panel === 'hold' ? 'e.g. Legal wants to double-check the figures…' : 'Add a note…'"
+                      class="w-full px-3 py-2 text-[0.875rem] rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-orange-200 border-[1.5px] border-stone-200"></textarea>
+            <div class="flex gap-2 mt-3">
+                <button x-show="panel === 'changes'" hx-post="{% url 'client_portal:request_changes' post_id=post.id %}" hx-include="#client-comment-{{ post.id }}" hx-swap="none"
+                        :disabled="!comment.trim()" :class="!comment.trim() && 'opacity-50 cursor-not-allowed'"
+                        class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full text-white" style="background:#EAB308;">Submit feedback</button>
+                <button x-show="panel === 'reject'" hx-post="{% url 'client_portal:reject' post_id=post.id %}" hx-include="#client-comment-{{ post.id }}" hx-swap="none"
+                        :disabled="!comment.trim()" :class="!comment.trim() && 'opacity-50 cursor-not-allowed'"
+                        class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full text-white" style="background:#EF4444;">Reject post</button>
+                <button x-show="panel === 'hold'" hx-post="{% url 'client_portal:request_hold' post_id=post.id %}" hx-include="#client-comment-{{ post.id }}" hx-swap="none"
+                        :disabled="!comment.trim()" :class="!comment.trim() && 'opacity-50 cursor-not-allowed'"
+                        class="px-4 py-2 text-[0.8125rem] font-semibold rounded-full text-white" style="background:#7C3AED;">Request hold</button>
+                <button @click="panel = null; comment = ''" class="px-4 py-2 text-[0.8125rem] font-medium rounded-full text-stone-500 hover:bg-stone-100">Cancel</button>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>

@@ -100,6 +100,9 @@
         {% block content %}{% endblock %}
     </main>
 
+    {# Toast host — outside the htmx-refreshed list so an action's refresh keeps the toast #}
+    {% include "approvals/partials/_toasts.html" %}
+
     <script src="{% static 'js/htmx.min.js' %}"></script>
     <script src="{% static 'js/alpine.min.js' %}" defer></script>
     {% block extra_js %}{% endblock %}

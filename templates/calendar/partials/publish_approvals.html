@@ -1,134 +1,38 @@
 {% comment %}
-Approvals tab partial for the Publish page.
-Shows pending approval platform posts with filter sub-tabs. Loaded via HTMX into #tab-content.
-All members can view; action buttons shown conditionally based on can_approve permission.
+Approvals tab for the Publish page — one row per post, matching the approved design.
+Loaded into #tab-content. Re-fetches itself on approvalAction / bulkActionComplete
+(fired by the action views' HX-Trigger), so every action updates the list in place.
+The toast host lives in calendar.html (outside #tab-content) so a refresh doesn't
+tear down the toast.
 {% endcomment %}
-{% load tz %}
+{% load tz approval_extras %}
 
-<div x-data="{ selectedPosts: [], showBulkBar: false }"
-     x-effect="showBulkBar = selectedPosts.length > 0"
+<div x-data="{ selectedPosts: [], diffOpen: false, rejectOpen: false, bulkReason: '' }"
+     hx-trigger="approvalAction from:body, bulkActionComplete from:body"
+     hx-get="{% url 'calendar:publish_tab_approvals' workspace_id=workspace.id %}?approval_status={{ status_filter }}{% if approval_filter_qs %}&{{ approval_filter_qs }}{% endif %}"
+     hx-target="#tab-content" hx-swap="innerHTML"
      {% if is_htmx %}class="tab-slide-in"{% endif %}>
 
-    <!-- Filter sub-tabs -->
-    <div class="flex flex-wrap gap-1.5 mb-5">
-        <button hx-get="{% url 'calendar:publish_tab_approvals' workspace_id=workspace.id %}?approval_status=all"
-                hx-target="#tab-content" hx-swap="innerHTML"
-                class="px-3.5 py-1.5 text-[0.8125rem] font-medium rounded-full transition-colors {% if status_filter == 'all' %}text-white{% else %}text-stone-600 hover:bg-stone-100{% endif %}"
-                {% if status_filter == 'all' %}style="background: var(--primary);"{% endif %}>
-            All <span class="ml-1 opacity-75">{{ pending_review_count|add:pending_client_count|add:approved_count|add:rejected_count|add:changes_requested_count }}</span>
-        </button>
-        <button hx-get="{% url 'calendar:publish_tab_approvals' workspace_id=workspace.id %}?approval_status=pending_review"
-                hx-target="#tab-content" hx-swap="innerHTML"
-                class="px-3.5 py-1.5 text-[0.8125rem] font-medium rounded-full transition-colors {% if status_filter == 'pending_review' %}text-white{% else %}text-stone-600 hover:bg-stone-100{% endif %}"
-                {% if status_filter == 'pending_review' %}style="background: var(--primary);"{% endif %}>
-            Pending Review <span class="ml-1 opacity-75">{{ pending_review_count }}</span>
-        </button>
-        <button hx-get="{% url 'calendar:publish_tab_approvals' workspace_id=workspace.id %}?approval_status=pending_client"
-                hx-target="#tab-content" hx-swap="innerHTML"
-                class="px-3.5 py-1.5 text-[0.8125rem] font-medium rounded-full transition-colors {% if status_filter == 'pending_client' %}text-white{% else %}text-stone-600 hover:bg-stone-100{% endif %}"
-                {% if status_filter == 'pending_client' %}style="background: var(--primary);"{% endif %}>
-            Pending Client <span class="ml-1 opacity-75">{{ pending_client_count }}</span>
-        </button>
-        <button hx-get="{% url 'calendar:publish_tab_approvals' workspace_id=workspace.id %}?approval_status=approved"
-                hx-target="#tab-content" hx-swap="innerHTML"
-                class="px-3.5 py-1.5 text-[0.8125rem] font-medium rounded-full transition-colors {% if status_filter == 'approved' %}text-white{% else %}text-stone-600 hover:bg-stone-100{% endif %}"
-                {% if status_filter == 'approved' %}style="background: var(--primary);"{% endif %}>
-            Approved <span class="ml-1 opacity-75">{{ approved_count }}</span>
-        </button>
-        <button hx-get="{% url 'calendar:publish_tab_approvals' workspace_id=workspace.id %}?approval_status=rejected"
-                hx-target="#tab-content" hx-swap="innerHTML"
-                class="px-3.5 py-1.5 text-[0.8125rem] font-medium rounded-full transition-colors {% if status_filter == 'rejected' %}text-white{% else %}text-stone-600 hover:bg-stone-100{% endif %}"
-                {% if status_filter == 'rejected' %}style="background: var(--primary);"{% endif %}>
-            Rejected <span class="ml-1 opacity-75">{{ rejected_count }}</span>
-        </button>
-        <button hx-get="{% url 'calendar:publish_tab_approvals' workspace_id=workspace.id %}?approval_status=changes_requested"
-                hx-target="#tab-content" hx-swap="innerHTML"
-                class="px-3.5 py-1.5 text-[0.8125rem] font-medium rounded-full transition-colors {% if status_filter == 'changes_requested' %}text-white{% else %}text-stone-600 hover:bg-stone-100{% endif %}"
-                {% if status_filter == 'changes_requested' %}style="background: var(--primary);"{% endif %}>
-            Changes Requested <span class="ml-1 opacity-75">{{ changes_requested_count }}</span>
-        </button>
+    {# filter pills #}
+    <div class="flex flex-wrap items-center gap-x-1 gap-y-2 mb-5">
+        {% include "calendar/partials/_approval_pill.html" with pid="all" label="All" count=all_count %}
+        {% include "calendar/partials/_approval_pill.html" with pid="pending_review" label="Pending Review" count=pending_review_count %}
+        {% include "calendar/partials/_approval_pill.html" with pid="pending_client" label="Pending Client" count=pending_client_count %}
+        {% include "calendar/partials/_approval_pill.html" with pid="approved" label="Approved" count=approved_count %}
+        {% include "calendar/partials/_approval_pill.html" with pid="rejected" label="Rejected" count=rejected_count %}
+        {% include "calendar/partials/_approval_pill.html" with pid="changes_requested" label="Changes Requested" count=changes_requested_count %}
+        {% include "calendar/partials/_approval_pill.html" with pid="on_hold" label="Hold" count=on_hold_count %}
     </div>
 
-    <!-- Post list -->
-    <div id="approval-list" class="space-y-3">
-        {% for pp in platform_posts %}
-        <div class="bg-white rounded-xl border border-stone-200 p-4 hover:border-stone-300 transition-colors">
-            <div class="flex items-center gap-3">
-                {% if can_approve %}
-                <input type="checkbox" :value="'{{ pp.post_id }}'" x-model="selectedPosts"
-                       class="w-4 h-4 rounded border-stone-300 text-orange-500 focus:ring-orange-300">
-                {% endif %}
-                <!-- Media thumbnail -->
-                {% with first_att=pp.post.media_attachments.all.0 %}
-                {% if first_att %}
-                <div class="w-12 h-12 rounded-lg overflow-hidden bg-stone-100 flex-shrink-0 relative">
-                    {% if first_att.media_asset.thumbnail %}
-                        <img src="{{ first_att.media_asset.thumbnail.url }}" alt="" class="w-full h-full object-cover">
-                    {% elif first_att.media_asset.media_type == 'image' or first_att.media_asset.media_type == 'gif' %}
-                        <img src="{{ first_att.media_asset.file.url }}" alt="" class="w-full h-full object-cover">
-                    {% else %}
-                        <div class="w-full h-full flex items-center justify-center">
-                            <svg class="w-4 h-4 text-stone-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
-                        </div>
-                    {% endif %}
-                    {% if first_att.media_asset.media_type == 'video' and first_att.media_asset.thumbnail %}
-                    <div class="absolute inset-0 flex items-center justify-center">
-                        <div class="w-5 h-5 rounded-full bg-black/50 flex items-center justify-center">
-                            <svg class="w-2.5 h-2.5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M5 3l14 9-14 9V3z"/></svg>
-                        </div>
-                    </div>
-                    {% endif %}
-                    {% if pp.post.media_attachments.count > 1 %}
-                    <div class="absolute bottom-0 right-0 bg-black/60 text-white text-[9px] font-bold px-1 rounded-tl">
-                        +{{ pp.post.media_attachments.count|add:"-1" }}
-                    </div>
-                    {% endif %}
-                </div>
-                {% endif %}
-                {% endwith %}
-                <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 mb-1">
-                        <span class="post-chip status-{{ pp.status }} inline-flex">
-                            <span class="chip-dot"></span>
-                            {{ pp.post.get_status_display }}
-                        </span>
-                        <span class="w-5 h-5 rounded-[5px] flex items-center justify-center">
-                            {% include "partials/_platform_icon.html" with platform=pp.social_account.platform size="sm" %}
-                        </span>
-                        <span class="text-xs text-stone-500">{{ pp.social_account.account_name|default:pp.social_account.account_handle }}</span>
-                        {% if pp.post.scheduled_at %}
-                        <span class="text-xs text-stone-400 tabular-nums">{% timezone display_timezone %}{{ pp.post.scheduled_at|date:"M d, Y H:i" }}{% endtimezone %}</span>
-                        {% elif pp.post.proposed_publish_at %}
-                        <span class="text-xs text-orange-500 tabular-nums" title="Proposed publishing time">Proposed {% timezone display_timezone %}{{ pp.post.proposed_publish_at|date:"M d, Y H:i" }}{% endtimezone %}</span>
-                        {% endif %}
-                    </div>
-                    <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}"
-                       class="text-sm text-stone-700 hover:text-stone-900 line-clamp-1">
-                        {{ pp.post.title|default:pp.post.caption_snippet|default:"(no caption)" }}
-                    </a>
-                    <p class="text-xs text-stone-400 mt-0.5">by {{ pp.post.author.display_name|default:"Unknown" }}</p>
-                </div>
-                {% if can_approve %}
-                <div class="flex items-center gap-2 flex-shrink-0">
-                    <form hx-post="{% url 'approvals:approve' workspace_id=workspace.id post_id=pp.post_id %}"
-                          hx-target="#tab-content" hx-swap="innerHTML">
-                        {% csrf_token %}
-                        <button type="submit"
-                                class="px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors">
-                            Approve
-                        </button>
-                    </form>
-                    <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}"
-                       class="px-3 py-1.5 text-xs font-semibold rounded-full border border-stone-200 text-stone-600 hover:border-stone-300 transition-colors">
-                        Review
-                    </a>
-                </div>
-                {% endif %}
-            </div>
-        </div>
+    {# post list #}
+    <div class="space-y-3">
+        {% for post in posts %}
+        {% include "approvals/partials/_approval_row.html" %}
         {% empty %}
         <div class="text-center py-16">
-            <svg class="mx-auto w-12 h-12 text-stone-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <div class="mx-auto w-14 h-14 rounded-full border-2 border-stone-200 flex items-center justify-center text-stone-300 mb-3">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20 6L9 17l-5-5"/></svg>
+            </div>
             <p class="text-stone-500 font-medium">No posts pending approval</p>
             <p class="text-sm text-stone-400 mt-1">Posts submitted for review will appear here</p>
         </div>
@@ -136,41 +40,63 @@ All members can view; action buttons shown conditionally based on can_approve pe
     </div>
 
     {% if can_approve %}
-    <!-- Bulk action bar -->
-    <div x-show="showBulkBar" x-cloak
+    {# selected ids carried for bulk hx-include #}
+    <template x-for="id in selectedPosts" :key="id"><input type="hidden" name="post_ids" :value="id"></template>
+
+    {# bulk action bar #}
+    <div x-show="selectedPosts.length > 0" x-cloak
          x-transition:enter="transition ease-out duration-200"
-         x-transition:enter-start="translate-y-full opacity-0"
-         x-transition:enter-end="translate-y-0 opacity-100"
-         x-transition:leave="transition ease-in duration-150"
-         x-transition:leave-start="translate-y-0 opacity-100"
-         x-transition:leave-end="translate-y-full opacity-0"
+         x-transition:enter-start="translate-y-full opacity-0" x-transition:enter-end="translate-y-0 opacity-100"
          class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40">
-        <div class="flex items-center gap-3 px-5 py-3 bg-stone-900 text-white rounded-2xl shadow-xl">
-            <span class="text-sm font-medium" x-text="selectedPosts.length + ' selected'"></span>
+        <div class="flex items-center gap-3 px-5 py-3 bg-stone-900 text-white rounded-2xl shadow-2xl">
+            <span class="text-[0.8125rem] font-medium" x-text="selectedPosts.length + ' selected'"></span>
             <div class="w-px h-5 bg-stone-700"></div>
-            <form hx-post="{% url 'approvals:bulk_action' workspace_id=workspace.id %}"
-                  hx-target="#tab-content"
-                  hx-swap="innerHTML"
-                  x-ref="bulkForm">
-                {% csrf_token %}
-                <template x-for="id in selectedPosts" :key="id">
-                    <input type="hidden" name="post_ids" :value="id">
-                </template>
-                <div class="flex items-center gap-2">
-                    <button type="submit" name="action" value="approve"
-                            class="px-3.5 py-1.5 text-[0.8125rem] font-semibold rounded-full bg-emerald-500 hover:bg-emerald-600 text-white transition-colors">
-                        Approve All
-                    </button>
-                    <button type="submit" name="action" value="reject"
-                            class="px-3.5 py-1.5 text-[0.8125rem] font-semibold rounded-full bg-red-500 hover:bg-red-600 text-white transition-colors">
-                        Reject All
-                    </button>
-                </div>
-            </form>
-            <button @click="selectedPosts = []" class="ml-1 text-stone-400 hover:text-white transition-colors">
+            <button hx-post="{% url 'approvals:bulk_action' workspace_id=workspace.id %}"
+                    hx-include="[name='post_ids']" hx-vals='{"action": "approve"}' hx-swap="none"
+                    class="px-3.5 py-1.5 text-[0.8125rem] font-semibold rounded-full bg-emerald-500 hover:bg-emerald-600 text-white">Approve all</button>
+            <button @click="rejectOpen = true"
+                    class="px-3.5 py-1.5 text-[0.8125rem] font-semibold rounded-full bg-red-500 hover:bg-red-600 text-white">Reject all</button>
+            <button @click="selectedPosts = []" class="ml-1 text-stone-400 hover:text-white">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
         </div>
     </div>
+
+    {# bulk reject modal #}
+    <div x-show="rejectOpen" x-cloak class="fixed inset-0 z-[150] flex items-center justify-center p-4" @click="rejectOpen = false">
+        <div class="absolute inset-0" style="background: rgba(28,25,23,.42); backdrop-filter: blur(3px);"></div>
+        <div class="relative bg-white rounded-2xl shadow-2xl w-full modal-pop" style="max-width: 440px;" @click.stop>
+            <div class="p-6">
+                <h3 class="text-[1.0625rem] font-bold text-stone-900 mb-1" x-text="'Reject ' + selectedPosts.length + (selectedPosts.length > 1 ? ' posts' : ' post')"></h3>
+                <p class="text-[0.8125rem] text-stone-500 mb-4">Tell the creator why. This comment is shared with them.</p>
+                <textarea id="bulk-reject-comment" name="comment" x-model="bulkReason" rows="3" placeholder="Reason for rejection…"
+                          class="w-full px-3 py-2 text-[0.875rem] border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-transparent resize-none"></textarea>
+                <div class="flex justify-end gap-2 mt-4">
+                    <button @click="rejectOpen = false" class="px-4 py-2 text-[0.8125rem] font-medium text-stone-600 hover:bg-stone-100 rounded-full">Cancel</button>
+                    <button hx-post="{% url 'approvals:bulk_action' workspace_id=workspace.id %}"
+                            hx-include="[name='post_ids'], #bulk-reject-comment" hx-vals='{"action": "reject"}' hx-swap="none"
+                            :disabled="!bulkReason.trim()"
+                            class="px-4 py-2 text-[0.8125rem] font-semibold text-white rounded-full"
+                            :class="bulkReason.trim() ? 'bg-red-500 hover:bg-red-600' : 'bg-stone-300 cursor-not-allowed'">Reject all</button>
+                </div>
+            </div>
+        </div>
+    </div>
     {% endif %}
+
+    {# version-diff modal (loaded via hx-get on the row's "View changes" button) #}
+    <div x-show="diffOpen" x-cloak class="fixed inset-0 z-[150] flex items-center justify-center p-4" @click="diffOpen = false">
+        <div class="absolute inset-0" style="background: rgba(28,25,23,.42); backdrop-filter: blur(3px);"></div>
+        <div class="relative bg-white rounded-2xl shadow-2xl w-full modal-pop max-h-[80vh] overflow-y-auto" style="max-width: 620px;" @click.stop>
+            <div class="p-6">
+                <div class="flex items-start justify-between mb-3">
+                    <h3 class="text-[1.0625rem] font-bold text-stone-900">Version changes</h3>
+                    <button @click="diffOpen = false" class="text-stone-400 hover:text-stone-600">
+                        <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <div id="diff-modal-body"><p class="text-sm text-stone-400">Loading…</p></div>
+            </div>
+        </div>
+    </div>
 </div>

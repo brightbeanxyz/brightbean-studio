@@ -60,6 +60,7 @@ DEFAULT_CHANNELS: dict[str, dict[str, bool]] = {
     EventType.COMMENT_MENTION: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.APPROVAL_REMINDER: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.APPROVAL_STALLED: {Channel.IN_APP: True, Channel.EMAIL: True},
+    EventType.APPROVAL_HOLD_REQUESTED: {Channel.IN_APP: True, Channel.EMAIL: True},
     EventType.CLIENT_CONNECTED_ACCOUNTS: {Channel.IN_APP: True, Channel.EMAIL: True},
 }
 

@@ -93,6 +93,12 @@ class SocialProvider(ABC):
     # from the requested scope list. Default True keeps backward compat.
     include_analytics_scopes: bool = True
 
+    # OAuth providers that require PKCE flip this to True. The connect view then
+    # generates a code_verifier, stashes it in the session, sends the derived
+    # code_challenge on the authorize URL, and replays the verifier on token
+    # exchange. Providers that don't set this are never passed a code_verifier.
+    uses_pkce: bool = False
+
     # True when ``get_account_metrics`` actually filters by the ``date_range``
     # argument. Providers whose stats endpoint returns only lifetime totals
     # (TikTok ``/v2/user/info/``) should set this to False so the sync layer
@@ -109,12 +115,20 @@ class SocialProvider(ABC):
     # OAuth methods (override for OAuth providers)
     # ------------------------------------------------------------------
 
-    def get_auth_url(self, redirect_uri: str, state: str) -> str:
-        """Generate the OAuth authorization URL."""
+    def get_auth_url(self, redirect_uri: str, state: str, code_verifier: str | None = None) -> str:
+        """Generate the OAuth authorization URL.
+
+        ``code_verifier`` is only supplied for providers that set
+        ``uses_pkce = True``; PKCE providers derive the ``code_challenge`` from it.
+        """
         raise NotImplementedError(f"{self.platform_name} does not implement get_auth_url")
 
-    def exchange_code(self, code: str, redirect_uri: str) -> OAuthTokens:
-        """Exchange an authorization code for access tokens."""
+    def exchange_code(self, code: str, redirect_uri: str, code_verifier: str | None = None) -> OAuthTokens:
+        """Exchange an authorization code for access tokens.
+
+        ``code_verifier`` is only supplied for providers that set
+        ``uses_pkce = True``; it must be replayed on the PKCE token exchange.
+        """
         raise NotImplementedError(f"{self.platform_name} does not implement exchange_code")
 
     def refresh_token(self, refresh_token: str) -> OAuthTokens:

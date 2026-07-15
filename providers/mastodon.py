@@ -119,7 +119,7 @@ class MastodonProvider(SocialProvider):
     # OAuth
     # ------------------------------------------------------------------
 
-    def get_auth_url(self, redirect_uri: str, state: str) -> str:
+    def get_auth_url(self, redirect_uri: str, state: str, code_verifier: str | None = None) -> str:
         """Build the instance-specific OAuth authorization URL."""
         params = {
             "client_id": self.credentials["client_id"],
@@ -130,7 +130,7 @@ class MastodonProvider(SocialProvider):
         }
         return f"{self.instance_url}/oauth/authorize?{urlencode(params)}"
 
-    def exchange_code(self, code: str, redirect_uri: str) -> OAuthTokens:
+    def exchange_code(self, code: str, redirect_uri: str, code_verifier: str | None = None) -> OAuthTokens:
         """Exchange an authorization code for a Mastodon access token."""
         resp = self._request(
             "POST",

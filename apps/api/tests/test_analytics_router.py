@@ -256,9 +256,9 @@ class TestAccountAnalytics:
         # Instagram qualifies for the engagement card.
         assert body["engagement"] is not None
         assert body["engagement"]["rate"]["kind"] == "percent"
-        # Follower growth available on Instagram (follows metric).
+        # Follower growth available on Instagram (followers total, derived to a delta).
         assert body["follower_growth"] is not None
-        assert body["follower_growth"]["key"] == "follows"
+        assert body["follower_growth"]["key"] == "followers"
 
         # Freshness fields populated for an account with snapshots.
         assert body["captured_at"] is not None

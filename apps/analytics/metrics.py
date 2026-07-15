@@ -22,7 +22,6 @@ METRICS: dict[str, dict[str, str]] = {
     "saves": {"label": "Saves", "kind": "count"},
     "clicks": {"label": "Link clicks", "kind": "count"},
     "outbound": {"label": "Outbound clicks", "kind": "count"},
-    "profile_visits": {"label": "Profile visits", "kind": "count"},
     "follows": {"label": "New follows", "kind": "count"},
     "followers": {"label": "Followers", "kind": "count"},
     "subscribers": {"label": "Subscribers", "kind": "count"},
@@ -40,11 +39,14 @@ ACCOUNT_ONLY: set[str] = {"follows", "followers", "subscribers"}
 # plan are in place). Verified against each platform's published insights API.
 PLATFORM_METRICS: dict[str, list[str]] = {
     # IG media insights: reach, views (replaced impressions Apr-2025), likes,
-    # comments, saved, shares, total_interactions; follower growth at account level.
-    "instagram": ["reach", "views", "likes", "comments", "saves", "shares", "follows", "engagement"],
-    "instagram_login": ["reach", "views", "likes", "comments", "saves", "shares", "follows", "engagement"],
-    # FB post insights: impressions, reach (unique), reactions, comments, shares, clicks.
-    "facebook": ["impressions", "reach", "reactions", "comments", "shares", "clicks", "follows", "engagement"],
+    # comments, saved, shares, total_interactions. ``followers`` (total) is
+    # account-only: Meta deprecated the IG ``follower_count`` insight, so we
+    # snapshot the profile follower total and derive growth from day-over-day
+    # deltas (same pattern as TikTok) rather than a per-day ``follows`` metric.
+    "instagram": ["reach", "views", "likes", "comments", "saves", "shares", "followers", "engagement"],
+    "instagram_login": ["reach", "views", "likes", "comments", "saves", "shares", "followers", "engagement"],
+    # FB post insights: media views, unique media views, reactions, comments, shares, clicks.
+    "facebook": ["views", "reach", "reactions", "comments", "shares", "clicks", "follows", "engagement"],
     # LinkedIn share statistics: impressions, reactions, comments, reposts, clicks, engagement.
     "linkedin_company": ["impressions", "reactions", "comments", "reposts", "clicks", "follows", "engagement"],
     # LinkedIn Personal: only socialActions counts (no impressions/reach per API).
@@ -52,13 +54,10 @@ PLATFORM_METRICS: dict[str, list[str]] = {
     # YouTube Analytics: views, watch_time, avg_view_pct, likes, comments, shares, subscribers gained.
     "youtube": ["views", "watch_time", "avg_view_pct", "likes", "comments", "shares", "subscribers"],
     # TikTok video metrics: view/like/comment/share counts from /v2/video/query/.
-    # ``followers`` (total) is account-only — TikTok's /v2/user/info/ returns
-    # cumulative counters with no daily delta, so we surface the total rather
-    # than ``follows`` (which is defined as "new follows" per day). watch_time
-    # is intentionally absent: /v2/video/query/ doesn't expose it per-video
-    # and TikTok has no public per-video Analytics-style endpoint yet — listing
-    # it would render an always-zero chart and mislead users.
-    "tiktok": ["views", "likes", "comments", "shares", "followers", "engagement"],
+    # Account-level followers require ``user.info.stats``, which we don't request.
+    # watch_time is intentionally absent: TikTok has no public per-video
+    # Analytics-style endpoint for it yet.
+    "tiktok": ["views", "likes", "comments", "shares", "engagement"],
     # Bluesky / AT Protocol post aggregates: like, repost, reply counts (no impressions/views).
     "bluesky": ["likes", "reposts", "replies", "follows"],
     # Threads insights: views, likes, replies, reposts; account follower growth.
@@ -118,7 +117,7 @@ ENGAGEMENT_PARTS: list[str] = [
 
 # Candidate denominators in priority order (first match wins). If none of
 # these exist on the platform, the engagement card is suppressed in the UI.
-ENGAGEMENT_DENOMINATORS: list[str] = ["reach", "impressions", "views", "plays"]
+ENGAGEMENT_DENOMINATORS: list[str] = ["views", "reach", "impressions", "plays"]
 
 
 def post_metrics_for(platform: str) -> list[str]:

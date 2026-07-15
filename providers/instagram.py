@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, PublishError
+from .meta_insights import fetch_insights_safe
 from .types import (
     AccountMetrics,
     AccountProfile,
@@ -31,9 +32,36 @@ from .types import (
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://graph.facebook.com/v21.0"
-OAUTH_URL = "https://www.facebook.com/v21.0/dialog/oauth"
+BASE_URL = "https://graph.facebook.com/v25.0"
+OAUTH_URL = "https://www.facebook.com/v25.0/dialog/oauth"
 TOKEN_URL = f"{BASE_URL}/oauth/access_token"
+INSTAGRAM_ACCOUNT_INSIGHTS = [
+    "reach",
+    "views",
+    "accounts_engaged",
+    "total_interactions",
+]
+INSTAGRAM_MEDIA_INSIGHTS = [
+    "reach",
+    "views",
+    "likes",
+    "comments",
+    "saved",
+    "shares",
+    "total_interactions",
+]
+INSTAGRAM_MEDIA_FIELDS = [
+    "id",
+    "caption",
+    "media_type",
+    "media_product_type",
+    "media_url",
+    "thumbnail_url",
+    "permalink",
+    "timestamp",
+    "like_count",
+    "comments_count",
+]
 
 # Polling settings for container status checks
 CONTAINER_POLL_INTERVAL = 2  # seconds
@@ -41,7 +69,7 @@ CONTAINER_POLL_MAX_ATTEMPTS = 60
 
 
 class InstagramProvider(SocialProvider):
-    """Instagram Graph API provider (via Facebook Graph API v21.0)."""
+    """Instagram Graph API provider (via Facebook Graph API v25.0)."""
 
     def __init__(self, credentials: dict | None = None):
         creds = dict(credentials or {})
@@ -83,6 +111,8 @@ class InstagramProvider(SocialProvider):
             "instagram_content_publish",
             "instagram_manage_comments",
             "instagram_manage_insights",
+            "pages_show_list",
+            "pages_read_engagement",
         ]
 
     @property
@@ -98,7 +128,7 @@ class InstagramProvider(SocialProvider):
     # OAuth (uses Facebook OAuth flow)
     # ------------------------------------------------------------------
 
-    def get_auth_url(self, redirect_uri: str, state: str) -> str:
+    def get_auth_url(self, redirect_uri: str, state: str, code_verifier: str | None = None) -> str:
         params = {
             "client_id": self.credentials["client_id"],
             "redirect_uri": redirect_uri,
@@ -108,7 +138,7 @@ class InstagramProvider(SocialProvider):
         }
         return f"{OAUTH_URL}?{urlencode(params)}"
 
-    def exchange_code(self, code: str, redirect_uri: str) -> OAuthTokens:
+    def exchange_code(self, code: str, redirect_uri: str, code_verifier: str | None = None) -> OAuthTokens:
         resp = self._request(
             "POST",
             TOKEN_URL,
@@ -169,7 +199,7 @@ class InstagramProvider(SocialProvider):
             "GET",
             f"{BASE_URL}/{ig_user_id}",
             access_token=access_token,
-            params={"fields": "id,username,name,profile_picture_url,followers_count"},
+            params={"fields": "id,username,name,profile_picture_url,followers_count,media_count"},
         )
         data = resp.json()
         return AccountProfile(
@@ -199,7 +229,7 @@ class InstagramProvider(SocialProvider):
             params={
                 "fields": (
                     "id,name,access_token,category,picture,"
-                    "instagram_business_account{id,username,name,profile_picture_url,followers_count}"
+                    "instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}"
                 ),
             },
         )
@@ -258,7 +288,12 @@ class InstagramProvider(SocialProvider):
         if content.text:
             payload["caption"] = content.text
 
-        if content.post_type == PostType.REEL:
+        if content.post_type in (PostType.REEL, PostType.VIDEO):
+            # Instagram no longer supports standalone feed videos: a single
+            # video is published as a Reel. PostType.VIDEO (the engine's
+            # fallback for a lone video asset) must take the REELS path too,
+            # otherwise it falls through to the IMAGE branch and the .mp4 is
+            # sent as image_url ("The image format is not supported").
             payload["media_type"] = "REELS"
             payload["video_url"] = content.media_urls[0]
         elif content.post_type == PostType.STORY:
@@ -393,76 +428,69 @@ class InstagramProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
-        metrics = ["impressions", "reach", "engagement", "saved"]
-        resp = self._request(
-            "GET",
-            f"{BASE_URL}/{post_id}/insights",
+        fields = self._get_media_fields(access_token, post_id)
+        values, errors = fetch_insights_safe(
+            self._request,
+            platform=self.platform_name,
+            endpoint=f"{BASE_URL}/{post_id}/insights",
             access_token=access_token,
-            params={"metric": ",".join(metrics)},
+            metrics=INSTAGRAM_MEDIA_INSIGHTS,
+            endpoint_type="media",
         )
-        data = resp.json()
-        values: dict = {}
-        for entry in data.get("data", []):
-            name = entry.get("name", "")
-            val = entry.get("values", [{}])[0].get("value", 0)
-            values[name] = val
+        likes = values.get("likes", fields.get("like_count", 0))
+        comments = values.get("comments", fields.get("comments_count", 0))
 
         return PostMetrics(
-            impressions=values.get("impressions", 0),
             reach=values.get("reach", 0),
-            engagements=values.get("engagement", 0),
+            likes=likes,
+            comments=comments,
             saves=values.get("saved", 0),
-            extra={"raw_insights": values},
+            shares=values.get("shares", 0),
+            video_views=values.get("views", 0),
+            extra={
+                "total_interactions": values.get("total_interactions", 0),
+                "raw_fields": fields,
+                "raw_insights": values,
+                "insight_errors": errors,
+            },
         )
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         ig_user_id = self.credentials.get("ig_user_id", "me")
         since = int(date_range[0].timestamp())
         until = int(date_range[1].timestamp())
-        metrics = ["reach", "follower_count", "profile_views"]
-        resp = self._request(
-            "GET",
-            f"{BASE_URL}/{ig_user_id}/insights",
+        values, errors = fetch_insights_safe(
+            self._request,
+            platform=self.platform_name,
+            endpoint=f"{BASE_URL}/{ig_user_id}/insights",
             access_token=access_token,
-            params={
-                "metric": ",".join(metrics),
+            metrics=INSTAGRAM_ACCOUNT_INSIGHTS,
+            base_params={
                 "period": "day",
                 "since": since,
                 "until": until,
             },
-        )
-        data = resp.json()
-        values: dict = {}
-        for entry in data.get("data", []):
-            name = entry.get("name", "")
-            val = entry.get("values", [{}])[0].get("value", 0)
-            values[name] = val
-
-        views_resp = self._request(
-            "GET",
-            f"{BASE_URL}/{ig_user_id}/insights",
-            access_token=access_token,
-            params={
-                "metric": "views",
-                "period": "day",
-                "metric_type": "total_value",
-                "since": since,
-                "until": until,
+            metric_params={
+                "views": {"metric_type": "total_value"},
+                "accounts_engaged": {"metric_type": "total_value"},
+                "total_interactions": {"metric_type": "total_value"},
             },
+            endpoint_type="account",
         )
-        views_data = views_resp.json()
-        for entry in views_data.get("data", []):
-            if entry.get("name") == "views":
-                values["views"] = entry.get("total_value", {}).get("value", 0)
-                break
+        profile = self._get_profile_fields(access_token, ig_user_id)
+        # ``None`` means the fetch FAILED (vs a real 0): leave followers unset so
+        # _account_metrics_to_dict skips it and we don't poison the snapshot with 0.
+        followers = profile.get("followers_count", 0) if profile is not None else None
 
         return AccountMetrics(
             reach=values.get("reach", 0),
-            followers=values.get("follower_count", 0),
-            profile_views=values.get("profile_views", 0),
+            followers=followers,
             extra={
                 "views": values.get("views", 0),
+                "accounts_engaged": values.get("accounts_engaged", 0),
+                "total_interactions": values.get("total_interactions", 0),
                 "raw_insights": values,
+                "insight_errors": errors,
             },
         )
 
@@ -541,3 +569,29 @@ class InstagramProvider(SocialProvider):
             "No Instagram Business Account found linked to any Facebook Page",
             platform=self.platform_name,
         )
+
+    def _get_profile_fields(self, access_token: str, ig_user_id: str) -> dict | None:
+        # Returns ``None`` on failure so callers can distinguish a failed fetch
+        # from a successful one with no data (a genuine 0).
+        try:
+            return self._request(
+                "GET",
+                f"{BASE_URL}/{ig_user_id}",
+                access_token=access_token,
+                params={"fields": "id,username,name,profile_picture_url,followers_count,media_count"},
+            ).json()
+        except APIError as exc:
+            logger.debug("Instagram profile fields unavailable for %s: %s", ig_user_id, exc)
+            return None
+
+    def _get_media_fields(self, access_token: str, media_id: str) -> dict:
+        try:
+            return self._request(
+                "GET",
+                f"{BASE_URL}/{media_id}",
+                access_token=access_token,
+                params={"fields": ",".join(INSTAGRAM_MEDIA_FIELDS)},
+            ).json()
+        except APIError as exc:
+            logger.debug("Instagram media fields unavailable for %s: %s", media_id, exc)
+            return {}
