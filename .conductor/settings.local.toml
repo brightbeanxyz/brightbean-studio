@@ -1,0 +1,16 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+setup = "pip install -r requirements.txt"
+auto_run_after_setup = false
+
+[scripts.run.dev]
+command = "DJANGO_SETTINGS_MODULE=config.settings.development python3 manage.py runserver 127.0.0.1:${CONDUCTOR_PORT:-8000}"
+default = true
+
+[[preview_urls]]
+name = "BrightBean Studio"
+url = "http://localhost:$CONDUCTOR_PORT"
+
+[prompts]
+general = "Read README.md and any repo-specific docs before starting. Check the agency-os token budget at ~/Projects/agency-os/state/agent_token_budgets.json before spawning subagents or running heavy LLM work. Prefer free/local LLM for quick triage and mechanical fixes. Reserve premier design models for actual design work and only when token budget allows. Nothing gets sent, posted, deployed-to-client, or invoiced without Eric's explicit sign-off. Never push directly to main or master - use a feature branch and PR."
