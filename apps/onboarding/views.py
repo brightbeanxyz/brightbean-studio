@@ -8,7 +8,6 @@ import logging
 import secrets
 from datetime import timedelta
 
-from csp.decorators import csp_update
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -20,6 +19,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.csp import csp_override
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.credentials.models import PlatformCredential
@@ -276,9 +276,6 @@ def connection_page(request, token):
     )
 
 
-@csp_update(
-    FORM_ACTION="'self' https://accounts.google.com https://www.facebook.com https://api.instagram.com https://www.instagram.com https://threads.net https://www.threads.com https://www.linkedin.com https://www.pinterest.com https://www.tiktok.com"
-)
 @require_POST
 def connection_oauth_start(request, token):
     """Initiate OAuth flow from the connection link page."""
@@ -561,7 +558,7 @@ def connection_bluesky_connect(request, token):
     return redirect("onboarding:connection_page", token=token)
 
 
-@csp_update(FORM_ACTION="'self' https:")
+@csp_override({**settings.CSP_POLICY, "form-action": [*settings.CSP_POLICY["form-action"], "https:"]})
 @require_POST
 def connection_mastodon_start(request, token):
     """Initiate Mastodon OAuth from the connection link page."""

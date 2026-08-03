@@ -47,6 +47,10 @@ test: ## Run tests
 test-cov: ## Run tests with coverage
 	pytest --cov=apps --cov-report=term-missing
 
+test-e2e: ## Run the end-to-end suite (ephemeral Postgres + real browser)
+	python -m playwright install chromium
+	pytest -m e2e --ds=config.settings.e2e tests/e2e
+
 lint: ## Run linter and format check
 	ruff check .
 	ruff format --check .

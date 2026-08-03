@@ -11,8 +11,8 @@
 <p align="center">
   <a href="https://github.com/brightbeanxyz/brightbean-studio/actions/workflows/ci.yml"><img src="https://github.com/brightbeanxyz/brightbean-studio/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12%2B-blue.svg" alt="Python 3.12+"></a>
-  <a href="https://www.djangoproject.com/"><img src="https://img.shields.io/badge/Django-5.x-green.svg" alt="Django 5.x"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.13%2B-blue.svg" alt="Python 3.13+"></a>
+  <a href="https://www.djangoproject.com/"><img src="https://img.shields.io/badge/Django-6.0-green.svg" alt="Django 6.0"></a>
 </p>
 
 <p align="center">
@@ -156,7 +156,7 @@ Run everything natively - no Docker, no PostgreSQL install. Uses SQLite for the 
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.13+
 - Node.js 20+
 
 ### Setup
@@ -660,7 +660,7 @@ Don't want to wire up your own client? The companion [brightbean-studio-agent](h
 
 | Layer | Technology |
 |-------|-----------|
-| Backend | Django 5.x |
+| Backend | Django 6.0 |
 | Frontend | Django templates, HTMX, Alpine.js |
 | CSS | Tailwind CSS 4 via django-tailwind |
 | Database | PostgreSQL 16+ |

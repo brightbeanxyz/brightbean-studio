@@ -16,8 +16,16 @@ PASSWORD_HASHERS = [
 # Use in-memory email backend
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 
-# Disable CSP in tests
-CSP_REPORT_ONLY = True
+# Report-only CSP: violations are reported, nothing is blocked.
+# Django 6.0 expresses this as a separate setting rather than a flag,
+# so the policy is moved wholesale onto the report-only key. Assigning
+# from CSP_POLICY rather than from SECURE_CSP keeps this a definition
+# rather than a read of a name this module also rebinds.
+#
+# Note that this makes a blocked-script defect impossible to reproduce
+# here. The e2e suite therefore runs its own enforcing settings.
+SECURE_CSP = None
+SECURE_CSP_REPORT_ONLY = CSP_POLICY  # noqa: F405
 
 # Use local storage in tests
 STORAGE_BACKEND = "local"

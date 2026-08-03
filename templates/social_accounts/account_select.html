@@ -56,7 +56,7 @@
     </form>
 </div>
 
-<script nonce="{{ request.csp_nonce }}">
+<script nonce="{{ csp_nonce }}">
     document.getElementById('connect-btn').closest('form').addEventListener('submit', function(e) {
         const btn = document.getElementById('connect-btn');
         if (btn.disabled) {

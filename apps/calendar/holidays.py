@@ -13,7 +13,7 @@ from pathlib import Path
 def _load_holidays():
     """Load holidays.json once and cache."""
     data_path = Path(__file__).parent / "data" / "holidays.json"
-    with open(data_path) as f:
+    with open(data_path, encoding="utf-8") as f:
         return json.load(f)
 
 

@@ -12,7 +12,7 @@
     <link rel="manifest" href="{% static 'favicon/site.webmanifest' %}">
     <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
-    <script nonce="{{ request.csp_nonce }}">
+    <script nonce="{{ csp_nonce }}">
         // Set sidebar state class on <html> before first paint to prevent flash
         if (localStorage.getItem('sidebarCollapsed') === 'true') {
             document.documentElement.classList.add('sidebar-is-collapsed');
@@ -207,7 +207,7 @@
 </head>
 <body class="text-gray-900 min-h-screen" style="background: var(--surface-page);">
     {% csrf_token %}
-    <script nonce="{{ request.csp_nonce }}">
+    <script nonce="{{ csp_nonce }}">
         document.body.addEventListener('htmx:configRequest', function(event) {
             event.detail.headers['X-CSRFToken'] = document.querySelector('[name=csrfmiddlewaretoken]').value;
         });
@@ -237,7 +237,7 @@
             </button>
         </div>
     </div>
-    <script nonce="{{ request.csp_nonce }}">
+    <script nonce="{{ csp_nonce }}">
         document.body.addEventListener('htmx:responseError', function(event) {
             var elt = event.detail.elt;
             // Contexts that manage their own error UI opt out entirely.
@@ -905,7 +905,7 @@
 
     <!-- Vendored JS -->
     <script src="{% static 'js/htmx.min.js' %}"></script>
-    <script nonce="{{ request.csp_nonce }}">
+    <script nonce="{{ csp_nonce }}">
         /* Notification bell - Alpine.js component */
         function notificationBell() {
             return {
@@ -953,7 +953,7 @@
     <script src="{% static 'js/alpine.min.js' %}" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
-    <script nonce="{{ request.csp_nonce }}">
+    <script nonce="{{ csp_nonce }}">
         /* Analytics hero chart: read data attrs off the canvas, (re)create Chart.js.
            Lives in base.html so its CSP nonce matches the parent page — the chart
            partial re-renders on HTMX swaps via the htmx:afterSwap hook below. */
@@ -1053,7 +1053,7 @@
         });
     </script>
     {% if request.workspace %}
-    <script nonce="{{ request.csp_nonce }}">
+    <script nonce="{{ csp_nonce }}">
         window.ideaModalHelpers = window.ideaModalHelpers || {
             mediaAssetIdsCsv(items) {
                 return (items || []).map(function(item) { return item.asset_id; }).join(',');

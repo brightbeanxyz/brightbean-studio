@@ -23,7 +23,7 @@ from datetime import timedelta
 
 from background_task import background
 from django.conf import settings
-from django.db import transaction
+from django.db import connections, transaction
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -96,6 +96,25 @@ MAX_CONCURRENT_PUBLISHES = getattr(settings, "PUBLISHER_MAX_CONCURRENT_PUBLISHES
 MAX_CONCURRENT_POSTS = getattr(settings, "PUBLISHER_MAX_CONCURRENT_POSTS", 4)
 
 
+def _run_and_release_connection(work, *args, **kwargs):
+    """Run `work` on a pool thread, then hand that thread's DB connection back.
+
+    Django opens a database connection per thread and closes it only when the
+    thread's local storage is eventually garbage collected. A worker process
+    fires none of the request_started / request_finished signals that would
+    otherwise call close_old_connections(), and both pools below are rebuilt on
+    every tick - so idle backends accumulate for as long as the collector takes
+    to notice, against a server with a finite connection limit.
+
+    Found by the publish-path e2e test, which could not drop its own database
+    afterwards: five sessions were still attached to it.
+    """
+    try:
+        return work(*args, **kwargs)
+    finally:
+        connections.close_all()
+
+
 class PublishEngine:
     """Orchestrates the publishing of scheduled posts."""
 
@@ -115,7 +134,8 @@ class PublishEngine:
         published_count = 0
         with ThreadPoolExecutor(max_workers=min(len(groups), MAX_CONCURRENT_POSTS) or 1) as executor:
             futures = {
-                executor.submit(self._publish_post_group, pps[0].post, pps): post_id for post_id, pps in groups.items()
+                executor.submit(_run_and_release_connection, self._publish_post_group, pps[0].post, pps): post_id
+                for post_id, pps in groups.items()
             }
             for future in as_completed(futures):
                 post_id = futures[future]
@@ -182,7 +202,10 @@ class PublishEngine:
         # Publish in parallel
         results = {}
         with ThreadPoolExecutor(max_workers=min(len(platform_posts), 5)) as executor:
-            futures = {executor.submit(self._publish_platform_post, pp): pp for pp in platform_posts}
+            futures = {
+                executor.submit(_run_and_release_connection, self._publish_platform_post, pp): pp
+                for pp in platform_posts
+            }
             for future in as_completed(futures):
                 pp = futures[future]
                 try:

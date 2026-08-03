@@ -1,5 +1,5 @@
 [tool.ruff]
-target-version = "py312"
+target-version = "py313"
 line-length = 120
 # Django generates migrations with its own import ordering/formatting; don't
 # lint or format generated schema migrations.
@@ -33,7 +33,7 @@ ignore = [
 known-first-party = ["apps", "config"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 plugins = ["mypy_django_plugin.main"]
 ignore_missing_imports = true
 
@@ -45,7 +45,10 @@ DJANGO_SETTINGS_MODULE = "config.settings.test"
 python_files = ["tests.py", "test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m 'not e2e'"
+markers = [
+    "e2e: end-to-end; stands up its own PostgreSQL cluster and drives a real browser",
+]
 
 [tool.coverage.run]
 source = ["apps"]

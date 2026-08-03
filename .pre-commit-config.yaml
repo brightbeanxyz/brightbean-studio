@@ -4,7 +4,7 @@
 # Reference: https://pre-commit.com
 
 default_language_version:
-  python: python3.12
+  python: python3.13
 
 repos:
   # Basic hygiene: trailing whitespace, EOF newlines, large files, merge conflicts, etc.

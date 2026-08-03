@@ -30,7 +30,7 @@ class NoncedSwagger(Swagger):
     # Ninja loads swagger_cdn.html by absolute path, bypassing Django's
     # template loader, so a file in templates/ninja/ won't shadow it.
     # Point at our project override so its inline <script> tags can carry
-    # nonce="{{ request.csp_nonce }}" and satisfy production CSP.
+    # nonce="{{ csp_nonce }}" and satisfy production CSP.
     template_cdn = str(settings.BASE_DIR / "templates" / "ninja" / "swagger_cdn.html")
 
 

@@ -131,7 +131,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script nonce="{{ request.csp_nonce }}">
+<script nonce="{{ csp_nonce }}">
     // Detect browser timezone so the server can set it as the organization default on signup.
     try {
         var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;

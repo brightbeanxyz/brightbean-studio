@@ -377,7 +377,7 @@ class SubscribeTemplateBranchingTests(TestCase):
     def setUpClass(cls):
         super().setUpClass()
         template_path = settings.BASE_DIR / "templates" / "intelligence" / "subscribe.html"
-        src = template_path.read_text()
+        src = template_path.read_text(encoding="utf-8")
         body = cls._BLOCK_RE.search(src).group(1)
         loads = "".join(cls._LOAD_RE.findall(src))
         cls._tpl = DjangoTemplate(loads + body)

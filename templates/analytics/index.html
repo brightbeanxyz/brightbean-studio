@@ -52,7 +52,7 @@
         <div x-html="drawerContent" id="drawer-host" style="display: flex; flex-direction: column; height: 100%;"></div>
     </div>
 
-    <script nonce="{{ request.csp_nonce }}">
+    <script nonce="{{ csp_nonce }}">
         function openPost(url) {
             const root = document.querySelector('.analytics-shell');
             const drawer = window.Alpine ? window.Alpine.$data(root) : null;

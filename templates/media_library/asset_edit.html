@@ -211,7 +211,7 @@
 {% block extra_js %}
 {% if asset.file_type == 'image' or asset.file_type == 'gif' %}
 <script src="{% static 'js/vendor/cropper.min.js' %}"></script>
-<script nonce="{{ request.csp_nonce }}">
+<script nonce="{{ csp_nonce }}">
 function imageCropper() {
   return {
     cropper: null,
@@ -278,7 +278,7 @@ function imageCropper() {
 }
 </script>
 {% elif asset.file_type == 'video' %}
-<script nonce="{{ request.csp_nonce }}">
+<script nonce="{{ csp_nonce }}">
 function videoTrimmer() {
   return {
     duration: {{ asset.duration_seconds|default:"0" }},

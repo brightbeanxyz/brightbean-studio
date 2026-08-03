@@ -8,7 +8,7 @@ Companion to: Feature Specification v2
 
 | Layer | Technology |
 |-------|-----------|
-| Backend | Django 5.x, Django REST Framework |
+| Backend | Django 6.0, Django REST Framework |
 | Frontend | Django templates, HTMX, Alpine.js |
 | CSS | Tailwind CSS 4 via django-tailwind |
 | Database | PostgreSQL 16+ (also serves as job queue) |
@@ -317,7 +317,7 @@ STORAGE_BACKEND=s3     →  S3Boto3Storage via django-storages
 | Encryption at rest | AES-256-GCM for tokens/keys/credentials, key from env var |
 | Data isolation | Custom ORM manager auto-filters by org_id/workspace_id |
 | CSRF | Django middleware, HTMX auto-includes token |
-| CSP | Restrictive policy via django-csp |
+| CSP | Restrictive policy via Django's built-in CSP middleware |
 | Rate limiting | django-ratelimit on login, API, OAuth endpoints |
 | Audit log | Append-only, destructive actions, retained 1 year |
 | GDPR | Export + deletion per workspace/org |

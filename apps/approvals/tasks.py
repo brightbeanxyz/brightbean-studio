@@ -15,7 +15,9 @@ from .models import ApprovalReminder
 
 logger = logging.getLogger(__name__)
 
-# Default reminder thresholds (overridable via settings_manager)
+# Reminder thresholds. These are module constants and are NOT read
+# through apps.settings_manager - nothing in this module calls
+# get_setting(). Change them here, or wire the cascade in deliberately.
 PENDING_REVIEW_HOURS = 24
 PENDING_CLIENT_HOURS = 48
 MAX_REMINDERS = 2

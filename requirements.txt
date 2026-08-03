@@ -1,5 +1,5 @@
 # Core
-Django>=5.1,<5.2
+Django>=6.0.7,<6.1
 django-environ>=0.11,<1.0
 psycopg[binary]>=3.1,<4.0
 gunicorn>=22.0,<23.0
@@ -20,7 +20,6 @@ django-storages[s3]>=1.14,<2.0
 Pillow>=10.4,<11.0
 
 # Security
-django-csp>=3.8,<4.0
 django-ratelimit>=4.1,<5.0
 cryptography>=43.0,<44.0
 
@@ -54,6 +53,7 @@ types-python-dateutil>=2.9,<3.0
 pytest>=8.3,<9.0
 pytest-django>=4.8,<5.0
 pytest-cov>=5.0,<6.0
+pytest-playwright>=0.5,<1.0
 factory-boy>=3.3,<4.0
 
 # Monitoring

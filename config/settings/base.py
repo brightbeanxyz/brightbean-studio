@@ -2,6 +2,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import environ
+from django.utils.csp import CSP
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -42,7 +43,6 @@ THIRD_PARTY_APPS = [
     "allauth.socialaccount.providers.google",
     "django_htmx",
     "tailwind",
-    "csp",
     # OAuth 2.1 Authorization Server backing the MCP connector flow.
     "oauth2_provider",
     "apps.background_task_config.BackgroundTaskConfig",
@@ -95,7 +95,7 @@ MIDDLEWARE = [
     "apps.members.middleware.RBACMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "csp.middleware.CSPMiddleware",
+    "django.middleware.csp.ContentSecurityPolicyMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -115,6 +115,7 @@ TEMPLATES = [
                 "apps.common.context_processors.sidebar_context",
                 "apps.onboarding.context_processors.onboarding_checklist",
                 "apps.intelligence.context_processors.intelligence_flag",
+                "django.template.context_processors.csp",
             ],
         },
     },
@@ -278,30 +279,61 @@ else:
 # Tailwind
 TAILWIND_APP_NAME = "theme"
 
-# CSP - Alpine.js standard build requires unsafe-eval for inline expression
-# evaluation. Styles use unsafe-inline because Tailwind utility classes are inline.
-CSP_DEFAULT_SRC = ("'self'",)
-CSP_SCRIPT_SRC = ("'self'", "'unsafe-eval'", "https://cdn.jsdelivr.net")
-CSP_STYLE_SRC = ("'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net")
-CSP_IMG_SRC = ("'self'", "data:", "blob:", "https:")
-CSP_FONT_SRC = ("'self'",)
-CSP_CONNECT_SRC = ("'self'", "https://cdn.jsdelivr.net")
-CSP_MEDIA_SRC = ("'self'", "blob:")
-CSP_FORM_ACTION = (
-    "'self'",
-    "https://accounts.google.com",
-    "https://checkout.stripe.com",
-    "https://billing.stripe.com",
-    "https://www.facebook.com",
-    "https://api.instagram.com",
-    "https://www.instagram.com",
-    "https://www.threads.com",
-    "https://threads.net",
-    "https://www.linkedin.com",
-    "https://www.pinterest.com",
-    "https://www.tiktok.com",
-)
-CSP_INCLUDE_NONCE_IN = ["script-src"]
+# Content Security Policy (Django 6.0 core).
+#
+# Alpine.js's standard build evaluates expressions at runtime, so script-src
+# needs 'unsafe-eval'. Tailwind emits utility classes inline, so style-src
+# needs 'unsafe-inline'. CSP.NONCE is placed in script-src so the nonce the
+# middleware generates is honoured for our own inline <script> tags; it
+# reaches templates as {{ csp_nonce }} via the csp context processor.
+#
+# form-action lists every host an OAuth flow may POST to. Chromium enforces
+# form-action across a whole redirect chain, so a provider's post-consent
+# redirect target must be listed here or the flow dies silently.
+#
+# The policy has its own name, and SECURE_CSP is that name, because four views
+# widen form-action with @csp_override. csp_override does NOT override one
+# directive - it replaces the WHOLE policy. django/middleware/csp.py reads the
+# decorator's dict INSTEAD of settings.SECURE_CSP and merges nothing, so an
+# override carrying only form-action serves a page with no script-src and no
+# default-src, which restricts scripts not at all. Measured against
+# django/middleware/csp.py, which reads response._csp_config INSTEAD of this
+# setting and merges nothing; tests/test_csp_overrides.py holds it down for
+# every routed override site.
+#
+# So those views splat this whole dict and replace one key. They cannot read it
+# back off SECURE_CSP, because dev and test set that to None and move the
+# policy to SECURE_CSP_REPORT_ONLY.
+CSP_POLICY = {
+    "default-src": [CSP.SELF],
+    "script-src": [CSP.SELF, CSP.UNSAFE_EVAL, CSP.NONCE, "https://cdn.jsdelivr.net"],
+    "style-src": [CSP.SELF, CSP.UNSAFE_INLINE, "https://cdn.jsdelivr.net"],
+    "img-src": [CSP.SELF, "data:", "blob:", "https:"],
+    "font-src": [CSP.SELF],
+    "connect-src": [CSP.SELF, "https://cdn.jsdelivr.net"],
+    "media-src": [CSP.SELF, "blob:"],
+    "form-action": [
+        CSP.SELF,
+        "https://accounts.google.com",
+        "https://checkout.stripe.com",
+        "https://billing.stripe.com",
+        "https://www.facebook.com",
+        "https://api.instagram.com",
+        "https://www.instagram.com",
+        "https://www.threads.com",
+        "https://threads.net",
+        "https://www.linkedin.com",
+        "https://www.pinterest.com",
+        "https://www.tiktok.com",
+    ],
+}
+
+# Both settings are Optional across environments: development and test move
+# the policy onto the report-only key and set this one to None, and
+# config/settings/e2e.py moves it back. Annotating them keeps that flip
+# type-checkable instead of an error in every settings module that does it.
+SECURE_CSP: dict | None = CSP_POLICY
+SECURE_CSP_REPORT_ONLY: dict | None = None
 
 # Allow media/images from the storage domain in CSP
 if STORAGE_BACKEND.lower() == "s3":
@@ -311,8 +343,8 @@ if STORAGE_BACKEND.lower() == "s3":
             _storage_origin = f"https://{_storage_origin}"
         _parsed = urlparse(_storage_origin)
         _storage_origin = f"{_parsed.scheme}://{_parsed.hostname}"
-        CSP_MEDIA_SRC = (*CSP_MEDIA_SRC, _storage_origin)  # type: ignore[assignment]
-        CSP_IMG_SRC = (*CSP_IMG_SRC, _storage_origin)  # type: ignore[assignment]
+        CSP_POLICY["media-src"].append(_storage_origin)
+        CSP_POLICY["img-src"].append(_storage_origin)
 
 # Media Library
 MEDIA_LIBRARY_MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB

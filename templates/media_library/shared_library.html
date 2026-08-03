@@ -83,7 +83,7 @@
 </div>
 
 {% if is_admin %}
-<script nonce="{{ request.csp_nonce }}">
+<script nonce="{{ csp_nonce }}">
 function uploadShared(files) {
   if (!files || files.length === 0) return;
   const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;

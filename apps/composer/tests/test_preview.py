@@ -30,7 +30,7 @@ class ComposerPreviewTests(ComposerTestCase):
         return preview(request, self.workspace.id)
 
     def test_compose_page_posts_live_preview_form_data(self):
-        template = Path("templates/composer/compose.html").read_text()
+        template = Path("templates/composer/compose.html").read_text(encoding="utf-8")
 
         self.assertIn("hx-post=\"{% url 'composer:preview' workspace_id=workspace.id %}\"", template)
         self.assertNotIn("hx-get=\"{% url 'composer:preview' workspace_id=workspace.id %}\"", template)

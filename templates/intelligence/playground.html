@@ -317,7 +317,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script nonce="{{ request.csp_nonce }}">
+<script nonce="{{ csp_nonce }}">
     (function () {
         const PANELS = ['packaging', 'video-hook', 'benchmark-channel', 'benchmark-video', 'content-gaps', 'niches'];
 

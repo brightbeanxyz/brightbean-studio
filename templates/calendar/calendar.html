@@ -325,7 +325,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script nonce="{{ request.csp_nonce }}">
+<script nonce="{{ csp_nonce }}">
 function calendarApp() {
     return {
         activeView: '{{ view_type }}',

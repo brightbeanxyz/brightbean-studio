@@ -6,7 +6,7 @@ success|info|warn|error. Self-contained: not added to base.html (app shell untou
 Include this ONCE per page, OUTSIDE any htmx-refetched region, so a list refresh
 fired by the same response doesn't tear down the toast before it's seen.
 {% endcomment %}
-<style nonce="{{ request.csp_nonce }}">
+<style nonce="{{ csp_nonce }}">
   @keyframes bb-toastPop { from { opacity:0; transform:translateY(8px) scale(.96); } to { opacity:1; transform:translateY(0) scale(1); } }
   /* Shared approval-surface animations (design parity). Defined here because this
      partial is included once per page, outside any htmx-refetched region. */
@@ -24,7 +24,7 @@ fired by the same response doesn't tear down the toast before it's seen.
   .bb-toast-body { font-size:.75rem; color:#A8A29E; line-height:1.2; }
 </style>
 <div id="bb-toast-host" aria-live="polite" aria-atomic="true"></div>
-<script nonce="{{ request.csp_nonce }}">
+<script nonce="{{ csp_nonce }}">
 (function () {
   if (window.__bbToastInit) return;
   window.__bbToastInit = true;

@@ -8,7 +8,6 @@ import secrets
 from datetime import timedelta
 from urllib.parse import urlsplit
 
-from csp.decorators import csp_update
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -16,6 +15,7 @@ from django.core import signing
 from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.views.decorators.csp import csp_override
 from django.views.decorators.http import require_GET, require_POST
 from django_ratelimit.decorators import ratelimit
 
@@ -621,7 +621,7 @@ def connect_devto(request, workspace_id):
 # ------------------------------------------------------------------
 
 
-@csp_update(FORM_ACTION="'self' https:")
+@csp_override({**settings.CSP_POLICY, "form-action": [*settings.CSP_POLICY["form-action"], "https:"]})
 @login_required
 @require_permission("manage_social_accounts")
 def connect_mastodon(request, workspace_id):

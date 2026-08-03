@@ -11,10 +11,10 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-    <script type="application/json" id="swagger-settings" nonce="{{ request.csp_nonce }}">
+    <script type="application/json" id="swagger-settings" nonce="{{ csp_nonce }}">
         {{ swagger_settings | safe }}
     </script>
-    <script nonce="{{ request.csp_nonce }}">
+    <script nonce="{{ csp_nonce }}">
 
         const configJson = document.getElementById("swagger-settings").textContent;
         const configObject = JSON.parse(configJson);

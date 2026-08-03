@@ -1089,7 +1089,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script nonce="{{ request.csp_nonce }}">
+<script nonce="{{ csp_nonce }}">
 function kanbanBoard() {
     const ideaHelpers = window.ideaModalHelpers || {
         mediaAssetIdsCsv(items) {

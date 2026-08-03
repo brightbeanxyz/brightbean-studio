@@ -1947,7 +1947,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script nonce="{{ request.csp_nonce }}">
+<script nonce="{{ csp_nonce }}">
   // Reviewer approve / request-changes return 204 + toast + approvalAction. Let the
   // toast show, then reload so the status banner and history reflect the new state.
   document.body.addEventListener('approvalAction', function () {
@@ -1958,7 +1958,7 @@
 {{ char_limits|json_script:"composer-char-limits" }}
 {{ platform_extras|json_script:"composer-platform-extras" }}
 {{ media_items|json_script:"composer-media-items" }}
-<script nonce="{{ request.csp_nonce }}">
+<script nonce="{{ csp_nonce }}">
 function composerApp() {
     return {
         // State

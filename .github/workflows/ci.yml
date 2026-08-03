@@ -30,7 +30,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
           cache: "pip"
 
       - name: Install ruff
@@ -58,7 +58,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
           cache: "pip"
 
       - name: Install dependencies
@@ -104,7 +104,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
           cache: "pip"
 
       - name: Install dependencies
@@ -113,11 +113,56 @@ jobs:
       - name: pytest
         run: pytest --cov=apps --cov-report=term-missing
 
+  # THIS JOB HAS NEVER RUN ANYWHERE. It needs a GitHub runner, so the first
+  # push is its first execution - and `build` gates on it, so if it comes up red
+  # for an environmental reason (the apt layout under /usr/lib/postgresql,
+  # playwright's system deps, the timeout against initdb + a Chromium download)
+  # then nothing in the repository can merge until it is fixed.
+  #
+  # If that happens: take `e2e` out of `build.needs`, fix it, and put it back
+  # once it has been green once. Do not debug it with main blocked.
+  e2e:
+    name: End-to-end (browser + ephemeral Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      # The suite creates and destroys its OWN cluster with initdb/pg_ctl, so
+      # what is needed is the server BINARIES, not a running server. A
+      # `services:` container would not do: the fixture has to run initdb
+      # itself, and tests/e2e/conftest.py looks under /usr/lib/postgresql/*/bin.
+      - name: Install PostgreSQL server binaries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+
+      # -m on the command line overrides the `-m 'not e2e'` in addopts, and
+      # --ds is NOT optional: config/settings/test.py runs CSP report-only,
+      # under which a blocked-script defect cannot reproduce.
+      - name: pytest -m e2e
+        run: pytest -m e2e --ds=config.settings.e2e tests/e2e
+
   build:
     name: Docker build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint, typecheck, test]
+    needs: [lint, typecheck, test, e2e]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
