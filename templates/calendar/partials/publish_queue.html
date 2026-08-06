@@ -1,3 +1,4 @@
+{% if render_tab_counts_oob %}{% include "calendar/partials/_tab_counts_oob.html" %}{% endif %}
 {% comment %}
 Queue tab partial for the Publish page.
 Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-content.
@@ -17,6 +18,10 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
         <div class="space-y-4">
             {% for pp in group.list %}
             <div class="flex gap-4">
+                <!-- Bulk-select checkbox -->
+                <div class="flex items-center shrink-0 pt-3">
+                    {% include "calendar/partials/_select_checkbox.html" with pp_id=pp.id extra_class="row-select-box" %}
+                </div>
                 <!-- Left: time + source -->
                 <div class="w-20 shrink-0 pt-3 text-right">
                     <div class="text-sm font-semibold text-stone-700 tabular-nums">

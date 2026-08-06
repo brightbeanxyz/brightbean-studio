@@ -1,0 +1,12 @@
+{% comment %}
+Selection checkbox for the bulk-action bar. Expects `pp_id` (a PlatformPost id).
+Toggles the `sel` Alpine store. `.stop.prevent` keeps a click off the chip's
+own link/drag; it renders as a styled span (not an <input>) so preventDefault
+doesn't swallow the toggle.
+{% endcomment %}
+<span @click.stop.prevent="$store.sel.toggle('{{ pp_id }}')"
+      @mousedown.stop @dragstart.prevent.stop draggable="false"
+      class="cal-select-box {{ extra_class }}" :class="$store.sel.has('{{ pp_id }}') && 'is-checked'"
+      title="Select">
+    <svg x-show="$store.sel.has('{{ pp_id }}')" x-cloak class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="4"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+</span>

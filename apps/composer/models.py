@@ -356,6 +356,21 @@ class PlatformPost(models.Model):
     # user's call and intentionally bypasses this.
     PROTECTED_STATUSES = (Status.PUBLISHED, Status.PUBLISHING)
 
+    # Statuses whose scheduled time may be changed by a calendar drag-and-drop.
+    # A dropped draft/failed chip becomes ``scheduled`` (an implicit
+    # (re)schedule / retry); the others just move in time, keeping their status.
+    # ``published`` and ``publishing`` are excluded — the post is done or in
+    # flight and must not be dragged. Shared by the calendar chip templates and
+    # the reschedule endpoint so both agree on what's draggable.
+    RESCHEDULABLE_STATUSES = (
+        Status.DRAFT,
+        Status.APPROVED,
+        Status.SCHEDULED,
+        Status.FAILED,
+        Status.PENDING_REVIEW,
+        Status.PENDING_CLIENT,
+    )
+
     # Valid state transitions (from → set of allowed targets). Mirrors the old
     # Post-level state machine minus ``partially_published`` — that concept
     # only applies at the aggregate/Post level and is produced by
@@ -459,6 +474,20 @@ class PlatformPost(models.Model):
 
     def __str__(self):
         return f"PlatformPost({self.social_account.platform}): {self.status}"
+
+    @property
+    def is_reschedulable(self):
+        """Whether this chip may be dragged to a new date on the calendar."""
+        return self.status in self.RESCHEDULABLE_STATUSES
+
+    @property
+    def is_bulk_selectable(self):
+        """Whether this row can be the target of a bulk draft/publish/delete.
+
+        Every branch of ``bulk_platform_action`` skips ``PROTECTED_STATUSES``, so
+        offering a checkbox on those rows would only ever be a no-op.
+        """
+        return self.status not in self.PROTECTED_STATUSES
 
     # ------------------------------------------------------------------
     # State machine

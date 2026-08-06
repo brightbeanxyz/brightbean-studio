@@ -1,0 +1,10 @@
+{% comment %}
+Out-of-band refresh of the Publish tab-bar count badges. Emitted inside each
+HTMX tab-partial response so switching/reloading a tab keeps all four counts in
+sync — the badges live in the tab bar, outside the swapped #tab-content.
+Ids here must match the wrapper spans in publish_list_shell.html.
+{% endcomment %}
+<span id="tabcount-queue" hx-swap-oob="true">{% include "calendar/partials/_tab_count_badge.html" with count=queue_count %}</span>
+<span id="tabcount-drafts" hx-swap-oob="true">{% include "calendar/partials/_tab_count_badge.html" with count=drafts_count %}</span>
+<span id="tabcount-approvals" hx-swap-oob="true">{% include "calendar/partials/_tab_count_badge.html" with count=approvals_count %}</span>
+<span id="tabcount-sent" hx-swap-oob="true">{% include "calendar/partials/_tab_count_badge.html" with count=sent_count %}</span>

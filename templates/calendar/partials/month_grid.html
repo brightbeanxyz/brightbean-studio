@@ -19,9 +19,8 @@ Enhanced with: holidays, custom events, category colors, recurring badges.
     {% for week in calendar_weeks %}
     <div class="grid grid-cols-7">
         {% for day in week %}
-        <div class="cal-day cal-add-cell {% if day.posts %}has-posts{% endif %} {% if day.is_today %}today{% elif day.is_past %}past{% endif %} {% if not day.is_current_month %}other-month{% endif %}"
-             @dragover.prevent="allowDrop($event)"
-             @drop="dropOnSlot($event, '{{ day.date|date:'Y-m-d' }}', '09:00')">
+        <div class="cal-day cal-add-cell cal-drop {% if day.posts %}has-posts{% endif %} {% if day.is_today %}today{% elif day.is_past %}past{% endif %} {% if not day.is_current_month %}other-month{% endif %}"
+             data-date="{{ day.date|date:'Y-m-d' }}" data-time="09:00">
             {% if not day.is_past %}
             <a href="{% url 'composer:compose' workspace_id=workspace.id %}?scheduled_date={{ day.date|date:'Y-m-d' }}&scheduled_time=09:00" class="cal-add-btn" title="Create post">
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
@@ -57,11 +56,10 @@ Enhanced with: holidays, custom events, category colors, recurring badges.
 
             {% for pp in day.posts %}
             <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}"
-               class="post-chip status-{{ pp.status }}"
-               {% if pp.status == "draft" or pp.status == "approved" or pp.status == "scheduled" %}draggable="true"
-               data-platform-post-id="{{ pp.id }}"
-               @dragstart="startDrag($event, '{{ pp.id }}')"
-               @dragend="endDrag($event)"{% endif %}>
+               class="post-chip status-{{ pp.status }}{% if pp.is_reschedulable %} is-draggable{% endif %}"
+               title="{% if pp.is_reschedulable %}Move or open{% else %}Open{% endif %}"
+               {% if pp.is_reschedulable %}draggable="true" data-platform-post-id="{{ pp.id }}"{% else %}draggable="false"{% endif %}>
+                {% if pp.is_bulk_selectable %}{% include "calendar/partials/_select_checkbox.html" with pp_id=pp.id %}{% endif %}
                 <span class="w-4 h-4 rounded flex items-center justify-center pi-{{ pp.social_account.platform }} flex-shrink-0 text-white">
                     {% include "social_accounts/partials/_platform_icon.html" with platform=pp.social_account.platform size="3" %}
                 </span>

@@ -1,3 +1,4 @@
+{% if render_tab_counts_oob %}{% include "calendar/partials/_tab_counts_oob.html" %}{% endif %}
 {% comment %}
 Drafts tab partial for the Publish page.
 Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
@@ -9,6 +10,7 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
     <table class="w-full">
         <thead>
             <tr class="border-b border-stone-200 text-left">
+                <th class="pl-4 w-8"></th>
                 <th class="px-4 py-3 text-xs font-semibold text-stone-400 uppercase tracking-wider">Media</th>
                 <th class="px-4 py-3 text-xs font-semibold text-stone-400 uppercase tracking-wider">Caption</th>
                 <th class="px-4 py-3 text-xs font-semibold text-stone-400 uppercase tracking-wider">Platform</th>
@@ -21,6 +23,9 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
             {% for pp in platform_posts %}
             <tr class="border-b border-stone-100 hover:bg-stone-50 transition-colors duration-100 cursor-pointer"
                 @click="window.location='{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}'">
+                <td class="pl-4 pr-1 py-3" @click.stop>
+                    {% include "calendar/partials/_select_checkbox.html" with pp_id=pp.id extra_class="row-select-box" %}
+                </td>
                 <td class="px-4 py-3">
                     {% with first_att=pp.post.media_attachments.all.0 %}
                     {% if first_att %}

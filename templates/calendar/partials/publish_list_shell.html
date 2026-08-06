@@ -1,4 +1,4 @@
-{% comment %}
+{% load common_extras %}{% comment %}
 List mode shell for the Publish page.
 Contains tabs (Queue, Drafts, Approvals, Sent), filter dropdowns, and tab content area.
 Tab switching is HTMX partial swaps only - no full page reload.
@@ -11,55 +11,32 @@ Tab switching is HTMX partial swaps only - no full page reload.
         <div class="flex items-center gap-1 -mb-px overflow-x-auto flex-nowrap">
             <button class="publish-tab" :class="activeTab === 'queue' && 'active'"
                     @click="switchTab('queue')">
-                Queue {% if queue_count %}<span class="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-[11px] font-medium text-stone-500 bg-stone-100 rounded-full">{{ queue_count }}</span>{% endif %}
+                Queue <span id="tabcount-queue">{% include "calendar/partials/_tab_count_badge.html" with count=queue_count %}</span>
             </button>
             <button class="publish-tab" :class="activeTab === 'drafts' && 'active'"
                     @click="switchTab('drafts')">
-                Drafts {% if drafts_count %}<span class="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-[11px] font-medium text-stone-500 bg-stone-100 rounded-full">{{ drafts_count }}</span>{% endif %}
+                Drafts <span id="tabcount-drafts">{% include "calendar/partials/_tab_count_badge.html" with count=drafts_count %}</span>
             </button>
             <button class="publish-tab" :class="activeTab === 'approvals' && 'active'"
                     @click="switchTab('approvals')">
-                Approvals {% if approvals_count %}<span class="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-[11px] font-medium text-stone-500 bg-stone-100 rounded-full">{{ approvals_count }}</span>{% endif %}
+                Approvals <span id="tabcount-approvals">{% include "calendar/partials/_tab_count_badge.html" with count=approvals_count %}</span>
             </button>
             <button class="publish-tab" :class="activeTab === 'sent' && 'active'"
                     @click="switchTab('sent')">
-                Sent {% if sent_count %}<span class="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-[11px] font-medium text-stone-500 bg-stone-100 rounded-full">{{ sent_count }}</span>{% endif %}
+                Sent <span id="tabcount-sent">{% include "calendar/partials/_tab_count_badge.html" with count=sent_count %}</span>
             </button>
         </div>
 
         <!-- Right: filter dropdowns -->
         <div class="flex items-center gap-2 pb-2 overflow-x-auto flex-shrink-0">
-            <!-- Channels filter -->
-            <div class="relative">
-                <svg class="publish-filter-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 006 0v-1a10 10 0 10-3.92 7.94"/></svg>
-                <select class="publish-filter-select has-icon" x-model="activeChannel" @change="reloadTab()">
-                    <option value="">All Channels</option>
-                    {% for channel in channels_with_posts %}
-                    <option value="{{ channel.id }}">{{ channel.account_name|default:channel.account_handle }} ({{ channel.get_platform_display }})</option>
-                    {% endfor %}
-                </select>
-            </div>
+            <!-- Channels filter (multi-select) -->
+            {% include "calendar/partials/_channel_multiselect.html" with model="selectedChannels" onchange="reloadTab()" accounts=channels_with_posts %}
 
             <!-- Tags filter -->
-            <div class="relative">
-                <svg class="publish-filter-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
-                <select class="publish-filter-select has-icon" x-model="activeTag" @change="reloadTab()">
-                    <option value="">All Tags</option>
-                    {% for tag in all_tags %}
-                    <option value="{{ tag }}">#{{ tag }}</option>
-                    {% endfor %}
-                </select>
-            </div>
+            {% ui_select model="activeTag" options=all_tags onchange="reloadTab()" placeholder="All Tags" %}
 
             <!-- Timezone dropdown -->
-            <div class="relative">
-                <svg class="publish-filter-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                <select class="publish-filter-select has-icon" x-model="displayTimezone" @change="reloadTab()">
-                    {% for tz in timezone_choices %}
-                    <option value="{{ tz }}" {% if tz == display_timezone %}selected{% endif %}>{{ tz|cut:"America/"|cut:"Europe/"|cut:"Asia/"|cut:"US/"|cut:"Pacific/"|cut:"Australia/" }}{% if tz == workspace_timezone %} (workspace){% endif %}</option>
-                    {% endfor %}
-                </select>
-            </div>
+            {% ui_select model="displayTimezone" options=timezone_options onchange="reloadTab()" placeholder="Timezone" %}
         </div>
     </div>
 

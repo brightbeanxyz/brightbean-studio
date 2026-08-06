@@ -1,3 +1,4 @@
+{% if render_tab_counts_oob %}{% include "calendar/partials/_tab_counts_oob.html" %}{% endif %}
 {% comment %}
 Approvals tab for the Publish page — one row per post, matching the approved design.
 Loaded into #tab-content. Re-fetches itself on approvalAction / bulkActionComplete

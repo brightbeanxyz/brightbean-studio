@@ -299,8 +299,39 @@
         margin-left: auto;
     }
 
-    /* Draggable feedback */
-    .post-chip.dragging { opacity: 0.5; transform: rotate(2deg); }
+    /* Drag-and-drop (SortableJS) feedback */
+    .post-chip.is-draggable { cursor: grab; }
+    .post-chip.is-draggable:active { cursor: grabbing; }
+    /* Hide the source-cell placeholder entirely: for a day-granularity calendar
+       the only feedback that matters is which day cell is targeted, so we don't
+       want a translucent chip trailing into every cell the cursor passes. Only
+       the cursor-following drag clone stays visible. */
+    .chip-ghost { display: none !important; }
+    /* Highlight the day cell currently under the drag (toggled in onMove). */
+    .cal-drop.cal-drop-active { background: #FFF7ED; box-shadow: inset 0 0 0 2px #F97316; }
+    /* While dragging, suppress the per-cell "+" add buttons that would otherwise
+       flicker under the cursor as it crosses cells. */
+    body.cal-dragging .cal-add-btn { display: none !important; }
+
+    /* Bulk-selection checkbox (chips + list rows). Hover-reveal on chips; always
+       shown once checked or when a selection is active. */
+    .cal-select-box {
+        width: 15px; height: 15px; flex-shrink: 0; border: 1.5px solid #A8A29E;
+        border-radius: 4px; background: #fff; cursor: pointer; color: #fff;
+        display: inline-flex; align-items: center; justify-content: center;
+        opacity: 0; transition: opacity 120ms ease, background 120ms ease;
+    }
+    .post-chip:hover .cal-select-box,
+    .cal-select-box.is-checked,
+    body.has-selection .cal-select-box { opacity: 1; }
+    .cal-select-box.is-checked { background: #F97316; border-color: #F97316; }
+    .cal-select-box:hover { border-color: #F97316; }
+    /* In list rows the checkbox is always visible (there's room). */
+    .row-select-box { opacity: 1; }
+    /* The shared toast host and the selection bar both sit bottom-centre. Lift
+       the toasts clear while a selection is active, so a rejected bulk action
+       doesn't render its own explanation on top of the bar it came from. */
+    body.has-selection #bb-toast-host { bottom: 5rem; }
 
     @keyframes slideUp {
         from { opacity: 0; transform: translateY(8px); }
@@ -322,17 +353,125 @@
 </div>
 {# Toast host — outside #tab-content so an approval action's list refresh doesn't tear down the toast #}
 {% include "approvals/partials/_toasts.html" %}
+
+{% comment %}Floating bulk-selection bar — outside the swapped regions so the
+selection survives grid reloads / tab switches. Shown when ≥1 chip/row is
+ticked (see the `sel` Alpine store).{% endcomment %}
+<div x-data="bulkBar()">
+    {# Floating action bar #}
+    <div x-cloak x-show="$store.sel.count > 0"
+         x-effect="document.body.classList.toggle('has-selection', $store.sel.count > 0)"
+         class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-1 bg-stone-900 text-white rounded-full shadow-2xl pl-4 pr-2 py-2">
+        <span class="text-sm font-medium whitespace-nowrap" x-text="$store.sel.count + ' selected'"></span>
+        <span class="w-px h-5 bg-white/20 mx-1.5"></span>
+        <button @click="ask('draft')" :disabled="busy" class="px-3 py-1.5 text-xs font-semibold rounded-full hover:bg-white/10 transition-colors disabled:opacity-50">Draft</button>
+        <button @click="ask('publish')" :disabled="busy" class="px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500 hover:bg-emerald-600 transition-colors disabled:opacity-50">Publish</button>
+        <button @click="ask('delete')" :disabled="busy" class="px-3 py-1.5 text-xs font-semibold rounded-full text-red-300 hover:bg-red-500/20 transition-colors disabled:opacity-50">Delete</button>
+        <button @click="$store.sel.clear()" class="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center transition-colors" title="Clear selection">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+    </div>
+
+    {% comment %}Confirmation dialog for impactful actions (publish / delete).
+    Draft is reversible so it runs without a prompt.{% endcomment %}
+    <div x-cloak x-show="confirmAction" @keydown.escape.window="confirmAction = null"
+         class="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" @click.self="confirmAction = null">
+        <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-xs text-center">
+            <div class="w-11 h-11 mx-auto rounded-full flex items-center justify-center mb-3"
+                 :class="confirmAction === 'delete' ? 'bg-red-50 text-red-500' : 'bg-emerald-50 text-emerald-600'">
+                <svg x-show="confirmAction === 'delete'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                <svg x-show="confirmAction === 'publish'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+            </div>
+            <h3 class="text-base font-bold text-stone-900" x-text="confirmAction === 'delete' ? 'Delete posts?' : 'Publish now?'"></h3>
+            <p class="text-sm text-stone-500 mt-1 leading-relaxed"
+               x-text="confirmAction === 'delete'
+                   ? ('Permanently delete ' + $store.sel.count + ' selected post' + ($store.sel.count === 1 ? '' : 's') + '. This can\'t be undone.')
+                   : ('Publish ' + $store.sel.count + ' selected post' + ($store.sel.count === 1 ? '' : 's') + ' now — they go out on their platforms shortly.')"></p>
+            <div class="flex gap-2 mt-5">
+                <button @click="confirmAction = null" class="flex-1 px-4 py-2 text-sm font-semibold rounded-full border border-stone-200 text-stone-600 hover:bg-stone-50 transition-colors">Cancel</button>
+                <button @click="exec(confirmAction)" :disabled="busy"
+                        :class="confirmAction === 'delete' ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'"
+                        class="flex-1 px-4 py-2 text-sm font-semibold rounded-full text-white transition-colors disabled:opacity-50"
+                        x-text="confirmAction === 'delete' ? 'Delete' : 'Publish'"></button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 <script nonce="{{ request.csp_nonce }}">
+/* Surface a rejected request through the shared toast host
+   (approvals/partials/_toasts.html), which listens for a `showToast` event on
+   document.body. These endpoints are called with fetch(), not htmx, so the
+   usual HX-Trigger route isn't available — dispatch the event directly. */
+function bbFailureToast(res, fallback) {
+    res.json().catch(() => ({})).then((data) => {
+        document.body.dispatchEvent(new CustomEvent('showToast', {
+            detail: { tone: 'error', title: (data && data.error) || fallback },
+        }));
+    });
+}
+
+/* Bulk-selection store (survives HTMX grid/tab swaps) + floating-bar controller. */
+document.addEventListener('alpine:init', () => {
+    Alpine.store('sel', {
+        ids: [],
+        has(id) { return this.ids.includes(id); },
+        toggle(id) { const i = this.ids.indexOf(id); if (i >= 0) this.ids.splice(i, 1); else this.ids.push(id); },
+        clear() { this.ids = []; },
+        get count() { return this.ids.length; },
+    });
+});
+function bulkBar() {
+    return {
+        busy: false,
+        confirmAction: null, // 'publish' | 'delete' pending confirmation, else null
+        // Draft is reversible → run straight away. Publish/Delete open the dialog.
+        ask(action) {
+            if (!Alpine.store('sel').count || this.busy) return;
+            if (action === 'publish' || action === 'delete') { this.confirmAction = action; return; }
+            this.exec(action);
+        },
+        exec(action) {
+            this.confirmAction = null;
+            const store = Alpine.store('sel');
+            if (!store.count || this.busy) return;
+            this.busy = true;
+            const csrf = (document.querySelector('[name=csrfmiddlewaretoken]') || {}).value
+                || (document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/) || [])[1] || '';
+            const body = new URLSearchParams();
+            body.set('action', action);
+            store.ids.forEach(id => body.append('platform_post_ids', id));
+            fetch('{% url "calendar:bulk_platform_action" workspace_id=workspace.id %}', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrf, 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/x-www-form-urlencoded' },
+                body,
+            }).then((res) => {
+                this.busy = false;
+                if (!res.ok) {
+                    // e.g. the publish_directly gate. Keep the selection so the
+                    // user can retry with an action they are allowed to take.
+                    bbFailureToast(res, 'Could not complete that action.');
+                    return;
+                }
+                store.clear();
+                // Refresh whichever view is mounted: the calendar shell reloads
+                // its grid on `calendarRefresh` (from body); publishList reloads
+                // the active tab on the `post-deleted` window event.
+                if (window.htmx) htmx.trigger(document.body, 'calendarRefresh');
+                window.dispatchEvent(new CustomEvent('post-deleted'));
+            }).catch(() => { this.busy = false; });
+        },
+    };
+}
 function calendarApp() {
     return {
         activeView: '{{ view_type }}',
         draggedPlatformPostId: null,
         calendarFilters: {
             status: '{{ active_filters.statuses.0|default:"" }}',
-            channel: '',
+            channels: [],
             tag: '{{ active_filters.tags.0|default:"" }}',
             tz: '{{ display_timezone|default:"UTC" }}',
         },
@@ -343,7 +482,7 @@ function calendarApp() {
             params.set('view', this.activeView);
             params.set('date', '{{ target_date|date:"Y-m-d" }}');
             if (this.calendarFilters.status) params.set('status', this.calendarFilters.status);
-            if (this.calendarFilters.channel) params.set('channel', this.calendarFilters.channel);
+            this.calendarFilters.channels.forEach(c => params.append('channel', c));
             if (this.calendarFilters.tag) params.set('tag', this.calendarFilters.tag);
             if (this.calendarFilters.tz) params.set('tz', this.calendarFilters.tz);
             {% if show_holidays %}params.set('holidays', '1');{% endif %}
@@ -351,58 +490,83 @@ function calendarApp() {
             htmx.ajax('GET', url, {target: '#calendar-content', swap: 'innerHTML'});
         },
 
-        startDrag(event, platformPostId) {
-            this.draggedPlatformPostId = platformPostId;
-            event.dataTransfer.effectAllowed = 'move';
-            event.target.classList.add('dragging');
+        init() {
+            // SortableJS drag-and-drop. Wire on first load and re-wire after
+            // every HTMX swap of the calendar grid (nav, view change, filters).
+            this.$nextTick(() => this.initCalendarDnD());
+            document.body.addEventListener('htmx:afterSettle', (e) => {
+                const t = e.detail && e.detail.target;
+                if (t && (t.id === 'calendar-content' || (t.querySelector && t.querySelector('.cal-drop')))) {
+                    this.$nextTick(() => this.initCalendarDnD());
+                }
+            });
+            // A drag on an <a> chip would otherwise fire a trailing click and
+            // navigate to the editor. Swallow that click while a drag is in
+            // flight; genuine clicks (no drag) still open the post.
+            document.body.addEventListener('click', (e) => {
+                if (this._draggingChip && e.target.closest('.post-chip.is-draggable')) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }, true);
         },
 
-        endDrag(event) {
-            event.target.classList.remove('dragging');
-            this.draggedPlatformPostId = null;
+        initCalendarDnD() {
+            if (typeof Sortable === 'undefined') return;
+            document.querySelectorAll('#calendar-content .cal-drop').forEach((cell) => {
+                if (Sortable.get(cell)) return; // already wired this cell
+                Sortable.create(cell, {
+                    group: 'calendar',
+                    draggable: '.post-chip.is-draggable',
+                    animation: 150,
+                    ghostClass: 'chip-ghost',
+                    // Native HTML5 drag: the browser renders a drag image that
+                    // reliably follows the cursor (a forceFallback clone did
+                    // not — it appeared stuck near the origin). We set that image
+                    // explicitly to the chip and clear the drag data so an <a>
+                    // chip never drags its URL instead of itself.
+                    setData: (dataTransfer, dragEl) => {
+                        try { dataTransfer.setDragImage(dragEl, 20, 12); } catch (e) {}
+                        dataTransfer.setData('text/plain', '');
+                    },
+                    // Touch: short hold before a drag begins so it doesn't
+                    // hijack a scroll. Desktop mouse is unaffected (immediate).
+                    delay: 150,
+                    delayOnTouchOnly: true,
+                    onStart: () => {
+                        this._draggingChip = true;
+                        // Suppress the per-cell "+" add buttons while dragging.
+                        document.body.classList.add('cal-dragging');
+                    },
+                    onMove: (evt) => {
+                        // Highlight only the day cell currently under the drag.
+                        document.querySelectorAll('.cal-drop.cal-drop-active').forEach(c => c.classList.remove('cal-drop-active'));
+                        if (evt.to) evt.to.classList.add('cal-drop-active');
+                        return true;
+                    },
+                    onEnd: (evt) => {
+                        document.body.classList.remove('cal-dragging');
+                        document.querySelectorAll('.cal-drop.cal-drop-active').forEach(c => c.classList.remove('cal-drop-active'));
+                        setTimeout(() => { this._draggingChip = false; }, 60);
+                        if (evt.to === evt.from) return; // dropped back in place
+                        const ppId = evt.item.getAttribute('data-platform-post-id');
+                        const date = evt.to.getAttribute('data-date');
+                        const time = evt.to.getAttribute('data-time') || '09:00';
+                        if (!ppId || !date) return;
+                        this.rescheduleChip(ppId, date + 'T' + time + ':00');
+                    },
+                });
+            });
         },
 
-        allowDrop(event) {
-            event.preventDefault();
-            event.dataTransfer.dropEffect = 'move';
-        },
-
-        dropOnSlot(event, dateStr, timeStr) {
-            event.preventDefault();
-            const platformPostId = this.draggedPlatformPostId;
-            if (!platformPostId) return;
-
-            const chip = document.querySelector(
-                `[data-platform-post-id="${platformPostId}"]`
-            );
-            const targetCell = event.currentTarget;
-            if (!chip || !targetCell) return;
-
-            const originalParent = chip.parentNode;
-            const originalNextSibling = chip.nextSibling;
-
-            // Optimistically move the chip into the target slot so the user
-            // sees the reschedule immediately, with no full grid reload.
-            if (originalParent !== targetCell || originalNextSibling !== null) {
-                targetCell.appendChild(chip);
-            }
-            this.draggedPlatformPostId = null;
-
-            // dateStr/timeStr are the target cell's workspace-tz wall date/time
-            // (see _cell_compose_params); reschedule_post interprets the naive
-            // value in the workspace timezone, so the drop lands on the right
-            // instant even when the calendar display timezone differs from it.
-            const newDatetime = dateStr + 'T' + timeStr + ':00';
-
+        rescheduleChip(platformPostId, newDatetime) {
+            // newDatetime is the target cell's workspace-tz wall date/time (see
+            // _cell_compose_params); reschedule_post interprets the naive value
+            // in the workspace timezone, so the drop lands on the right instant.
             const csrfToken =
                 (document.querySelector('[name=csrfmiddlewaretoken]') || {}).value ||
                 (document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/) || [])[1] ||
                 '';
-
-            const rollback = () => {
-                originalParent.insertBefore(chip, originalNextSibling);
-            };
-
             fetch('{% url "calendar:reschedule" workspace_id=workspace.id %}', {
                 method: 'POST',
                 headers: {
@@ -415,14 +579,14 @@ function calendarApp() {
                     new_datetime: newDatetime,
                 }),
             }).then((res) => {
+                // On failure snap the grid back to the server truth, and say why
+                // — a drop rejected by the publish gate would otherwise look like
+                // the chip just sprang back for no reason.
                 if (!res.ok) {
-                    rollback();
-                    console.error('Reschedule failed', res.status);
+                    this.reloadCalendar();
+                    bbFailureToast(res, 'Could not reschedule that post.');
                 }
-            }).catch((err) => {
-                rollback();
-                console.error('Reschedule failed', err);
-            });
+            }).catch(() => this.reloadCalendar());
         }
     };
 }
@@ -430,7 +594,7 @@ function calendarApp() {
 function publishList() {
     return {
         activeTab: '{{ active_tab|default:"queue" }}',
-        activeChannel: '',
+        selectedChannels: [],
         activeTag: '',
         displayTimezone: '{{ display_timezone|default:"UTC" }}',
 
@@ -452,7 +616,7 @@ function publishList() {
 
         reloadTab() {
             const params = new URLSearchParams();
-            if (this.activeChannel) params.set('channel', this.activeChannel);
+            this.selectedChannels.forEach(c => params.append('channel', c));
             if (this.activeTag) params.set('tag', this.activeTag);
             if (this.displayTimezone) params.set('tz', this.displayTimezone);
             const url = this.tabUrls[this.activeTab] + '?' + params.toString();

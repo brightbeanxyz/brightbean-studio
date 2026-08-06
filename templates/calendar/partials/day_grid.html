@@ -5,17 +5,17 @@ Context: day_slots, target_date, workspace.
 
 <div class="bg-white mx-auto" style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both; max-height: calc(100vh - 200px); overflow-y: auto;">
 {% for cell in day_slots %}
-    <div class="flex border-b border-stone-100 min-h-[64px] cal-add-cell {% if cell.posts or cell.slots %}has-posts{% endif %} {% if is_today and cell.hour == current_hour %}bg-orange-50/50{% endif %}"
-         @dragover.prevent="allowDrop($event)"
-         @drop="dropOnSlot($event, '{{ cell.compose_date }}', '{{ cell.compose_time }}')">
+    <div class="flex border-b border-stone-100 min-h-[64px] cal-add-cell {% if cell.posts or cell.slots %}has-posts{% endif %} {% if is_today and cell.hour == current_hour %}bg-orange-50/50{% endif %}">
         <!-- Time label -->
         <div class="w-20 flex-shrink-0 border-r border-stone-200 px-3 py-2 text-right">
             <span class="text-xs font-medium tabular-nums {% if is_today and cell.hour == current_hour %}text-orange-600 font-semibold{% else %}text-stone-400{% endif %}">
                 {% if cell.hour < 10 %}0{% endif %}{{ cell.hour }}:00
             </span>
         </div>
-        <!-- Slots and posts in this hour -->
-        <div class="flex-1 p-2 flex flex-col justify-center gap-1">
+        <!-- Slots and posts in this hour (the drop target: chips are its direct
+             children so SortableJS can manage them) -->
+        <div class="flex-1 p-2 flex flex-col justify-center gap-1 cal-drop"
+             data-date="{{ cell.compose_date }}" data-time="{{ cell.compose_time }}">
             {% if not is_past_day and not is_today or not is_past_day and cell.hour >= current_hour %}
             <a href="{% url 'composer:compose' workspace_id=workspace.id %}?scheduled_date={{ cell.compose_date }}&scheduled_time={{ cell.compose_time }}" class="cal-add-btn cal-add-btn--inline" style="position:static; margin:0 auto;" title="Create post">
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
@@ -45,11 +45,10 @@ Context: day_slots, target_date, workspace.
             {% endif %}
             {% for pp in cell.posts %}
             <a href="{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}"
-               class="post-chip status-{{ pp.status }}"
-               {% if pp.status == "draft" or pp.status == "approved" or pp.status == "scheduled" %}draggable="true"
-               data-platform-post-id="{{ pp.id }}"
-               @dragstart="startDrag($event, '{{ pp.id }}')"
-               @dragend="endDrag($event)"{% endif %}>
+               class="post-chip status-{{ pp.status }}{% if pp.is_reschedulable %} is-draggable{% endif %}"
+               title="{% if pp.is_reschedulable %}Move or open{% else %}Open{% endif %}"
+               {% if pp.is_reschedulable %}draggable="true" data-platform-post-id="{{ pp.id }}"{% else %}draggable="false"{% endif %}>
+                {% if pp.is_bulk_selectable %}{% include "calendar/partials/_select_checkbox.html" with pp_id=pp.id %}{% endif %}
                 <span class="w-4 h-4 rounded flex items-center justify-center pi-{{ pp.social_account.platform }} flex-shrink-0 text-white">
                     {% include "social_accounts/partials/_platform_icon.html" with platform=pp.social_account.platform size="3" %}
                 </span>
