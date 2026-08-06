@@ -59,12 +59,14 @@ def _encode_urn(urn: str) -> str:
 # Characters LinkedIn treats as reserved in the Posts API "commentary"
 # (little-text) field. If any is sent unescaped, LinkedIn silently truncates the
 # commentary at the first occurrence (e.g. a "(" drops everything after it).
-# Each must be prefixed with a backslash to render literally.
+# Each must be prefixed with a backslash to render literally. Public because the
+# escaping inflates the caption, so the composer counts against the escaped
+# length too (see providers.caption_wire_length).
 # https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/posts-api
-_LINKEDIN_RESERVED_CHARS = "|{}@[]()<>#*_~"
+LINKEDIN_RESERVED_CHARS = "|{}@[]()<>#*_~"
 
 
-def _escape_commentary(text: str) -> str:
+def escape_commentary(text: str) -> str:
     """Escape LinkedIn's reserved little-text characters in a post commentary.
 
     LinkedIn's Posts API truncates ``commentary`` at the first unescaped
@@ -78,7 +80,7 @@ def _escape_commentary(text: str) -> str:
     if not text:
         return text
     escaped = text.replace("\\", "\\\\")
-    for ch in _LINKEDIN_RESERVED_CHARS:
+    for ch in LINKEDIN_RESERVED_CHARS:
         escaped = escaped.replace(ch, "\\" + ch)
     return escaped
 
@@ -255,7 +257,7 @@ class LinkedInProvider(SocialProvider):
     def _build_post_body(self, author: str, commentary: str) -> dict:
         return {
             "author": author,
-            "commentary": _escape_commentary(commentary),
+            "commentary": escape_commentary(commentary),
             "visibility": "PUBLIC",
             "distribution": {
                 "feedDistribution": "MAIN_FEED",

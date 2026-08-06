@@ -186,7 +186,7 @@ register_tool(
         description=(
             "List the social media accounts this API key is allowed to act on. "
             "Returns id, platform, account_name, account_handle, connection_status, char_limit, "
-            "needs_title, and supports_first_comment. Call this first to discover which "
+            "escaped_chars, needs_title, and supports_first_comment. Call this first to discover which "
             "social_account_id values are valid and what each platform requires."
         ),
         input_schema={"type": "object", "properties": {}, "additionalProperties": False},

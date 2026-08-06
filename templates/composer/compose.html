@@ -522,8 +522,8 @@
                                 Media Library
                             </button>
                             <span class="text-xs tabular-nums font-medium"
-                                  :class="(() => { const min = Math.min(...selectedAccounts.map(id => charLimits[id]?.limit || 9999)); return caption.length > min ? 'text-red-500' : 'text-stone-400'; })()"
-                                  x-text="(() => { const limits = selectedAccounts.map(id => charLimits[id]?.limit).filter(Boolean); const min = limits.length ? Math.min(...limits) : null; return min ? caption.length + ' / ' + min : caption.length; })()">
+                                  :class="captionOverLimit() ? 'text-red-500' : 'text-stone-400'"
+                                  x-text="captionLimit() ? captionCount() + ' / ' + captionLimit() : captionCount()">
                             </span>
                         </div>
                     </div>
@@ -2012,6 +2012,33 @@ function composerApp() {
         // Declared here so scoped writes (inside x-for panels) hit this
         // component instead of the iteration scope.
         _filmstripRun: 0,
+
+        // Caption length as a platform counts it. LinkedIn escapes reserved
+        // characters in what it publishes, so each one costs two against the
+        // limit — mirrors providers.caption_wire_length on the server.
+        wireLength(text, accId) {
+            const escaped = this.charLimits[accId]?.escaped_chars || '';
+            if (!escaped) return text.length;
+            let extra = 0;
+            for (const ch of text) {
+                if (escaped.includes(ch)) extra++;
+            }
+            return text.length + extra;
+        },
+        // Worst case across the selected accounts, so the counter never reads
+        // green on a caption that one of them will reject.
+        captionCount() {
+            const lengths = this.selectedAccounts.map(id => this.wireLength(this.caption, id));
+            return lengths.length ? Math.max(...lengths) : this.caption.length;
+        },
+        captionLimit() {
+            const limits = this.selectedAccounts.map(id => this.charLimits[id]?.limit).filter(Boolean);
+            return limits.length ? Math.min(...limits) : null;
+        },
+        captionOverLimit() {
+            return this.selectedAccounts.some(
+                id => this.wireLength(this.caption, id) > (this.charLimits[id]?.limit || 9999));
+        },
 
         // Computed-like getters for title field visibility
         get anyPlatformNeedsTitle() {

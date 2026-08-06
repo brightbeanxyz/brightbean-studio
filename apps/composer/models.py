@@ -529,7 +529,9 @@ class PlatformPost(models.Model):
 
     @property
     def caption_length(self):
-        return len(self.effective_caption)
+        # Not len(): platforms that escape reserved characters send more than
+        # was typed, and the limit applies to what is sent.
+        return self.social_account.caption_wire_length(self.effective_caption)
 
     @property
     def is_over_limit(self):

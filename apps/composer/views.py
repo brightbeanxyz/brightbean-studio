@@ -467,6 +467,9 @@ def compose(request, workspace_id, post_id=None):
         char_limits[str(acc.id)] = {
             "platform": acc.platform,
             "limit": acc.char_limit,
+            # Each of these costs two characters once the provider escapes it,
+            # so the live counter can charge for them as the user types.
+            "escaped_chars": acc.escaped_chars,
             "name": acc.account_name or acc.account_handle,
             **cfg,
         }
@@ -1200,6 +1203,8 @@ def preview(request, workspace_id):
             effective_title = request.POST.get(override_title_key, "") or title
             effective_caption = request.POST.get(override_key, "") or caption
             char_limit = account.char_limit
+            # Counted after escaping, so the badge matches what gets published.
+            char_count = account.caption_wire_length(effective_caption)
             field_config = account.field_config
             previews.append(
                 {
@@ -1207,9 +1212,9 @@ def preview(request, workspace_id):
                     "title": effective_title,
                     "caption": effective_caption,
                     "first_comment": first_comment,
-                    "char_count": len(effective_caption),
+                    "char_count": char_count,
                     "char_limit": char_limit,
-                    "is_over_limit": len(effective_caption) > char_limit,
+                    "is_over_limit": char_count > char_limit,
                     "truncated_caption": effective_caption[:char_limit]
                     if len(effective_caption) > char_limit
                     else effective_caption,

@@ -143,6 +143,23 @@ class SocialAccount(models.Model):
     def char_limit(self) -> int:
         return self.PLATFORM_CHAR_LIMITS.get(self.platform, 2200)
 
+    @property
+    def escaped_chars(self) -> str:
+        """Characters this platform escapes, each costing two against the limit."""
+        from providers import CAPTION_ESCAPED_CHARS
+
+        return CAPTION_ESCAPED_CHARS.get(self.platform, "")
+
+    def caption_wire_length(self, text: str) -> int:
+        """Caption length as this platform counts it, after any escaping.
+
+        LinkedIn escapes reserved characters in the commentary it publishes, so
+        the typed length is not the length that counts against ``char_limit``.
+        """
+        from providers import caption_wire_length
+
+        return caption_wire_length(self.platform, text)
+
     # Platform-specific field configuration (which platforms need extra fields)
     PLATFORM_FIELD_CONFIG: dict[str, dict[str, Any]] = {
         "youtube": {

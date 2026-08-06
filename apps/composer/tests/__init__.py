@@ -5,6 +5,7 @@ from django.utils import timezone
 
 from apps.composer.models import PlatformPost, Post, PostVersion
 from apps.composer.status import derive_post_status
+from apps.social_accounts.models import SocialAccount
 
 
 class PlatformPostStateMachineTest(TestCase):
@@ -125,6 +126,41 @@ class PlatformPostModelTest(TestCase):
         post = Post(first_comment="Base comment")
         pp.post = post
         self.assertEqual(pp.effective_first_comment, "Base comment")
+
+
+class CaptionLengthTest(TestCase):
+    """The limit applies to what the platform receives, not what was typed.
+
+    LinkedIn escapes reserved characters in the commentary it publishes, so a
+    caption that fits as typed can still be rejected on the wire.
+    """
+
+    def _make_pp(self, platform, caption):
+        pp = PlatformPost()
+        pp.platform_specific_caption = caption
+        pp.post = Post(caption="")
+        pp.social_account = SocialAccount(platform=platform)
+        return pp
+
+    def test_linkedin_counts_the_escaped_length(self):
+        pp = self._make_pp("linkedin_personal", "Va al repo (durable)")
+        # Two parentheses, each escaped with a backslash.
+        self.assertEqual(pp.caption_length, len("Va al repo (durable)") + 2)
+
+    def test_other_platforms_count_the_typed_length(self):
+        pp = self._make_pp("bluesky", "Va al repo (durable)")
+        self.assertEqual(pp.caption_length, len("Va al repo (durable)"))
+
+    def test_escaping_can_push_a_fitting_caption_over_the_limit(self):
+        caption = "(" * 20 + "a" * 2970  # 2,990 typed, 3,010 escaped
+        pp = self._make_pp("linkedin_personal", caption)
+        self.assertLessEqual(len(caption), pp.char_limit)
+        self.assertTrue(pp.is_over_limit)
+
+    def test_a_caption_that_fits_after_escaping_is_not_flagged(self):
+        caption = "(" * 20 + "a" * 2950  # 2,970 typed, 2,990 escaped
+        pp = self._make_pp("linkedin_personal", caption)
+        self.assertFalse(pp.is_over_limit)
 
 
 class PostVersionModelTest(TestCase):

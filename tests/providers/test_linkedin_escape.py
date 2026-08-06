@@ -2,7 +2,7 @@
 
 LinkedIn's Posts API silently truncates ``commentary`` at the first unescaped
 reserved character (e.g. a ``(`` drops everything after it), which published
-posts as just their first sentence. ``_escape_commentary`` prefixes each
+posts as just their first sentence. ``escape_commentary`` prefixes each
 reserved char with a backslash so the full text renders.
 
 Comments are a different API with a different model — plain text plus a separate
@@ -11,37 +11,39 @@ Comments are a different API with a different model — plain text plus a separa
 
 from unittest.mock import MagicMock
 
-from providers.linkedin import LinkedInProvider, _escape_commentary
+from providers.linkedin import LINKEDIN_RESERVED_CHARS, LinkedInProvider, escape_commentary
 
-RESERVED = set("|{}@[]()<>#*_~")
+# Read from the module under test, so adding a reserved char there extends the
+# coverage below instead of silently leaving the new char unchecked.
+RESERVED = set(LINKEDIN_RESERVED_CHARS)
 
 
 class TestEscapeCommentary:
     def test_escapes_reserved_characters(self):
-        assert _escape_commentary("(a)") == "\\(a\\)"
-        assert _escape_commentary("pre_commands") == "pre\\_commands"
-        assert _escape_commentary("#AI #Agents") == "\\#AI \\#Agents"
-        assert _escape_commentary("{{x}}") == "\\{\\{x\\}\\}"
-        assert _escape_commentary("a*b~c<d>e|f@g[h]i") == "a\\*b\\~c\\<d\\>e\\|f\\@g\\[h\\]i"
+        assert escape_commentary("(a)") == "\\(a\\)"
+        assert escape_commentary("pre_commands") == "pre\\_commands"
+        assert escape_commentary("#AI #Agents") == "\\#AI \\#Agents"
+        assert escape_commentary("{{x}}") == "\\{\\{x\\}\\}"
+        assert escape_commentary("a*b~c<d>e|f@g[h]i") == "a\\*b\\~c\\<d\\>e\\|f\\@g\\[h\\]i"
 
     def test_escapes_backslash_first(self):
         # A literal backslash is doubled exactly once (not compounded with the
         # escapes we add afterwards).
-        assert _escape_commentary("a\\b") == "a\\\\b"
+        assert escape_commentary("a\\b") == "a\\\\b"
 
     def test_leaves_plain_text_and_urls_untouched(self):
-        assert _escape_commentary("Hola mundo, ¿qué tal?") == "Hola mundo, ¿qué tal?"
+        assert escape_commentary("Hola mundo, ¿qué tal?") == "Hola mundo, ¿qué tal?"
         url = "https://dev.to/agentprojectcontext/mcp-scopes-are-trust-boundaries-not-settings-2i18"
-        assert _escape_commentary(url) == url
+        assert escape_commentary(url) == url
 
     def test_empty_and_none_are_safe(self):
-        assert _escape_commentary("") == ""
-        assert _escape_commentary(None) is None
+        assert escape_commentary("") == ""
+        assert escape_commentary(None) is None
 
     def test_no_unescaped_reserved_char_remains(self):
         # Regression: this caption published on LinkedIn as only "Va al repo ".
         caption = "Va al repo (contexto durable y portable):\n- item"
-        out = _escape_commentary(caption)
+        out = escape_commentary(caption)
         for i, ch in enumerate(out):
             if ch in RESERVED:
                 assert i > 0 and out[i - 1] == "\\", f"unescaped {ch!r} at index {i}"
