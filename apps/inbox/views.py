@@ -1,12 +1,14 @@
 """Views for the Unified Social Inbox (F-3.1)."""
 
 import logging
+from datetime import timedelta
 
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.members.decorators import require_permission
@@ -206,6 +208,69 @@ def message_detail(request, workspace_id, message_id):
 
 # --- Reply ---
 
+# Message types answered on a comment edge rather than a messaging endpoint.
+_COMMENT_LIKE_TYPES = {
+    InboxMessage.MessageType.COMMENT,
+    InboxMessage.MessageType.MENTION,
+    InboxMessage.MessageType.REVIEW,
+}
+
+# Past this age Meta only accepts a reply tagged as written by a person.
+HUMAN_AGENT_AFTER = timedelta(hours=24)
+
+
+def _reply_failure_reason(exc: Exception) -> str:
+    """A short, actionable reason for the user.
+
+    The platform's own error text carries internal diagnostics (trace IDs, raw
+    API JSON) that mean nothing to a workspace member, so it stays in the log
+    and the UI gets a stable sentence instead.
+    """
+    from providers.exceptions import OAuthError, RateLimitError, TokenExpiredError
+
+    if isinstance(exc, RateLimitError):
+        return "the account has hit its rate limit. Wait a few minutes and try again."
+    if isinstance(exc, TokenExpiredError | OAuthError):
+        return "the connection has expired. Reconnect the account in Workspace Settings."
+    return "the platform rejected it. Try again, or reconnect the account if this keeps happening."
+
+
+def _send_platform_reply(message, body: str) -> str:
+    """Post ``body`` back to the platform and return the platform's reply ID.
+
+    Raises if the platform refuses it, so the caller can avoid recording a
+    reply that was never delivered.
+    """
+    from apps.publisher.engine import _resolve_publish_credentials
+
+    account = message.social_account
+    provider = get_provider(account.platform, _resolve_publish_credentials(account))
+
+    # The messaging endpoints address a person, not a message, so carry the
+    # sender's platform-scoped ID alongside the original payload.
+    extra = dict(message.extra or {})
+    if message.sender_handle:
+        extra.setdefault("recipient_id", message.sender_handle)
+
+    if message.message_type in _COMMENT_LIKE_TYPES:
+        result = provider.reply_to_comment(
+            access_token=account.oauth_access_token,
+            comment_id=message.platform_message_id,
+            text=body,
+            extra=extra,
+        )
+    else:
+        overdue = timezone.now() - message.received_at > HUMAN_AGENT_AFTER
+        result = provider.reply_to_message(
+            access_token=account.oauth_access_token,
+            message_id=message.platform_message_id,
+            text=body,
+            extra=extra,
+            human_agent=overdue,
+        )
+
+    return result.platform_message_id
+
 
 @login_required
 @require_permission("reply_from_inbox")
@@ -221,26 +286,31 @@ def send_reply(request, workspace_id, message_id):
 
     body = form.cleaned_data["body"]
     account = message.social_account
-    platform_reply_id = ""
 
-    # Attempt to post reply via provider
+    # A reply is only recorded if the platform accepted it. Recording it
+    # regardless would show the team a sent reply the customer never got.
     try:
-        from apps.publisher.engine import _resolve_publish_credentials
-
-        provider = get_provider(account.platform, _resolve_publish_credentials(account))
-        result = provider.reply_to_message(
-            access_token=account.oauth_access_token,
-            message_id=message.platform_message_id,
-            text=body,
-            extra=message.extra,
-        )
-        platform_reply_id = result.platform_message_id
+        platform_reply_id = _send_platform_reply(message, body)
     except NotImplementedError:
-        logger.info("Provider %s does not support reply_to_message.", account.platform)
-    except (ConnectionError, TimeoutError, OSError) as exc:
-        logger.exception("Network error sending reply for message %s: %s", message.id, exc)
-    except Exception:
-        logger.exception("Failed to send reply for message %s", message.id)
+        # The platform has no reply API (or none for this item type). Keep the
+        # reply as a local record so the team still has their answer on file —
+        # this is what the inbox did before replies were sent for real.
+        logger.info("Provider %s cannot send replies; recording locally.", account.platform)
+        platform_reply_id = ""
+    except Exception as exc:
+        logger.exception("Failed to send reply for message %s (%s)", message.id, account.platform)
+        response = render(
+            request,
+            "inbox/partials/_reply_error.html",
+            {
+                "platform_label": account.get_platform_display(),
+                "reason": _reply_failure_reason(exc),
+            },
+        )
+        # htmx does not swap on a 4xx/5xx, so the failure is reported as a
+        # normal swap plus a header the composer reads to keep the draft text.
+        response["HX-Reply-Failed"] = "1"
+        return response
 
     reply = InboxReply.objects.create(
         inbox_message=message,

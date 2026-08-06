@@ -1,0 +1,16 @@
+<div class="flex gap-2.5 items-start">
+    <div class="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 bg-red-100">
+        <svg class="w-3.5 h-3.5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    </div>
+    <div class="flex-1 min-w-0">
+        <div class="bg-red-50 border border-red-200 rounded-xl rounded-tl-sm px-3.5 py-2.5">
+            <div class="flex items-center gap-2 mb-1">
+                <span class="text-[12px] font-semibold text-red-800">Reply not sent</span>
+                <span class="text-[11px] text-red-400 ml-auto">just now</span>
+            </div>
+            <p class="text-[13px] text-red-700 leading-relaxed">
+                Nothing was sent to {{ platform_label }} — {{ reason }} Your text is still in the box.
+            </p>
+        </div>
+    </div>
+</div>

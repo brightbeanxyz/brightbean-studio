@@ -439,6 +439,9 @@ def connection_oauth_callback(request, platform):
                         access_token=page.get("access_token", tokens.access_token),
                         refresh_token=tokens.refresh_token,
                         expires_in=tokens.expires_in,
+                        # Instagram-via-Facebook receives its webhooks through
+                        # the linked Page, so remember which Page to subscribe.
+                        webhook_target_id=page.get("page_id", ""),
                     )
                     ConnectionLinkUsage.objects.get_or_create(
                         connection_link=link,

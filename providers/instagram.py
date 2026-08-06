@@ -19,7 +19,6 @@ from .types import (
     AccountProfile,
     AuthType,
     CommentResult,
-    InboxMessage,
     MediaType,
     OAuthTokens,
     PostMetrics,
@@ -35,6 +34,13 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://graph.facebook.com/v25.0"
 OAUTH_URL = "https://www.facebook.com/v25.0/dialog/oauth"
 TOKEN_URL = f"{BASE_URL}/oauth/access_token"
+# Subscribed on the linked Facebook Page: Instagram comment events are delivered
+# through it. Without this the inbox never sees an IG comment.
+#
+# ``messages`` is deliberately absent: this OAuth flow does not request
+# ``instagram_manage_messages``, so Meta would reject the subscription and any
+# DM call. Instagram DMs are served by the Instagram-Login connection instead.
+INSTAGRAM_WEBHOOK_FIELDS = ["comments", "mentions"]
 INSTAGRAM_ACCOUNT_INSIGHTS = [
     "reach",
     "views",
@@ -498,47 +504,55 @@ class InstagramProvider(SocialProvider):
     # Inbox
     # ------------------------------------------------------------------
 
-    def get_messages(self, access_token: str, since: datetime | None = None) -> list[InboxMessage]:
-        ig_user_id = self.credentials.get("ig_user_id", "me")
-        params: dict = {"fields": "id,participants,messages{id,message,from,created_time}"}
-        if since:
-            params["since"] = int(since.timestamp())
+    # Instagram DMs are not available on this connection: the Facebook-Login
+    # flow does not request ``instagram_manage_messages``, so ``get_messages``
+    # and ``reply_to_message`` stay unimplemented and the inbox skips this
+    # account for DMs. Accounts connected via Instagram Login do support them.
 
-        resp = self._request(
-            "GET",
-            f"{BASE_URL}/{ig_user_id}/conversations",
-            access_token=access_token,
-            params=params,
-        )
-        conversations = resp.json().get("data", [])
+    def reply_to_comment(self, access_token: str, comment_id: str, text: str, extra: dict | None = None) -> ReplyResult:
+        """Reply to a comment, or comment on a media item.
 
-        messages: list[InboxMessage] = []
-        for convo in conversations:
-            for msg in convo.get("messages", {}).get("data", []):
-                sender = msg.get("from", {})
-                messages.append(
-                    InboxMessage(
-                        platform_message_id=msg["id"],
-                        sender_id=sender.get("id", ""),
-                        sender_name=sender.get("name", sender.get("username", "")),
-                        text=msg.get("message", ""),
-                        timestamp=datetime.fromisoformat(msg["created_time"].replace("+0000", "+00:00")),
-                        message_type="dm",
-                        extra={"conversation_id": convo["id"]},
-                    )
-                )
-        return messages
-
-    def reply_to_message(self, access_token: str, message_id: str, text: str, extra: dict | None = None) -> ReplyResult:
-        """Reply to a conversation. message_id should be the conversation ID."""
+        A comment is answered on its ``replies`` edge, but a mention in a
+        caption gives us only the media ID, which has no ``replies`` edge —
+        that one is answered by commenting on the media itself. The inbox
+        records which applies as ``reply_edge``.
+        """
+        edge = "comments" if (extra or {}).get("reply_edge") == "media" else "replies"
         resp = self._request(
             "POST",
-            f"{BASE_URL}/{message_id}/messages",
+            f"{BASE_URL}/{comment_id}/{edge}",
             access_token=access_token,
             json={"message": text},
         )
         data = resp.json()
         return ReplyResult(platform_message_id=data.get("id", ""), extra=data)
+
+    # ------------------------------------------------------------------
+    # Webhooks
+    # ------------------------------------------------------------------
+
+    def subscribe_webhooks(self, access_token: str, account_id: str) -> bool:
+        """Subscribe to Instagram webhooks via the linked Facebook Page.
+
+        Instagram accounts connected through Facebook Login receive comment and
+        message events through the Page they are linked to, so ``account_id``
+        here is the Page ID, not the IG user ID.
+        """
+        resp = self._request(
+            "POST",
+            f"{BASE_URL}/{account_id}/subscribed_apps",
+            access_token=access_token,
+            params={"subscribed_fields": ",".join(INSTAGRAM_WEBHOOK_FIELDS)},
+        )
+        return bool(resp.json().get("success"))
+
+    def unsubscribe_webhooks(self, access_token: str, account_id: str) -> bool:
+        resp = self._request(
+            "DELETE",
+            f"{BASE_URL}/{account_id}/subscribed_apps",
+            access_token=access_token,
+        )
+        return bool(resp.json().get("success"))
 
     # ------------------------------------------------------------------
     # Helpers

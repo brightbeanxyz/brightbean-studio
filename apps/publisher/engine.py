@@ -84,7 +84,7 @@ def _resolve_publish_credentials(account):
             )
     elif platform == "facebook":
         credentials["page_id"] = account.account_platform_id
-    elif platform == "instagram":
+    elif platform in ("instagram", "instagram_login"):
         credentials["ig_user_id"] = account.account_platform_id
 
     return credentials

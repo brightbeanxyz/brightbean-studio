@@ -81,6 +81,19 @@ Usage: {% include "social_accounts/partials/_account_card.html" with account=acc
     </div>
     {% endif %}
 
+    {# The connection is healthy enough to publish and report, but the inbox is
+       deaf: comments and mentions arrive only by webhook, so say so here rather
+       than let the account look fine. #}
+    {% if account.webhooks_active is False %}
+    <div class="mt-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+        <p class="text-xs text-amber-800">
+            <span class="font-semibold">Inbox not receiving comments.</span>
+            {{ account.webhook_error|default:"The platform is not sending us this account's activity." }}
+            Reconnect the account to fix it.
+        </p>
+    </div>
+    {% endif %}
+
     <!-- Posting Schedule -->
     {% if account.connection_status == "connected" %}
     <div class="border-t border-stone-100 mt-4 pt-4">

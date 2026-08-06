@@ -308,3 +308,250 @@ class TestMetaWebhookCrossTenantIsolation:
         assert response.status_code == 200
         msg = InboxMessage.objects.get(platform_message_id="legit-1")
         assert msg.social_account_id == account.id
+
+
+@pytest.mark.django_db
+class TestInstagramCommentEvents:
+    """Instagram names and shapes its comment events differently to a Page.
+
+    A Page sends ``feed``/``mention`` with the body under ``message``;
+    Instagram sends ``comments``/``mentions`` with the body under ``text``.
+    Handling only the Page shape silently drops every Instagram comment.
+    """
+
+    @override_settings(
+        PLATFORM_CREDENTIALS_FROM_ENV={"instagram_login": {"app_secret": "ig-secret"}},
+    )
+    def test_instagram_comment_lands_in_the_inbox_with_its_text(self, client, ig_login_account):
+        payload = {
+            "entry": [
+                {
+                    "id": "ig-login-123",
+                    "changes": [
+                        {
+                            "field": "comments",
+                            "value": {
+                                "id": "ig-comment-1",
+                                "text": "That jasmine note is unreal",
+                                "from": {"id": "igsid-9", "username": "lenasorensen"},
+                                "media": {"id": "media-1", "media_product_type": "FEED"},
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        response = client.post(
+            reverse("inbox_webhooks:webhook_instagram_login"),
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=_sign_body(body, "ig-secret"),
+        )
+
+        assert response.status_code == 200
+        msg = InboxMessage.objects.get(platform_message_id="ig-comment-1")
+        assert msg.message_type == InboxMessage.MessageType.COMMENT
+        assert msg.body == "That jasmine note is unreal"
+        assert msg.sender_name == "lenasorensen"
+        assert msg.sender_handle == "igsid-9"
+
+    @override_settings(
+        PLATFORM_CREDENTIALS_FROM_ENV={"instagram_login": {"app_secret": "ig-secret"}},
+    )
+    def test_instagram_mention_lands_as_a_mention(self, client, ig_login_account):
+        payload = {
+            "entry": [
+                {
+                    "id": "ig-login-123",
+                    "changes": [
+                        {
+                            "field": "mentions",
+                            "value": {"media_id": "media-2", "comment_id": "ig-comment-2"},
+                        }
+                    ],
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        response = client.post(
+            reverse("inbox_webhooks:webhook_instagram_login"),
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=_sign_body(body, "ig-secret"),
+        )
+
+        assert response.status_code == 200
+        msg = InboxMessage.objects.get(platform_message_id="ig-comment-2")
+        assert msg.message_type == InboxMessage.MessageType.MENTION
+
+    @override_settings(
+        PLATFORM_CREDENTIALS_FROM_ENV={"instagram_login": {"app_secret": "ig-secret"}},
+    )
+    def test_comment_without_an_id_is_ignored(self, client, ig_login_account):
+        payload = {
+            "entry": [
+                {
+                    "id": "ig-login-123",
+                    "changes": [{"field": "comments", "value": {"text": "orphan"}}],
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        response = client.post(
+            reverse("inbox_webhooks:webhook_instagram_login"),
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=_sign_body(body, "ig-secret"),
+        )
+
+        assert response.status_code == 200
+        assert InboxMessage.objects.count() == 0
+
+
+@pytest.mark.django_db
+class TestOwnActivityIsNotEchoed:
+    """Replying from the inbox posts a real comment, which comes straight back.
+
+    Without a guard the team's own answers reappear as fresh customer comments,
+    re-notify everyone and start an SLA clock on themselves.
+    """
+
+    @override_settings(
+        PLATFORM_CREDENTIALS_FROM_ENV={"instagram_login": {"app_secret": "ig-secret"}},
+    )
+    def test_instagram_comment_from_the_account_itself_is_ignored(self, client, ig_login_account):
+        payload = {
+            "entry": [
+                {
+                    "id": "ig-login-123",
+                    "changes": [
+                        {
+                            "field": "comments",
+                            "value": {
+                                "id": "own-reply-1",
+                                "text": "Thanks for asking!",
+                                "from": {"id": "ig-login-123", "username": "northlight"},
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        response = client.post(
+            reverse("inbox_webhooks:webhook_instagram_login"),
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=_sign_body(body, "ig-secret"),
+        )
+
+        assert response.status_code == 200
+        assert InboxMessage.objects.count() == 0
+
+    @override_settings(
+        PLATFORM_CREDENTIALS_FROM_ENV={"facebook": {"app_secret": "fb-secret"}},
+    )
+    def test_facebook_comment_from_the_page_itself_is_ignored(self, client, db, workspace):
+        account = SocialAccount.objects.create(
+            workspace=workspace,
+            platform="facebook",
+            account_platform_id="page-echo",
+            account_name="Echo Page",
+        )
+        payload = {
+            "entry": [
+                {
+                    "id": "page-echo",
+                    "changes": [
+                        {
+                            "field": "feed",
+                            "value": {
+                                "item": "comment",
+                                "comment_id": "own-fb-reply",
+                                "message": "Our own answer",
+                                "from": {"id": "page-echo", "name": "Echo Page"},
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        response = client.post(
+            reverse("inbox_webhooks:webhook_facebook"),
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=_sign_body(body, "fb-secret"),
+        )
+
+        assert response.status_code == 200
+        assert not InboxMessage.objects.filter(social_account=account).exists()
+
+    @override_settings(
+        PLATFORM_CREDENTIALS_FROM_ENV={"instagram_login": {"app_secret": "ig-secret"}},
+    )
+    def test_a_comment_from_someone_else_still_arrives(self, client, ig_login_account):
+        payload = {
+            "entry": [
+                {
+                    "id": "ig-login-123",
+                    "changes": [
+                        {
+                            "field": "comments",
+                            "value": {
+                                "id": "customer-1",
+                                "text": "Do you ship?",
+                                "from": {"id": "igsid-outside", "username": "curious"},
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        client.post(
+            reverse("inbox_webhooks:webhook_instagram_login"),
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=_sign_body(body, "ig-secret"),
+        )
+
+        assert InboxMessage.objects.filter(platform_message_id="customer-1").exists()
+
+
+@pytest.mark.django_db
+class TestInstagramMentionReplyEdge:
+    """A caption mention gives us a media ID, which has no ``replies`` edge."""
+
+    @override_settings(
+        PLATFORM_CREDENTIALS_FROM_ENV={"instagram_login": {"app_secret": "ig-secret"}},
+    )
+    def _post(self, client, value):
+        payload = {"entry": [{"id": "ig-login-123", "changes": [{"field": "mentions", "value": value}]}]}
+        body = json.dumps(payload).encode()
+        return client.post(
+            reverse("inbox_webhooks:webhook_instagram_login"),
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=_sign_body(body, "ig-secret"),
+        )
+
+    @override_settings(
+        PLATFORM_CREDENTIALS_FROM_ENV={"instagram_login": {"app_secret": "ig-secret"}},
+    )
+    def test_comment_mention_is_answered_on_the_replies_edge(self, client, ig_login_account):
+        self._post(client, {"comment_id": "c-1", "media_id": "m-1"})
+
+        msg = InboxMessage.objects.get(platform_message_id="c-1")
+        assert msg.extra["reply_edge"] == "comment"
+
+    @override_settings(
+        PLATFORM_CREDENTIALS_FROM_ENV={"instagram_login": {"app_secret": "ig-secret"}},
+    )
+    def test_caption_mention_is_answered_on_the_media_edge(self, client, ig_login_account):
+        self._post(client, {"media_id": "m-2"})
+
+        msg = InboxMessage.objects.get(platform_message_id="m-2")
+        assert msg.extra["reply_edge"] == "media"
+        assert msg.body  # a pointer, not a blank row

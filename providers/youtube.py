@@ -421,7 +421,19 @@ class YouTubeProvider(SocialProvider):
 
         return messages
 
-    def reply_to_message(self, access_token: str, message_id: str, text: str, extra: dict | None = None) -> ReplyResult:
+    def reply_to_comment(self, access_token: str, comment_id: str, text: str, extra: dict | None = None) -> ReplyResult:
+        """Reply to a comment. YouTube answers on the comments endpoint, so this is the same call."""
+        return self.reply_to_message(access_token, comment_id, text, extra)
+
+    def reply_to_message(
+        self,
+        access_token: str,
+        message_id: str,
+        text: str,
+        extra: dict | None = None,
+        *,
+        human_agent: bool = False,
+    ) -> ReplyResult:
         resp = self._request(
             "POST",
             f"{API_BASE}/comments",

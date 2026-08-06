@@ -159,7 +159,13 @@ def instagram_login_webhook(request):
 
 
 def _handle_facebook_change(account, change: dict):
-    """Handle a single Facebook change event (comment, mention, etc.)."""
+    """Handle a single change event from a Page or Instagram subscription.
+
+    Facebook and Instagram name and shape these differently: a Page sends
+    ``feed``/``mention`` with the body under ``message``, while Instagram sends
+    ``comments``/``mentions`` with the body under ``text`` and the author's
+    ``username`` in place of a name.
+    """
     field = change.get("field", "")
     value = change.get("value", {})
 
@@ -167,6 +173,27 @@ def _handle_facebook_change(account, change: dict):
         _upsert_facebook_comment(account, value)
     elif field == "mention":
         _upsert_facebook_mention(account, value)
+    elif field == "comments":
+        _upsert_instagram_comment(account, value)
+    elif field == "mentions":
+        _upsert_instagram_mention(account, value)
+
+
+def _is_own_activity(account, from_data: dict) -> bool:
+    """True when the account itself authored this item.
+
+    Replying from the inbox posts a real comment, which the platform then sends
+    straight back to us as a new event. Without this guard a team's own answers
+    reappear as fresh customer comments, notify everyone again, and start an SLA
+    clock on themselves.
+    """
+    author_id = str((from_data or {}).get("id") or "")
+    if not author_id:
+        return False
+    return author_id in {
+        str(account.account_platform_id),
+        str(account.webhook_target_id or ""),
+    }
 
 
 def _upsert_facebook_comment(account, value: dict):
@@ -176,6 +203,9 @@ def _upsert_facebook_comment(account, value: dict):
         return
 
     from_data = value.get("from", {})
+    if _is_own_activity(account, from_data):
+        return
+
     text = value.get("message", "")
 
     _create_if_new(
@@ -206,6 +236,57 @@ def _upsert_facebook_mention(account, value: dict):
         sender_id=from_data.get("id", ""),
         body=text,
         extra=value,
+    )
+
+
+def _upsert_instagram_comment(account, value: dict):
+    """Upsert an Instagram comment from a webhook event."""
+    comment_id = value.get("id")
+    if not comment_id:
+        return
+
+    from_data = value.get("from", {})
+    if _is_own_activity(account, from_data):
+        return
+
+    _create_if_new(
+        account=account,
+        platform_message_id=str(comment_id),
+        message_type=InboxMessage.MessageType.COMMENT,
+        sender_name=from_data.get("username", "Unknown"),
+        sender_id=from_data.get("id", ""),
+        body=value.get("text", ""),
+        extra={**value, "reply_edge": "comment"},
+    )
+
+
+# Instagram's mention payload carries only IDs, never the text, so the inbox
+# item is a pointer rather than a quote of what was said.
+INSTAGRAM_MENTION_PLACEHOLDER = "You were mentioned on Instagram. Open the post to read the mention."
+
+
+def _upsert_instagram_mention(account, value: dict):
+    """Upsert an Instagram mention from a webhook event.
+
+    A mention arrives either on a comment (``comment_id``) or in a media
+    caption (``media_id`` only). The two are answered on different edges, so
+    record which one applies — replying to a caption mention on the comment
+    ``replies`` edge fails.
+    """
+    comment_id = value.get("comment_id")
+    media_id = value.get("media_id")
+    mention_id = comment_id or media_id
+    if not mention_id:
+        return
+
+    _create_if_new(
+        account=account,
+        platform_message_id=str(mention_id),
+        message_type=InboxMessage.MessageType.MENTION,
+        sender_name="Instagram",
+        sender_id="",
+        body=INSTAGRAM_MENTION_PLACEHOLDER,
+        extra={**value, "reply_edge": "comment" if comment_id else "media"},
     )
 
 

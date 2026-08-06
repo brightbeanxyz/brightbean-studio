@@ -376,7 +376,19 @@ class MastodonProvider(SocialProvider):
 
         return messages
 
-    def reply_to_message(self, access_token: str, message_id: str, text: str, extra: dict | None = None) -> ReplyResult:
+    def reply_to_comment(self, access_token: str, comment_id: str, text: str, extra: dict | None = None) -> ReplyResult:
+        """Reply to a mention. Mastodon answers a notification's status, so this is the same call."""
+        return self.reply_to_message(access_token, comment_id, text, extra)
+
+    def reply_to_message(
+        self,
+        access_token: str,
+        message_id: str,
+        text: str,
+        extra: dict | None = None,
+        *,
+        human_agent: bool = False,
+    ) -> ReplyResult:
         """Reply to a notification's associated status."""
         # Get the notification to find the status ID
         resp = self._request(

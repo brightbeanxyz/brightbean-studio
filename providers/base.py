@@ -179,9 +179,50 @@ class SocialProvider(ABC):
         """Fetch inbox messages (comments, mentions, DMs)."""
         raise NotImplementedError(f"{self.platform_name} does not support inbox")
 
-    def reply_to_message(self, access_token: str, message_id: str, text: str, extra: dict | None = None) -> ReplyResult:
-        """Reply to an inbox message."""
+    def reply_to_message(
+        self,
+        access_token: str,
+        message_id: str,
+        text: str,
+        extra: dict | None = None,
+        *,
+        human_agent: bool = False,
+    ) -> ReplyResult:
+        """Reply to a direct message / conversation.
+
+        ``human_agent`` asks the provider to mark the reply as written by a
+        person rather than a bot. Meta requires this for replies sent more than
+        24 hours after the incoming message; providers without the concept
+        ignore it.
+        """
         raise NotImplementedError(f"{self.platform_name} does not support message replies")
+
+    def reply_to_comment(self, access_token: str, comment_id: str, text: str, extra: dict | None = None) -> ReplyResult:
+        """Reply to a comment or mention.
+
+        Separate from ``reply_to_message`` because platforms answer comments on
+        a different edge than conversations — replying to a comment through the
+        messaging endpoint silently fails.
+        """
+        raise NotImplementedError(f"{self.platform_name} does not support comment replies")
+
+    # ------------------------------------------------------------------
+    # Webhooks (optional - override per provider)
+    # ------------------------------------------------------------------
+
+    def subscribe_webhooks(self, access_token: str, account_id: str) -> bool:
+        """Subscribe this app to the account's webhook notifications.
+
+        Called when a user connects an account. Without it the platform never
+        pushes comments, mentions or messages to us and the inbox stays empty
+        for anything we cannot poll. Returns True when the subscription is
+        active.
+        """
+        return False
+
+    def unsubscribe_webhooks(self, access_token: str, account_id: str) -> bool:
+        """Remove this app's webhook subscription. Called on disconnect."""
+        return False
 
     # ------------------------------------------------------------------
     # Token management

@@ -42,6 +42,21 @@ class SocialAccount(models.Model):
     # Instance URL for Mastodon and Bluesky PDS
     instance_url = models.URLField(max_length=500, blank=True, default="")
 
+    # Object we subscribed for webhook delivery, when it isn't this account
+    # itself. Instagram accounts connected via Facebook Login receive their
+    # comment and message events through the linked Page, so this holds that
+    # Page ID — needed to unsubscribe cleanly on disconnect.
+    webhook_target_id = models.CharField(max_length=255, blank=True, default="")
+
+    # Whether the platform is currently pushing this account's activity to us.
+    # Null means "not applicable" (the platform has no webhooks) or "not tried
+    # yet". False means the inbox will miss comments and mentions, which is
+    # invisible without saying so — publishing and analytics still work, so the
+    # connection itself stays healthy and `last_error` (owned by the periodic
+    # health check) must not be borrowed for it.
+    webhooks_active = models.BooleanField(null=True, blank=True, default=None)
+    webhook_error = models.CharField(max_length=500, blank=True, default="")
+
     # Connection health
     connection_status = models.CharField(
         max_length=20,

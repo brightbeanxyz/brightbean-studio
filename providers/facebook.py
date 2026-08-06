@@ -9,6 +9,7 @@ from urllib.parse import urlencode, urlparse
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, PublishError
 from .meta_insights import fetch_insights_safe, parse_insights_response
+from .meta_messaging import build_send_payload, resolve_recipient_id
 from .types import (
     AccountMetrics,
     AccountProfile,
@@ -30,6 +31,11 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://graph.facebook.com/v25.0"
 OAUTH_URL = "https://www.facebook.com/v25.0/dialog/oauth"
 TOKEN_URL = f"{BASE_URL}/oauth/access_token"
+# Webhook fields we subscribe a connected Page to. ``feed`` carries comments on
+# the Page's posts, ``mention`` carries mentions of the Page, ``messages``
+# carries Messenger conversations. These are the only routes by which comments
+# and mentions reach the inbox — there is no polling equivalent.
+FACEBOOK_WEBHOOK_FIELDS = ["feed", "mention", "messages"]
 FACEBOOK_PAGE_INSIGHTS = [
     "page_media_view",
     "page_total_media_view_unique",
@@ -667,29 +673,92 @@ class FacebookProvider(SocialProvider):
             )
             for msg in msg_resp.json().get("data", []):
                 sender = msg.get("from", {})
+                sender_id = str(sender.get("id", ""))
+                # A conversation contains both sides. Without this the Page's
+                # own replies come back on the next poll as fresh inbound DMs,
+                # re-notifying the team and restarting their SLA clock.
+                if sender_id and sender_id == str(page_id):
+                    continue
                 messages.append(
                     InboxMessage(
                         platform_message_id=msg["id"],
-                        sender_id=sender.get("id", ""),
+                        sender_id=sender_id,
                         sender_name=sender.get("name", ""),
                         text=msg.get("message", ""),
                         timestamp=datetime.fromisoformat(msg["created_time"].replace("+0000", "+00:00")),
                         message_type="dm",
-                        extra={"conversation_id": convo_id},
+                        # sender_id is the PSID the Send API needs to reply.
+                        extra={"conversation_id": convo_id, "sender_id": sender_id},
                     )
                 )
         return messages
 
-    def reply_to_message(self, access_token: str, message_id: str, text: str, extra: dict | None = None) -> ReplyResult:
-        """Reply to a conversation. message_id should be the conversation ID."""
+    def reply_to_message(
+        self,
+        access_token: str,
+        message_id: str,
+        text: str,
+        extra: dict | None = None,
+        *,
+        human_agent: bool = False,
+    ) -> ReplyResult:
+        """Send a Messenger reply from the Page via the Send API.
+
+        Messages go to ``/{page-id}/messages`` addressed to the person's PSID —
+        not to the message or conversation ID, which is not a Send API target.
+        """
+        psid = resolve_recipient_id(extra)
+        if not psid:
+            raise APIError(
+                "Cannot send the reply: no page-scoped ID for the recipient. "
+                "The original message is missing its sender details.",
+                platform=self.platform_name,
+            )
+
+        page_id = self.credentials.get("page_id", "me")
+        payload = build_send_payload(psid, text, human_agent=human_agent)
+
         resp = self._request(
             "POST",
-            f"{BASE_URL}/{message_id}/messages",
+            f"{BASE_URL}/{page_id}/messages",
+            access_token=access_token,
+            json=payload,
+        )
+        data = resp.json()
+        return ReplyResult(platform_message_id=data.get("message_id", ""), extra=data)
+
+    def reply_to_comment(self, access_token: str, comment_id: str, text: str, extra: dict | None = None) -> ReplyResult:
+        """Reply to a comment or mention by commenting on it."""
+        resp = self._request(
+            "POST",
+            f"{BASE_URL}/{comment_id}/comments",
             access_token=access_token,
             json={"message": text},
         )
         data = resp.json()
         return ReplyResult(platform_message_id=data.get("id", ""), extra=data)
+
+    # ------------------------------------------------------------------
+    # Webhooks
+    # ------------------------------------------------------------------
+
+    def subscribe_webhooks(self, access_token: str, account_id: str) -> bool:
+        """Subscribe this app to the Page's feed, mention and message webhooks."""
+        resp = self._request(
+            "POST",
+            f"{BASE_URL}/{account_id}/subscribed_apps",
+            access_token=access_token,
+            params={"subscribed_fields": ",".join(FACEBOOK_WEBHOOK_FIELDS)},
+        )
+        return bool(resp.json().get("success"))
+
+    def unsubscribe_webhooks(self, access_token: str, account_id: str) -> bool:
+        resp = self._request(
+            "DELETE",
+            f"{BASE_URL}/{account_id}/subscribed_apps",
+            access_token=access_token,
+        )
+        return bool(resp.json().get("success"))
 
     # ------------------------------------------------------------------
     # Token management

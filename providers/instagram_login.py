@@ -21,6 +21,7 @@ from urllib.parse import urlencode
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, PublishError
 from .meta_insights import fetch_insights_safe
+from .meta_messaging import build_send_payload, resolve_recipient_id
 from .types import (
     AccountMetrics,
     AccountProfile,
@@ -43,6 +44,8 @@ AUTH_URL = "https://www.instagram.com/oauth/authorize"
 TOKEN_URL = "https://api.instagram.com/oauth/access_token"
 GRAPH_HOST = "https://graph.instagram.com"
 API_BASE = f"{GRAPH_HOST}/v25.0"
+# Subscribed on the Instagram account itself — this flow has no Facebook Page.
+INSTAGRAM_LOGIN_WEBHOOK_FIELDS = ["comments", "messages"]
 INSTAGRAM_ACCOUNT_INSIGHTS = [
     "reach",
     "views",
@@ -506,33 +509,105 @@ class InstagramLoginProvider(SocialProvider):
         )
         conversations = resp.json().get("data", [])
 
+        own_id = str(self.credentials.get("ig_user_id", ""))
+
         messages: list[InboxMessage] = []
         for convo in conversations:
             for msg in convo.get("messages", {}).get("data", []):
                 sender = msg.get("from", {})
+                sender_id = str(sender.get("id", ""))
+                # A conversation contains both sides. Without this the account's
+                # own replies come back on the next poll as fresh inbound DMs,
+                # re-notifying the team and restarting their SLA clock.
+                if own_id and sender_id == own_id:
+                    continue
                 messages.append(
                     InboxMessage(
                         platform_message_id=msg["id"],
-                        sender_id=sender.get("id", ""),
+                        sender_id=sender_id,
                         sender_name=sender.get("name", sender.get("username", "")),
                         text=msg.get("message", ""),
                         timestamp=datetime.fromisoformat(msg["created_time"].replace("+0000", "+00:00")),
                         message_type="dm",
-                        extra={"conversation_id": convo["id"]},
+                        # sender_id is the IGSID the messaging endpoint replies to.
+                        extra={"conversation_id": convo["id"], "sender_id": sender_id},
                     )
                 )
         return messages
 
-    def reply_to_message(self, access_token: str, message_id: str, text: str, extra: dict | None = None) -> ReplyResult:
-        """Reply to a conversation. message_id should be the conversation ID."""
+    def reply_to_message(
+        self,
+        access_token: str,
+        message_id: str,
+        text: str,
+        extra: dict | None = None,
+        *,
+        human_agent: bool = False,
+    ) -> ReplyResult:
+        """Send a DM reply addressed to the sender's IGSID."""
+        igsid = resolve_recipient_id(extra)
+        if not igsid:
+            raise APIError(
+                "Cannot send the reply: no Instagram-scoped ID for the recipient. "
+                "The original message is missing its sender details.",
+                platform=self.platform_name,
+            )
+
+        payload = build_send_payload(igsid, text, human_agent=human_agent)
+
         resp = self._request(
             "POST",
-            f"{API_BASE}/{message_id}/messages",
+            f"{API_BASE}/me/messages",
+            access_token=access_token,
+            json=payload,
+        )
+        data = resp.json()
+        return ReplyResult(platform_message_id=data.get("message_id", ""), extra=data)
+
+    def reply_to_comment(self, access_token: str, comment_id: str, text: str, extra: dict | None = None) -> ReplyResult:
+        """Reply to a comment, or comment on a media item.
+
+        A comment is answered on its ``replies`` edge, but a mention in a
+        caption gives us only the media ID, which has no ``replies`` edge —
+        that one is answered by commenting on the media itself. The inbox
+        records which applies as ``reply_edge``.
+        """
+        edge = "comments" if (extra or {}).get("reply_edge") == "media" else "replies"
+        resp = self._request(
+            "POST",
+            f"{API_BASE}/{comment_id}/{edge}",
             access_token=access_token,
             json={"message": text},
         )
         data = resp.json()
         return ReplyResult(platform_message_id=data.get("id", ""), extra=data)
+
+    # ------------------------------------------------------------------
+    # Webhooks
+    # ------------------------------------------------------------------
+
+    def subscribe_webhooks(self, access_token: str, account_id: str) -> bool:
+        """Subscribe this app to the Instagram account's webhooks.
+
+        The Instagram-login path subscribes the IG account directly — there is
+        no Facebook Page in this flow — so ``account_id`` is unused and we
+        address ``me`` with the account's own token.
+        """
+        resp = self._request(
+            "POST",
+            f"{API_BASE}/me/subscribed_apps",
+            access_token=access_token,
+            params={"subscribed_fields": ",".join(INSTAGRAM_LOGIN_WEBHOOK_FIELDS)},
+        )
+        return bool(resp.json().get("success"))
+
+    def unsubscribe_webhooks(self, access_token: str, account_id: str) -> bool:
+        resp = self._request(
+            "DELETE",
+            f"{API_BASE}/me/subscribed_apps",
+            access_token=access_token,
+        )
+        return bool(resp.json().get("success"))
 
     def _get_profile_fields(self, access_token: str) -> dict | None:
         # Returns ``None`` on failure so callers can distinguish a failed fetch
