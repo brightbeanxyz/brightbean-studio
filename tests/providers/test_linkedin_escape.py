@@ -4,7 +4,12 @@ LinkedIn's Posts API silently truncates ``commentary`` at the first unescaped
 reserved character (e.g. a ``(`` drops everything after it), which published
 posts as just their first sentence. ``_escape_commentary`` prefixes each
 reserved char with a backslash so the full text renders.
+
+Comments are a different API with a different model — plain text plus a separate
+``attributes[]`` array for mentions — so they are deliberately *not* escaped.
 """
+
+from unittest.mock import MagicMock
 
 from providers.linkedin import LinkedInProvider, _escape_commentary
 
@@ -48,3 +53,48 @@ class TestBuildPostBodyEscapes:
         body = provider._build_post_body("urn:li:person:abc", "Va al repo (durable)")
         assert body["commentary"] == "Va al repo \\(durable\\)"
         assert body["author"] == "urn:li:person:abc"
+
+
+class TestCommentsAreNotEscaped:
+    """The Comments API is plain text; escaping there is a regression.
+
+    A reply like "Thanks (really)!" would publish with visible backslashes, and
+    any mention in ``attributes[]`` would land on the wrong start/length offset.
+    """
+
+    def _provider(self):
+        provider = LinkedInProvider.__new__(LinkedInProvider)
+        provider.get_profile = MagicMock(return_value=MagicMock(platform_id="abc"))
+        provider._request = MagicMock(
+            return_value=MagicMock(
+                json=MagicMock(return_value={"id": "urn:li:comment:1"}),
+                headers={"x-restli-id": "urn:li:comment:1"},
+            )
+        )
+        return provider
+
+    def test_publish_comment_sends_the_text_verbatim(self):
+        provider = self._provider()
+
+        provider.publish_comment("token", "urn:li:share:1", "Thanks (really)! #wow")
+
+        assert provider._request.call_args.kwargs["json"] == {
+            "actor": "urn:li:person:abc",
+            "message": {"text": "Thanks (really)! #wow"},
+        }
+
+    def test_reply_to_message_sends_the_text_verbatim(self):
+        provider = self._provider()
+
+        provider.reply_to_message(
+            "token",
+            "urn:li:comment:parent",
+            "Thanks (really)! #wow",
+            extra={"post_urn": "urn:li:share:1"},
+        )
+
+        assert provider._request.call_args.kwargs["json"] == {
+            "actor": "urn:li:person:abc",
+            "message": {"text": "Thanks (really)! #wow"},
+            "parentComment": "urn:li:comment:parent",
+        }

@@ -65,13 +65,15 @@ _LINKEDIN_RESERVED_CHARS = "|{}@[]()<>#*_~"
 
 
 def _escape_commentary(text: str) -> str:
-    """Escape LinkedIn's reserved little-text characters in post/comment text.
+    """Escape LinkedIn's reserved little-text characters in a post commentary.
 
     LinkedIn's Posts API truncates ``commentary`` at the first unescaped
     reserved character, so a caption like "Va al repo (durable)" would publish
     as just "Va al repo ". Prefix each reserved char with a backslash so the
     full text renders literally. The backslash itself is escaped first to avoid
     double-escaping the escapes we add.
+
+    Posts only: the Comments API takes plain text, not little-format.
     """
     if not text:
         return text
@@ -518,7 +520,10 @@ class LinkedInProvider(SocialProvider):
             headers=LINKEDIN_HEADERS,
             json={
                 "actor": actor,
-                "message": {"text": _escape_commentary(text)},
+                # Plain text on purpose: the Comments API is not little-format
+                # (mentions ride in a separate attributes[] array), so escaping
+                # would publish literal backslashes and shift mention offsets.
+                "message": {"text": text},
             },
         )
         data = resp.json()
@@ -624,7 +629,8 @@ class LinkedInProvider(SocialProvider):
             headers=LINKEDIN_HEADERS,
             json={
                 "actor": actor,
-                "message": {"text": _escape_commentary(text)},
+                # Plain text, as in publish_comment above.
+                "message": {"text": text},
                 "parentComment": message_id,
             },
         )
