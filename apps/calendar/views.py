@@ -48,6 +48,11 @@ COMMON_TIMEZONES = [
     "America/New_York",
 ]
 
+# Statuses a calendar drop promotes to ``scheduled`` (implicit schedule / retry)
+# rather than merely re-timing. Because that promotion hands the row to the
+# publisher, it is gated on ``publish_directly`` — see ``reschedule_post``.
+_IMPLICIT_SCHEDULE_STATUSES = ("draft", "failed")
+
 
 def _slots_updated_response(account_id):
     """Return a 204 response with an HX-Trigger header for slot grid refresh."""
@@ -1096,9 +1101,15 @@ def reschedule_post(request, workspace_id):
     membership = request.workspace_membership
     perms = membership.effective_permissions if membership else {}
     is_own_post = post.author_id == request.user.id
-    can_edit = is_own_post or perms.get("edit_others_posts")
+    can_edit = is_own_post or perms.get("edit_others_posts", False)
     if not can_edit:
         return JsonResponse({"error": "Permission denied."}, status=403)
+    # Dropping a draft/failed chip promotes it to "scheduled" below, which is the
+    # publish privilege every other scheduling path gates on (the composer's chip
+    # transition, save_post's publish-now branch, REST /schedule). Reject rather
+    # than silently degrading the drop to a time-only move.
+    if pp.status in _IMPLICIT_SCHEDULE_STATUSES and not perms.get("publish_directly", False):
+        return JsonResponse({"error": "You do not have permission to schedule this post."}, status=403)
 
     try:
         import zoneinfo
@@ -1113,7 +1124,7 @@ def reschedule_post(request, workspace_id):
         # (re)schedule / retry: move it into "scheduled" so the publisher picks
         # it up. Other statuses (approved, scheduled, pending_*) just change
         # time and keep their editorial status.
-        if pp.status in ("draft", "failed") and pp.can_transition_to("scheduled"):
+        if pp.status in _IMPLICIT_SCHEDULE_STATUSES and pp.can_transition_to("scheduled"):
             pp.transition_to("scheduled")
         pp.save(update_fields=["status", "scheduled_at", "updated_at"])
         # Keep any queue entry's slot mirror in step with the manual reschedule
@@ -1139,8 +1150,7 @@ def bulk_platform_action(request, workspace_id):
 
     Powers the Publish page's floating selection bar (list + calendar). Only
     rows the user may edit are touched, and ``published``/``publishing`` rows
-    are never deleted or moved. Returns 204 + an HX-Trigger so the calendar and
-    tab counts refresh.
+    are never deleted or moved. Returns the number of rows acted on.
     """
     from django.utils import timezone as _tz
 
@@ -1152,10 +1162,17 @@ def bulk_platform_action(request, workspace_id):
     if action not in ("draft", "delete", "publish") or not pp_ids:
         return JsonResponse({"error": "action and platform_post_ids required"}, status=400)
 
-    pps = list(PlatformPost.objects.filter(id__in=pp_ids, post__workspace=workspace).select_related("post"))
     membership = getattr(request, "workspace_membership", None)
     perms = membership.effective_permissions if membership else {}
-    can_edit_others = perms.get("edit_others_posts")
+    # Publishing now hands rows straight to the publisher's poll loop, skipping
+    # the approval workflow — the privilege the composer's chip transition,
+    # save_post's publish-now branch and REST /schedule all gate on. Draft and
+    # delete stay under plain edit rights.
+    if action == "publish" and not perms.get("publish_directly", False):
+        return JsonResponse({"error": "You do not have permission to publish directly."}, status=403)
+
+    pps = list(PlatformPost.objects.filter(id__in=pp_ids, post__workspace=workspace).select_related("post"))
+    can_edit_others = perms.get("edit_others_posts", False)
     pps = [pp for pp in pps if pp.post.author_id == request.user.id or can_edit_others]
 
     affected = set()
@@ -1167,18 +1184,36 @@ def bulk_platform_action(request, workspace_id):
             affected.add(pp.post_id)
             pp.delete()
             count += 1
-    else:
-        # draft → unschedule; publish → schedule at now so the worker picks it up.
-        target = "draft" if action == "draft" else "scheduled"
-        new_dt = None if action == "draft" else _tz.now()
+    elif action == "draft":
+        # Unschedule: back to draft and drop the time.
         for pp in pps:
-            if pp.status in PlatformPost.PROTECTED_STATUSES or pp.status == target and action != "publish":
+            if pp.status in PlatformPost.PROTECTED_STATUSES or pp.status == "draft":
                 continue
-            if not pp.can_transition_to(target):
+            if not pp.can_transition_to("draft"):
                 continue
-            pp.scheduled_at = new_dt
-            pp.transition_to(target)
+            pp.scheduled_at = None
+            pp.transition_to("draft")
             pp.save(update_fields=["status", "scheduled_at", "updated_at"])
+            affected.add(pp.post_id)
+            count += 1
+    else:
+        # Publish now: schedule at the current time so the worker picks it up.
+        now = _tz.now()
+        for pp in pps:
+            if pp.status in PlatformPost.PROTECTED_STATUSES:
+                continue
+            if pp.status == "scheduled":
+                # Already scheduled — the whole Queue tab. scheduled → scheduled
+                # is not a valid transition, so only pull the time forward: the
+                # publisher takes any scheduled row whose effective time passed.
+                pp.scheduled_at = now
+                pp.save(update_fields=["scheduled_at", "updated_at"])
+            elif pp.can_transition_to("scheduled"):
+                pp.scheduled_at = now
+                pp.transition_to("scheduled")
+                pp.save(update_fields=["status", "scheduled_at", "updated_at"])
+            else:
+                continue
             affected.add(pp.post_id)
             count += 1
 
@@ -1193,12 +1228,9 @@ def bulk_platform_action(request, workspace_id):
         else:
             sync_post_scheduled_at(post)
 
-    return HttpResponse(
-        status=204,
-        headers={
-            "HX-Trigger": json.dumps({"bulkActionDone": {"action": action, "count": count}, "calendarRefresh": True})
-        },
-    )
+    # Plain JSON, not an HX-Trigger header: the selection bar posts with fetch(),
+    # not htmx, and fires its own calendar/tab refresh events on success.
+    return JsonResponse({"action": action, "count": count})
 
 
 @login_required

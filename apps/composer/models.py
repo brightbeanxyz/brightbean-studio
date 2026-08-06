@@ -480,6 +480,15 @@ class PlatformPost(models.Model):
         """Whether this chip may be dragged to a new date on the calendar."""
         return self.status in self.RESCHEDULABLE_STATUSES
 
+    @property
+    def is_bulk_selectable(self):
+        """Whether this row can be the target of a bulk draft/publish/delete.
+
+        Every branch of ``bulk_platform_action`` skips ``PROTECTED_STATUSES``, so
+        offering a checkbox on those rows would only ever be a no-op.
+        """
+        return self.status not in self.PROTECTED_STATUSES
+
     # ------------------------------------------------------------------
     # State machine
     # ------------------------------------------------------------------

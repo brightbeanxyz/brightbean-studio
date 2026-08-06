@@ -328,6 +328,10 @@
     .cal-select-box:hover { border-color: #F97316; }
     /* In list rows the checkbox is always visible (there's room). */
     .row-select-box { opacity: 1; }
+    /* The shared toast host and the selection bar both sit bottom-centre. Lift
+       the toasts clear while a selection is active, so a rejected bulk action
+       doesn't render its own explanation on top of the bar it came from. */
+    body.has-selection #bb-toast-host { bottom: 5rem; }
 
     @keyframes slideUp {
         from { opacity: 0; transform: translateY(8px); }
@@ -397,6 +401,18 @@ ticked (see the `sel` Alpine store).{% endcomment %}
 
 {% block extra_js %}
 <script nonce="{{ request.csp_nonce }}">
+/* Surface a rejected request through the shared toast host
+   (approvals/partials/_toasts.html), which listens for a `showToast` event on
+   document.body. These endpoints are called with fetch(), not htmx, so the
+   usual HX-Trigger route isn't available — dispatch the event directly. */
+function bbFailureToast(res, fallback) {
+    res.json().catch(() => ({})).then((data) => {
+        document.body.dispatchEvent(new CustomEvent('showToast', {
+            detail: { tone: 'error', title: (data && data.error) || fallback },
+        }));
+    });
+}
+
 /* Bulk-selection store (survives HTMX grid/tab swaps) + floating-bar controller. */
 document.addEventListener('alpine:init', () => {
     Alpine.store('sel', {
@@ -433,7 +449,12 @@ function bulkBar() {
                 body,
             }).then((res) => {
                 this.busy = false;
-                if (!res.ok) return;
+                if (!res.ok) {
+                    // e.g. the publish_directly gate. Keep the selection so the
+                    // user can retry with an action they are allowed to take.
+                    bbFailureToast(res, 'Could not complete that action.');
+                    return;
+                }
                 store.clear();
                 // Refresh whichever view is mounted: the calendar shell reloads
                 // its grid on `calendarRefresh` (from body); publishList reloads
@@ -558,8 +579,13 @@ function calendarApp() {
                     new_datetime: newDatetime,
                 }),
             }).then((res) => {
-                // On failure snap the grid back to the server truth.
-                if (!res.ok) this.reloadCalendar();
+                // On failure snap the grid back to the server truth, and say why
+                // — a drop rejected by the publish gate would otherwise look like
+                // the chip just sprang back for no reason.
+                if (!res.ok) {
+                    this.reloadCalendar();
+                    bbFailureToast(res, 'Could not reschedule that post.');
+                }
             }).catch(() => this.reloadCalendar());
         }
     };

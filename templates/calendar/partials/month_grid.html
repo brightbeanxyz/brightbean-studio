@@ -59,7 +59,7 @@ Enhanced with: holidays, custom events, category colors, recurring badges.
                class="post-chip status-{{ pp.status }}{% if pp.is_reschedulable %} is-draggable{% endif %}"
                title="{% if pp.is_reschedulable %}Move or open{% else %}Open{% endif %}"
                {% if pp.is_reschedulable %}draggable="true" data-platform-post-id="{{ pp.id }}"{% else %}draggable="false"{% endif %}>
-                {% include "calendar/partials/_select_checkbox.html" with pp_id=pp.id %}
+                {% if pp.is_bulk_selectable %}{% include "calendar/partials/_select_checkbox.html" with pp_id=pp.id %}{% endif %}
                 <span class="w-4 h-4 rounded flex items-center justify-center pi-{{ pp.social_account.platform }} flex-shrink-0 text-white">
                     {% include "social_accounts/partials/_platform_icon.html" with platform=pp.social_account.platform size="3" %}
                 </span>
