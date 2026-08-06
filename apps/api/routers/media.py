@@ -16,8 +16,6 @@ that hasn't finished async processing.
 
 from __future__ import annotations
 
-import base64
-import json
 import uuid
 
 from django.core.exceptions import ValidationError
@@ -35,6 +33,7 @@ from apps.api.middleware import (
     log_audit_entry,
     release_idempotent_claim,
 )
+from apps.api.pagination import decode_offset_cursor, encode_offset_cursor
 from apps.api.schemas import MediaAssetListResponse, MediaAssetResponse
 from apps.media_library.models import MediaAsset
 from apps.media_library.services import create_asset
@@ -231,18 +230,12 @@ _DEFAULT_LIMIT = 20
 _MAX_LIMIT = 100
 
 
-def _decode_cursor(cursor: str | None) -> dict | None:
-    if not cursor:
-        return None
+def _decode_cursor(cursor: str | None) -> int:
+    """REST-facing wrapper: a bad cursor is a 422, not a 500."""
     try:
-        raw = base64.urlsafe_b64decode(cursor.encode() + b"==")
-        return json.loads(raw.decode())
-    except (ValueError, json.JSONDecodeError) as exc:
+        return decode_offset_cursor(cursor)
+    except ValueError as exc:
         raise HttpError(422, "Invalid cursor.") from exc
-
-
-def _encode_cursor(payload: dict) -> str:
-    return base64.urlsafe_b64encode(json.dumps(payload, default=str).encode()).rstrip(b"=").decode()
 
 
 @router.get(
@@ -296,12 +289,9 @@ def list_media(
 
     qs = qs.order_by(order_by, "id")
 
-    # Simple offset cursor — we encode an integer offset rather than a
-    # composite (value, id) tuple because cursor stability across reorder
-    # isn't a stated requirement and offset paginates correctly with the
-    # stable ``order_by(..., "id")`` tiebreak.
-    cursor_payload = _decode_cursor(cursor)
-    offset = int(cursor_payload.get("o", 0)) if cursor_payload else 0
+    # Simple offset cursor (see ``apps.api.pagination``) — correct here because
+    # the ``order_by(..., "id")`` tiebreak above makes the ordering stable.
+    offset = _decode_cursor(cursor)
     items_qs = qs[offset : offset + limit + 1]
     rows = list(items_qs)
     has_more = len(rows) > limit
@@ -309,7 +299,7 @@ def list_media(
 
     body = MediaAssetListResponse(
         items=[MediaAssetResponse.from_asset(a, last_used_at=getattr(a, "last_used_at", None)) for a in rows],
-        next_cursor=_encode_cursor({"o": offset + limit}) if has_more else None,
+        next_cursor=encode_offset_cursor(offset + limit) if has_more else None,
         limit=limit,
     )
     log_audit_entry(request, action="media.read.200", target_id=None, status_code=200)
