@@ -519,6 +519,41 @@ class TestListPostsTool:
         assert ids1.isdisjoint(ids2)
         assert ids1 | ids2 == set(created)
 
+    def test_foreign_posts_do_not_consume_page_slots(
+        self, client_with_token, social_account, second_account, user, workspace
+    ):
+        """The allowlist is applied in SQL, so out-of-scope posts never eat a
+        slot in a page. Under the old post-query filtering, a foreign post
+        interleaved with own posts returned a short page plus a cursor.
+        """
+        own_ids = []
+        for i in range(4):
+            mine = Post.objects.create(workspace=workspace, author=user, caption=f"mine {i}")
+            PlatformPost.objects.create(post=mine, social_account=social_account, status="draft")
+            own_ids.append(str(mine.id))
+            theirs = Post.objects.create(workspace=workspace, author=user, caption=f"theirs {i}")
+            PlatformPost.objects.create(post=theirs, social_account=second_account, status="draft")
+
+        seen, cursor = [], None
+        for _ in range(4):  # bounded so a broken cursor can't loop forever
+            page = _list_posts(client_with_token, limit=2, **({"cursor": cursor} if cursor else {}))
+            assert len(page["posts"]) == 2  # never short despite the foreign rows
+            seen.extend(p["id"] for p in page["posts"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+
+        assert cursor is None
+        assert sorted(seen) == sorted(own_ids)
+
+    def test_key_with_empty_allowlist_sees_nothing(self, client_with_token, issued_key, own_post):
+        """A key whose last allowlisted account was disconnected must fail
+        closed — not fall through to the whole workspace.
+        """
+        assert len(_list_posts(client_with_token)["posts"]) == 1
+        issued_key.api_key.social_accounts.clear()
+        assert _list_posts(client_with_token)["posts"] == []
+
     def test_status_filter_narrows(self, client_with_token, own_post, scheduled_post):
         inner = _list_posts(client_with_token, status="scheduled")
         assert [p["id"] for p in inner["posts"]] == [str(scheduled_post.id)]
@@ -547,12 +582,21 @@ class TestListPostsTool:
             )
         assert "status must be one of" in str(exc.value)
 
-    def test_status_accepts_every_platform_post_status(self, client_with_token):
+    def test_every_platform_post_status_is_accepted_and_filters(
+        self, client_with_token, social_account, user, workspace
+    ):
         """The schema enum must cover the full model enum — ``changes_requested``
-        and ``rejected`` were missing from the documented list.
+        and ``rejected`` were missing from the documented list — and each value
+        must actually narrow, not just be accepted.
         """
+        by_status = {}
         for value in PlatformPost.Status.values:
-            assert _list_posts(client_with_token, status=value)["posts"] == []
+            p = Post.objects.create(workspace=workspace, author=user, caption=f"{value} post")
+            PlatformPost.objects.create(post=p, social_account=social_account, status=value)
+            by_status[value] = str(p.id)
+
+        for value, post_id in by_status.items():
+            assert [p["id"] for p in _list_posts(client_with_token, status=value)["posts"]] == [post_id]
 
     def test_limit_out_of_range_is_invalid_params(self, client_with_token):
         """Out-of-range limits are rejected rather than silently clamped —
@@ -583,7 +627,7 @@ class TestListPostsTool:
         _list_posts(client_with_token)  # warm anything cached lazily
 
         with django_assert_max_num_queries(100) as one_post:
-            _list_posts(client_with_token)
+            assert len(_list_posts(client_with_token)["posts"]) == 1
 
         for i in range(4):
             p = Post.objects.create(workspace=workspace, author=user, caption=f"extra {i}")

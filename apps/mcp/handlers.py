@@ -140,6 +140,11 @@ def _visible_posts_qs(api_key):
     paginate on it without scanning rows they may not see.
     """
     allowed = [sa.id for sa in api_key.social_accounts.all()]
+    # A key can end up with an empty allowlist at runtime (its last account was
+    # disconnected/deleted). Short-circuit rather than leaning on Django folding
+    # ``__in=[]`` inside an ``exclude`` into a no-op: fail closed explicitly.
+    if not allowed:
+        return Post.objects.none()
     children = PlatformPost.objects.filter(post_id=OuterRef("pk"))
     return (
         Post.objects.filter(workspace_id=api_key.workspace_id)
@@ -427,8 +432,10 @@ def _list_posts(args: dict, context: dict[str, Any]) -> dict:
     if status is not None and status not in PlatformPost.Status.values:
         raise JsonRpcError(INVALID_PARAMS, f"status must be one of {', '.join(PlatformPost.Status.values)}")
 
+    # ``or`` would swallow an explicit 0 as "unset" and hand back the default.
+    raw_limit = args.get("limit")
     try:
-        limit = int(args.get("limit") or _MCP_POST_LIMIT_DEFAULT)
+        limit = _MCP_POST_LIMIT_DEFAULT if raw_limit is None else int(raw_limit)
     except (TypeError, ValueError) as exc:
         raise JsonRpcError(INVALID_PARAMS, f"limit must be an integer between 1 and {_MCP_POST_LIMIT_MAX}") from exc
     if limit < 1 or limit > _MCP_POST_LIMIT_MAX:
