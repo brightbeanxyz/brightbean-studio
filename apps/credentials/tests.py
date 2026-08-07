@@ -288,6 +288,45 @@ def test_resolve_incomplete_env_does_not_shadow_db(organization):
     assert result == {"client_id": "DB_ID", "client_secret": "DB_SECRET"}
 
 
+@pytest.mark.django_db
+@override_settings(
+    PLATFORM_CREDENTIALS_FROM_ENV={
+        "facebook": {"app_id": "FB_ID", "app_secret": "FB_SECRET"},
+        "threads": {"app_id": "", "app_secret": ""},
+    }
+)
+def test_threads_env_is_independent_of_facebook(organization):
+    """Threads must never inherit the Facebook app credentials.
+
+    Threads authorizes against its own App ID; the Facebook one fails with error
+    4476002. With no PLATFORM_THREADS_* set the env entry stays empty, so the
+    admin-entered row resolves instead of being shadowed by Meta's credentials.
+    """
+    PlatformCredential.objects.create(
+        organization=organization,
+        platform="threads",
+        credentials={"client_id": "TH_ID", "client_secret": "TH_SECRET"},
+    )
+    result = resolve_platform_credentials("threads", organization.id)
+    assert result == {"client_id": "TH_ID", "client_secret": "TH_SECRET"}
+
+
+def test_threads_settings_are_not_wired_to_the_meta_pair():
+    """Pin the wiring itself: threads must not alias the Facebook pair again.
+
+    Facebook and Instagram deliberately share one dict; Threads used to as well,
+    which is what produced error 4476002 on connect. Asserted against the active
+    settings rather than ``config.settings.base``, so a re-alias in any settings
+    module — not just the base one — is caught.
+    """
+    from django.conf import settings
+
+    env_creds = settings.PLATFORM_CREDENTIALS_FROM_ENV
+    assert env_creds["threads"] is not env_creds["facebook"]
+    assert env_creds["instagram"] is env_creds["facebook"]  # these two do share
+    assert set(env_creds["threads"]) == {"app_id", "app_secret"}
+
+
 # ---------------------------------------------------------------------------
 # resolve_app_secret — single per-org secret (.env dominant)
 # ---------------------------------------------------------------------------
@@ -345,7 +384,9 @@ def test_save_update_fields_persists_derived_flag(organization):
 REALISTIC_ENV = {
     "facebook": {"app_id": "fb-id", "app_secret": "fb-sec"},
     "instagram": {"app_id": "fb-id", "app_secret": "fb-sec"},
-    "threads": {"app_id": "fb-id", "app_secret": "fb-sec"},
+    # Threads has its own app identity - never the Facebook pair. See
+    # _THREADS_CREDENTIALS in config/settings/base.py.
+    "threads": {"app_id": "th-id", "app_secret": "th-sec"},
     "instagram_login": {"app_id": "ig-id", "app_secret": "ig-sec"},
     "linkedin_personal": {"client_id": "li-id", "client_secret": "li-sec", "_oauth_mode": "oidc"},
     "linkedin_company": {"client_id": "lic-id", "client_secret": "lic-sec"},

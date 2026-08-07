@@ -8,6 +8,11 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
+# Platforms whose stored token is only usable for a bounded window and whose
+# refresh credential is the token itself, so an account with no recorded
+# expiry must still be refreshed. See the bootstrap in check_social_account_health.
+EXPIRY_BOOTSTRAP_PLATFORMS = ("bluesky", "threads")
+
 
 @background(schedule=0)
 def check_social_account_health(account_id: str):
@@ -41,11 +46,16 @@ def check_social_account_health(account_id: str):
         logger.error("Health check: no provider for platform %s", account.platform)
         return
 
-    # Bluesky accounts connected before we recorded token_expires_at need a
-    # one-shot refresh to populate it; without this, is_token_expiring_soon
-    # stays False forever and the short-lived accessJwt is never rotated.
-    needs_bluesky_bootstrap = account.platform == "bluesky" and account.token_expires_at is None
-    if (account.is_token_expiring_soon or needs_bluesky_bootstrap) and account.oauth_refresh_token:
+    # Accounts on these platforms that were connected before we recorded
+    # token_expires_at need a one-shot refresh to populate it; without this,
+    # is_token_expiring_soon stays False forever (it can't judge an unknown
+    # expiry) and the token is never rotated. Both platforms rotate on a fixed
+    # schedule — Bluesky's accessJwt within hours, Threads' long-lived token at
+    # 60 days — so a refresh is always the right move when expiry is unknown.
+    # Platforms whose refresh token outlives the access token are deliberately
+    # left out: for them an unknown expiry means nothing needs doing yet.
+    needs_expiry_bootstrap = account.platform in EXPIRY_BOOTSTRAP_PLATFORMS and account.token_expires_at is None
+    if (account.is_token_expiring_soon or needs_expiry_bootstrap) and account.oauth_refresh_token:
         try:
             new_tokens = provider.refresh_token(account.oauth_refresh_token)
             account.oauth_access_token = new_tokens.access_token

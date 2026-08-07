@@ -33,6 +33,10 @@ API_BASE = "https://graph.threads.net/v1.0"
 CONTAINER_POLL_INTERVAL = 3  # seconds
 CONTAINER_POLL_MAX_ATTEMPTS = 40  # up to ~2 min for video processing
 
+# Meta issues long-lived Threads tokens with a 60-day TTL. Used as the fallback
+# when a token response omits ``expires_in`` — see ``_tokens_from``.
+LONG_LIVED_TOKEN_TTL = 60 * 24 * 60 * 60
+
 
 class ThreadsProvider(SocialProvider):
     """Threads API provider using OAuth 2.0."""
@@ -144,9 +148,28 @@ class ThreadsProvider(SocialProvider):
                 platform=self.platform_name,
                 raw_response=body,
             )
+        return self._tokens_from(body)
+
+    @staticmethod
+    def _tokens_from(body: dict) -> OAuthTokens:
+        """Build OAuthTokens from a long-lived-token response.
+
+        Threads issues no separate refresh token: the long-lived access token is
+        replayed as its own refresh credential (see ``refresh_token``). Returning
+        it in ``refresh_token`` is what lets the refresh machinery — which skips
+        accounts whose ``oauth_refresh_token`` is empty — ever run, and carries
+        the rotated token forward so an account keeps refreshing rather than
+        replaying the stale original.
+
+        ``expires_in`` falls back to the documented 60-day TTL: consumers only
+        advance ``token_expires_at`` when it is truthy, so a response without it
+        would leave a stale past expiry in place and re-trigger a refresh on
+        every health check.
+        """
         return OAuthTokens(
             access_token=body["access_token"],
-            expires_in=body.get("expires_in"),
+            refresh_token=body["access_token"],
+            expires_in=body.get("expires_in") or LONG_LIVED_TOKEN_TTL,
             token_type=body.get("token_type", "Bearer"),
             raw_response=body,
         )
@@ -173,12 +196,7 @@ class ThreadsProvider(SocialProvider):
                 platform=self.platform_name,
                 raw_response=body,
             )
-        return OAuthTokens(
-            access_token=body["access_token"],
-            expires_in=body.get("expires_in"),
-            token_type=body.get("token_type", "Bearer"),
-            raw_response=body,
-        )
+        return self._tokens_from(body)
 
     # ------------------------------------------------------------------
     # Profile
