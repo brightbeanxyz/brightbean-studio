@@ -2025,19 +2025,32 @@ function composerApp() {
             }
             return text.length + extra;
         },
-        // Worst case across the selected accounts, so the counter never reads
-        // green on a caption that one of them will reject.
+        // The counter shows one account: the one with the least headroom. Both
+        // numbers have to come from the same account or the pair lies — 200 '#'
+        // on LinkedIn and Bluesky would read as 400 / 300 (LinkedIn's escaped
+        // count against Bluesky's limit) with nothing actually over.
+        captionBinding() {
+            let binding = null;
+            for (const id of this.selectedAccounts) {
+                const limit = this.charLimits[id]?.limit;
+                if (!limit) continue;
+                const count = this.wireLength(this.caption, id);
+                if (binding === null || limit - count < binding.limit - binding.count) {
+                    binding = { count, limit };
+                }
+            }
+            return binding;
+        },
         captionCount() {
-            const lengths = this.selectedAccounts.map(id => this.wireLength(this.caption, id));
-            return lengths.length ? Math.max(...lengths) : this.caption.length;
+            return this.captionBinding()?.count ?? this.caption.length;
         },
         captionLimit() {
-            const limits = this.selectedAccounts.map(id => this.charLimits[id]?.limit).filter(Boolean);
-            return limits.length ? Math.min(...limits) : null;
+            return this.captionBinding()?.limit ?? null;
         },
+        // The least-headroom account is over exactly when any account is.
         captionOverLimit() {
-            return this.selectedAccounts.some(
-                id => this.wireLength(this.caption, id) > (this.charLimits[id]?.limit || 9999));
+            const binding = this.captionBinding();
+            return binding !== null && binding.count > binding.limit;
         },
 
         // Computed-like getters for title field visibility
