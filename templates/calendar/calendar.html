@@ -477,6 +477,10 @@ function calendarApp() {
         },
 
         reloadCalendar() {
+            // The selection bar acts on ids, not on what's rendered, so a
+            // filter change would otherwise leave rows ticked that the new grid
+            // doesn't show — and Delete would hit them.
+            Alpine.store('sel').clear();
             const params = new URLSearchParams();
             params.set('mode', 'calendar');
             params.set('view', this.activeView);
@@ -511,11 +515,21 @@ function calendarApp() {
             }, true);
         },
 
+        // Sortable instances bound to cells an HTMX swap threw away. They hold
+        // listeners and detached DOM, so they're destroyed before rewiring
+        // rather than left to accumulate across every filter/nav reload.
+        _sortables: [],
+
         initCalendarDnD() {
             if (typeof Sortable === 'undefined') return;
+            this._sortables = this._sortables.filter((s) => {
+                if (s.el && s.el.isConnected) return true;
+                s.destroy();
+                return false;
+            });
             document.querySelectorAll('#calendar-content .cal-drop').forEach((cell) => {
                 if (Sortable.get(cell)) return; // already wired this cell
-                Sortable.create(cell, {
+                this._sortables.push(Sortable.create(cell, {
                     group: 'calendar',
                     draggable: '.post-chip.is-draggable',
                     animation: 150,
@@ -555,7 +569,7 @@ function calendarApp() {
                         if (!ppId || !date) return;
                         this.rescheduleChip(ppId, date + 'T' + time + ':00');
                     },
-                });
+                }));
             });
         },
 
@@ -579,13 +593,21 @@ function calendarApp() {
                     new_datetime: newDatetime,
                 }),
             }).then((res) => {
-                // On failure snap the grid back to the server truth, and say why
-                // — a drop rejected by the publish gate would otherwise look like
-                // the chip just sprang back for no reason.
                 if (!res.ok) {
+                    // Snap the grid back to the server truth, and say why — a
+                    // drop rejected by the publish gate would otherwise look
+                    // like the chip just sprang back for no reason.
                     this.reloadCalendar();
                     bbFailureToast(res, 'Could not reschedule that post.');
+                    return;
                 }
+                // Re-render on success too. SortableJS drops the chip at the
+                // cursor's index, so the target cell is left out of time order
+                // and — in month view, which renders only the first three posts
+                // plus a "+N more" count — one chip over the cap it was
+                // rendered with. It's a partial swap of #calendar-content, not
+                // a page load.
+                this.reloadCalendar();
             }).catch(() => this.reloadCalendar());
         }
     };
@@ -615,6 +637,11 @@ function publishList() {
         },
 
         reloadTab() {
+            // Drop the selection whenever the visible set changes (tab switch,
+            // channel/tag/tz filter). The bar acts on stored ids regardless of
+            // what's rendered, so a stale tick would let Delete hit a row the
+            // user can no longer see.
+            Alpine.store('sel').clear();
             const params = new URLSearchParams();
             this.selectedChannels.forEach(c => params.append('channel', c));
             if (this.activeTag) params.set('tag', this.activeTag);

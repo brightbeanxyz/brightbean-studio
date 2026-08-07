@@ -7,13 +7,16 @@ branch, REST ``/schedule``). These tests pin that gate plus the protected-status
 skips and the orphan-Post cleanup.
 """
 
-from datetime import timedelta
+import zoneinfo
+from datetime import UTC, date, datetime, timedelta
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.calendar.models import Queue, QueueEntry
 from apps.composer.models import PlatformPost, Post
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
@@ -247,6 +250,205 @@ class BulkPlatformActionDeleteTests(BulkActionBase):
         post = Post.objects.get(id=second.post_id)
         # The parent aggregate follows the earliest surviving child.
         self.assertEqual(post.scheduled_at, later)
+
+
+class BulkPlatformActionFailedRowTests(BulkActionBase):
+    """``failed`` is the status this PR newly made actionable in both paths."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.owner)
+
+    def test_publish_retries_a_failed_row(self):
+        pp = self._pp("failed")
+        pp.publish_error = "Instagram: media download timed out"
+        pp.retry_count = 3
+        pp.next_retry_at = timezone.now() + timedelta(minutes=5)
+        pp.save(update_fields=["publish_error", "retry_count", "next_retry_at"])
+
+        response = self._bulk("publish", pp)
+
+        self.assertEqual(response.json()["count"], 1)
+        pp.refresh_from_db()
+        self.assertEqual(pp.status, "scheduled")
+        # Load-bearing invariant: the previous attempt's failure state must not
+        # ride along, or the chip renders a stale error and the fresh attempt
+        # starts with its retry budget already spent.
+        self.assertEqual(pp.publish_error, "")
+        self.assertEqual(pp.retry_count, 0)
+        self.assertIsNone(pp.next_retry_at)
+
+    def test_draft_unschedules_a_failed_row(self):
+        pp = self._pp("failed", scheduled_at=timezone.now() - timedelta(hours=1))
+
+        response = self._bulk("draft", pp)
+
+        self.assertEqual(response.json()["count"], 1)
+        pp.refresh_from_db()
+        self.assertEqual(pp.status, "draft")
+        self.assertIsNone(pp.scheduled_at)
+
+    def test_reschedule_clears_failure_state_on_retry(self):
+        pp = self._pp("failed")
+        pp.publish_error = "boom"
+        pp.retry_count = 2
+        pp.save(update_fields=["publish_error", "retry_count"])
+
+        response = self.client.post(
+            reverse("calendar:reschedule", kwargs={"workspace_id": self.workspace.id}),
+            data={
+                "platform_post_id": str(pp.id),
+                "new_datetime": (timezone.now() + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 204)
+        pp.refresh_from_db()
+        self.assertEqual(pp.status, "scheduled")
+        self.assertEqual(pp.publish_error, "")
+        self.assertEqual(pp.retry_count, 0)
+
+
+class BulkPlatformActionQueueMirrorTests(BulkActionBase):
+    """Bulk actions must keep QueueEntry rows in step, like their siblings do."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.owner)
+        self.queue = Queue.objects.create(workspace=self.workspace, name="Q", social_account=self.account)
+
+    def _queued(self, status="scheduled", slot=None):
+        slot = slot or timezone.now() + timedelta(days=3)
+        pp = self._pp(status, scheduled_at=slot)
+        entry = QueueEntry.objects.create(queue=self.queue, post=pp.post, position=0, assigned_slot_datetime=slot)
+        return pp, entry
+
+    def test_draft_removes_the_queue_entry(self):
+        pp, entry = self._queued()
+
+        self._bulk("draft", pp)
+
+        # remove_from_queue deletes the entry when a post leaves the queue;
+        # leaving it behind keeps an unscheduled post listed at its old slot.
+        self.assertFalse(QueueEntry.objects.filter(id=entry.id).exists())
+
+    def test_publish_moves_the_queue_entry_forward(self):
+        pp, entry = self._queued()
+        before = timezone.now()
+
+        self._bulk("publish", pp)
+
+        entry.refresh_from_db()
+        self.assertGreaterEqual(entry.assigned_slot_datetime, before)
+
+    def test_deleting_one_child_removes_only_that_channels_entry(self):
+        slot = timezone.now() + timedelta(days=3)
+        pp, entry = self._queued(slot=slot)
+        # A sibling on another channel keeps the parent Post alive, so the FK
+        # cascade never fires and the entry must be cleared explicitly.
+        self._pp("scheduled", scheduled_at=slot, account=self.other_account, post=pp.post)
+
+        self._bulk("delete", pp)
+
+        self.assertTrue(Post.objects.filter(id=pp.post_id).exists())
+        self.assertFalse(QueueEntry.objects.filter(id=entry.id).exists())
+
+
+class BulkPublishStaggerTests(BulkActionBase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.owner)
+
+    def test_same_channel_rows_are_spaced_apart(self):
+        a = self._pp("draft")
+        b = self._pp("draft")
+        c = self._pp("draft")
+
+        self._bulk("publish", a, b, c)
+
+        times = sorted(PlatformPost.objects.filter(id__in=[a.id, b.id, c.id]).values_list("scheduled_at", flat=True))
+        # Posting slots exist to space a channel's output; three posts fired at
+        # one account in a single publisher tick invites rate limiting.
+        self.assertEqual(len(set(times)), 3)
+        self.assertEqual((times[1] - times[0]), timedelta(minutes=1))
+        self.assertEqual((times[2] - times[1]), timedelta(minutes=1))
+
+    def test_different_channels_both_start_now(self):
+        a = self._pp("draft")
+        b = self._pp("draft", account=self.other_account)
+
+        self._bulk("publish", a, b)
+
+        a.refresh_from_db()
+        b.refresh_from_db()
+        # Spacing is per channel — a second account has no reason to wait.
+        self.assertEqual(a.scheduled_at, b.scheduled_at)
+
+
+class PublishTabCountTests(BulkActionBase):
+    """Badge counts must agree with the filtered list they sit above."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.owner)
+
+    def test_queue_count_respects_the_channel_filter(self):
+        soon = timezone.now() + timedelta(days=1)
+        self._pp("scheduled", scheduled_at=soon)
+        self._pp("scheduled", scheduled_at=soon)
+        self._pp("scheduled", scheduled_at=soon, account=self.other_account)
+
+        response = self.client.get(
+            reverse("calendar:publish_tab_queue", kwargs={"workspace_id": self.workspace.id}),
+            {"channel": str(self.other_account.id)},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["queue_count"], 1)
+
+    def test_unfiltered_queue_count_sees_everything(self):
+        soon = timezone.now() + timedelta(days=1)
+        self._pp("scheduled", scheduled_at=soon)
+        self._pp("scheduled", scheduled_at=soon, account=self.other_account)
+
+        response = self.client.get(
+            reverse("calendar:publish_tab_queue", kwargs={"workspace_id": self.workspace.id}),
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.context["queue_count"], 2)
+
+
+class TodayInViewTimezoneTests(BulkActionBase):
+    """The Today button must agree with the day the grid highlights."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.owner)
+
+    def test_today_is_read_in_the_display_timezone(self):
+        """At 22:00 UTC it is already tomorrow in Tokyo.
+
+        The grids compute `today` as now-in-display-tz; the toolbar must use the
+        same clock or the button disables on the wrong day for hours at a time.
+        """
+        tokyo = zoneinfo.ZoneInfo("Asia/Tokyo")
+        fixed = datetime(2026, 8, 7, 22, 0, tzinfo=UTC)
+        tokyo_today = fixed.astimezone(tokyo).date()
+        self.assertEqual(tokyo_today, date(2026, 8, 8))  # guards the premise
+
+        url = reverse("calendar:calendar", kwargs={"workspace_id": self.workspace.id})
+        with patch("django.utils.timezone.now", return_value=fixed):
+            response = self.client.get(
+                url, {"mode": "calendar", "view": "day", "date": "2026-08-08", "tz": "Asia/Tokyo"}
+            )
+            self.assertTrue(response.context["is_today_in_view"])
+
+            response = self.client.get(
+                url, {"mode": "calendar", "view": "day", "date": "2026-08-07", "tz": "Asia/Tokyo"}
+            )
+            self.assertFalse(response.context["is_today_in_view"])
 
 
 class SentTabCheckboxTests(BulkActionBase):

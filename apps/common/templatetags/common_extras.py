@@ -37,6 +37,7 @@ def ui_select(
     value_field="id",
     label_field="",
     icon_field="",
+    icon="",
 ):
     """A styled single/multi select dropdown (Alpine + checkbox/click list).
 
@@ -53,23 +54,27 @@ def ui_select(
       placeholder  trigger label shown when nothing is selected.
       value_field / label_field / icon_field
                    attribute names read off model instances (ignored for dicts).
-                   ``icon`` is treated as a platform code and rendered as a badge.
+                   ``icon_field`` is read as a platform code and rendered as a
+                   per-option badge.
+      icon         leading glyph for the trigger itself — one of
+                   status / channel / tag / clock (see components/_filter_icon.html).
+                   Omit for no icon.
     """
     norm = []
     for o in options:
         if isinstance(o, dict):
-            value, label, icon = o.get("value"), o.get("label"), o.get("icon")
+            value, label, opt_icon = o.get("value"), o.get("label"), o.get("icon")
         elif isinstance(o, (tuple, list)) and len(o) >= 2:
             # (value, label) pairs, e.g. Django `choices`.
-            value, label, icon = o[0], o[1], None
+            value, label, opt_icon = o[0], o[1], None
         elif isinstance(o, str):
             value = label = o
-            icon = None
+            opt_icon = None
         else:
             value = getattr(o, value_field, None)
             label = getattr(o, label_field) if label_field else str(o)
-            icon = getattr(o, icon_field, None) if icon_field else None
-        norm.append({"value": str(value) if value is not None else "", "label": label, "icon": icon})
+            opt_icon = getattr(o, icon_field, None) if icon_field else None
+        norm.append({"value": str(value) if value is not None else "", "label": label, "icon": opt_icon})
 
     return {
         "model": model,
@@ -79,4 +84,5 @@ def ui_select(
         "multiple": bool(multiple),
         "onchange": onchange,
         "placeholder": placeholder,
+        "icon": icon,
     }

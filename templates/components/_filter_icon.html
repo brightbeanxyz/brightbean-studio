@@ -1,0 +1,10 @@
+{% comment %}
+Leading icon for a toolbar filter control. Expects `name` — one of
+status / channel / tag / clock. Renders nothing for an unknown or empty name,
+so a filter without an icon simply has none.
+
+Kept as a partial (rather than inline in ui_select.html) because the same
+glyphs previously lived beside the raw <select> elements in
+publish_calendar_shell.html and publish_list_shell.html; having one copy means
+the toolbar can't drift into showing an icon on some filters and not others.
+{% endcomment %}{% if name == "status" %}<svg class="cal-filter-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>{% elif name == "channel" %}<svg class="cal-filter-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 006 0v-1a10 10 0 10-3.92 7.94"/></svg>{% elif name == "tag" %}<svg class="cal-filter-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>{% elif name == "clock" %}<svg class="cal-filter-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>{% endif %}
