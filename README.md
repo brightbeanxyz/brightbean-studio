@@ -630,6 +630,7 @@ The MCP server lives at `POST {APP_URL}/api/v1/mcp` and speaks JSON-RPC 2.0 over
 | `schedule_post` | Create and schedule a post in one step | `create_posts` + `publish_directly` |
 | `schedule_draft` | Schedule an existing draft | `create_posts` + `publish_directly` |
 | `get_post` | Retrieve a post with aggregate status and per-platform state | — |
+| `list_posts` | List posts newest-first, with optional status filter and cursor pagination | — |
 | `cancel_post` | Revert a scheduled post back to draft | `create_posts` |
 | `search_media` | Find media assets by query, type, tags, or folder | — |
 | `get_media` | Retrieve a single media asset by ID | — |

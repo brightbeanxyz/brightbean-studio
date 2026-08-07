@@ -304,9 +304,15 @@ class PostResponse(Schema):
         It defaults to ``False`` so a new, unconverted call site fails closed —
         redacted — rather than leaking notes.
         """
-        platform_posts = [
-            PlatformPostSummary.from_platform_post(pp) for pp in post.platform_posts.select_related("social_account")
-        ]
+        # ``.select_related()`` builds a *new* queryset, which discards any
+        # prefetch cache and re-queries once per post — an N+1 on list views.
+        # Use the cache when the caller prefetched, and fall back otherwise so
+        # an un-prefetched single fetch still avoids a query per child.
+        if "platform_posts" in getattr(post, "_prefetched_objects_cache", {}):
+            children = post.platform_posts.all()
+        else:
+            children = post.platform_posts.select_related("social_account")
+        platform_posts = [PlatformPostSummary.from_platform_post(pp) for pp in children]
         return cls(
             id=post.id,
             workspace_id=post.workspace_id,

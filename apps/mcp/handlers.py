@@ -19,12 +19,14 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from django.db.models import Exists, OuterRef
 from ninja.errors import HttpError
 
 from apps.analytics.api_builders import build_account_analytics, build_post_analytics
 from apps.api.limits import check_platform_quota
+from apps.api.pagination import decode_offset_cursor, encode_offset_cursor
 from apps.api.schemas import PostResponse
-from apps.composer.models import Post
+from apps.composer.models import PlatformPost, Post
 from apps.composer.services import create_post, transition_platform_post
 from apps.mcp.protocol import INVALID_PARAMS, JsonRpcError
 from apps.mcp.tools import Tool, register_tool
@@ -128,26 +130,40 @@ def _serialize_post(post: Post, context: dict[str, Any]) -> dict:
     )
 
 
+def _visible_posts_qs(api_key):
+    """Posts this API key may see, as a queryset.
+
+    Same rule as REST's ``_get_workspace_post``: in the key's workspace,
+    with at least one platform target, and *every* target allowlisted — so a
+    partial-scope key never learns about siblings. Expressed in SQL (rather
+    than filtering child rows in Python) so callers can order, filter and
+    paginate on it without scanning rows they may not see.
+    """
+    allowed = [sa.id for sa in api_key.social_accounts.all()]
+    # A key can end up with an empty allowlist at runtime (its last account was
+    # disconnected/deleted). Short-circuit rather than leaning on Django folding
+    # ``__in=[]`` inside an ``exclude`` into a no-op: fail closed explicitly.
+    if not allowed:
+        return Post.objects.none()
+    children = PlatformPost.objects.filter(post_id=OuterRef("pk"))
+    return (
+        Post.objects.filter(workspace_id=api_key.workspace_id)
+        .filter(Exists(children))
+        .exclude(Exists(children.exclude(social_account_id__in=allowed)))
+    )
+
+
 def _get_post_for_key(api_key, post_id_str: str) -> Post:
     """Allowlist-respecting Post fetch shared by ``get_post`` / ``cancel_post``.
 
-    Same rule as REST's ``_get_workspace_post``: must be in the key's
-    workspace AND every PlatformPost child must target an allowlisted
-    account. Anything else looks like "not found" to the client, so a
-    partial-scope key learns nothing about siblings.
+    Out-of-scope and nonexistent both surface as "Post not found" — the API
+    never reveals which is which.
     """
     post_id = _parse_uuid(post_id_str, "post_id")
     try:
-        post = Post.objects.prefetch_related("platform_posts__social_account").get(
-            id=post_id, workspace_id=api_key.workspace_id
-        )
+        return _visible_posts_qs(api_key).prefetch_related("platform_posts__social_account").get(id=post_id)
     except Post.DoesNotExist as exc:
         raise JsonRpcError(INVALID_PARAMS, "Post not found") from exc
-    allowed = {sa.id for sa in api_key.social_accounts.all()}
-    pp_account_ids = {pp.social_account_id for pp in post.platform_posts.all()}
-    if not pp_account_ids or not pp_account_ids.issubset(allowed):
-        raise JsonRpcError(INVALID_PARAMS, "Post not found")
-    return post
 
 
 def _parse_iso_datetime(value: Any, field_name: str) -> datetime:
@@ -396,6 +412,94 @@ register_tool(
             "additionalProperties": False,
         },
         handler=_get_post,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# Tool: list_posts
+# ---------------------------------------------------------------------------
+
+
+_MCP_POST_LIMIT_DEFAULT = 50
+_MCP_POST_LIMIT_MAX = 100
+
+
+def _list_posts(args: dict, context: dict[str, Any]) -> dict:
+    api_key = context["api_key"]
+
+    status = args.get("status")
+    if status is not None and status not in PlatformPost.Status.values:
+        raise JsonRpcError(INVALID_PARAMS, f"status must be one of {', '.join(PlatformPost.Status.values)}")
+
+    # ``or`` would swallow an explicit 0 as "unset" and hand back the default.
+    raw_limit = args.get("limit")
+    try:
+        limit = _MCP_POST_LIMIT_DEFAULT if raw_limit is None else int(raw_limit)
+    except (TypeError, ValueError) as exc:
+        raise JsonRpcError(INVALID_PARAMS, f"limit must be an integer between 1 and {_MCP_POST_LIMIT_MAX}") from exc
+    if limit < 1 or limit > _MCP_POST_LIMIT_MAX:
+        raise JsonRpcError(INVALID_PARAMS, f"limit must be between 1 and {_MCP_POST_LIMIT_MAX}")
+
+    try:
+        offset = decode_offset_cursor(args.get("cursor"))
+    except ValueError as exc:
+        raise JsonRpcError(INVALID_PARAMS, "cursor is not a valid pagination cursor") from exc
+
+    # The allowlist lives in the queryset (see ``_visible_posts_qs``), so paging
+    # is over posts this key can actually see — no scan cap, nothing silently
+    # dropped. ``id`` tiebreaks ``-created_at`` to keep offsets stable.
+    qs = _visible_posts_qs(api_key).prefetch_related("platform_posts__social_account")
+    if status:
+        qs = qs.filter(Exists(PlatformPost.objects.filter(post_id=OuterRef("pk"), status=status)))
+    qs = qs.order_by("-created_at", "id")
+
+    # limit + 1 probes for a next page without a second COUNT query.
+    rows = list(qs[offset : offset + limit + 1])
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return _wrap_text(
+        {
+            "posts": [_serialize_post(post, context) for post in rows],
+            "limit": limit,
+            "next_cursor": encode_offset_cursor(offset + limit) if has_more else None,
+        }
+    )
+
+
+register_tool(
+    Tool(
+        name="list_posts",
+        description=(
+            "List posts in this API key's workspace, newest first (by creation time). Fills the gap "
+            "left by get_post (which needs an id you may not have yet). Each item has the same shape "
+            "as get_post (aggregate status + per-platform child state). Only posts whose every "
+            "platform target is in the key's allowlist are returned. Optional `status` filter and "
+            "`limit` (default 50, max 100). When more posts remain, `next_cursor` is non-null — pass "
+            "it back as `cursor` for the next page; a null `next_cursor` means you have them all."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": list(PlatformPost.Status.values),
+                    "description": "Optional per-platform status; a post matches if any target has it.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": _MCP_POST_LIMIT_MAX,
+                    "default": _MCP_POST_LIMIT_DEFAULT,
+                },
+                "cursor": {
+                    "type": "string",
+                    "description": "Opaque cursor from a previous call's `next_cursor`.",
+                },
+            },
+            "additionalProperties": False,
+        },
+        handler=_list_posts,
     )
 )
 

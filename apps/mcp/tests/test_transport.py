@@ -255,7 +255,7 @@ class TestToolsList:
         status, body = _post(client_with_token, _rpc("tools/list"))
         assert status == 200
         names = {t["name"] for t in body["result"]["tools"]}
-        assert {"list_accounts", "create_draft", "schedule_post", "get_post", "cancel_post"} <= names
+        assert {"list_accounts", "create_draft", "schedule_post", "get_post", "list_posts", "cancel_post"} <= names
 
     def test_each_tool_has_an_input_schema(self, client_with_token):
         status, body = _post(client_with_token, _rpc("tools/list"))
@@ -428,6 +428,215 @@ class TestGetPostTool:
         )
         assert body["error"]["code"] == INVALID_PARAMS
         assert "not found" in body["error"]["message"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Tool: list_posts
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mixed_post(db, social_account, second_account, user, workspace):
+    """A Post targeting one allowlisted *and* one out-of-scope account.
+
+    The visibility rule is all-or-nothing: listing this would tell a
+    partial-scope key that ``second_account`` exists.
+    """
+    p = Post.objects.create(workspace=workspace, author=user, caption="half mine")
+    PlatformPost.objects.create(post=p, social_account=social_account, status="draft")
+    PlatformPost.objects.create(post=p, social_account=second_account, status="draft")
+    return p
+
+
+def _list_posts(client, **arguments):
+    """Call the list_posts tool and return its decoded payload."""
+    status, body = _post(client, _rpc("tools/call", {"name": "list_posts", "arguments": arguments}))
+    assert "error" not in body, body.get("error")
+    return json.loads(body["result"]["content"][0]["text"])
+
+
+def _list_posts_error(client, **arguments):
+    status, body = _post(client, _rpc("tools/call", {"name": "list_posts", "arguments": arguments}))
+    return body["error"]
+
+
+@pytest.mark.django_db
+class TestListPostsTool:
+    def test_lists_own_posts_only(self, client_with_token, own_post, foreign_post, mixed_post):
+        """Same confused-deputy rule as get_post: a post is listed only when
+        *every* platform target is in the key's allowlist.
+        """
+        inner = _list_posts(client_with_token)
+        ids = {p["id"] for p in inner["posts"]}
+        assert ids == {str(own_post.id)}
+        assert str(foreign_post.id) not in ids
+        assert str(mixed_post.id) not in ids
+
+    def test_orders_by_created_at_not_scheduled_at(self, client_with_token, social_account, user, workspace):
+        """Regression: ordering on the nullable ``scheduled_at`` put every
+        NULL-scheduled draft ahead of real posts (Postgres sorts DESC with
+        NULLs first), so "newest first" was neither newest nor first.
+        """
+        older_draft = Post.objects.create(workspace=workspace, author=user, caption="older draft")
+        PlatformPost.objects.create(post=older_draft, social_account=social_account, status="draft")
+        newer_scheduled = Post.objects.create(
+            workspace=workspace,
+            author=user,
+            caption="newer scheduled",
+            scheduled_at=timezone.now() + timedelta(days=30),
+        )
+        PlatformPost.objects.create(
+            post=newer_scheduled,
+            social_account=social_account,
+            status="scheduled",
+            scheduled_at=timezone.now() + timedelta(days=30),
+        )
+
+        inner = _list_posts(client_with_token)
+        assert [p["id"] for p in inner["posts"]] == [str(newer_scheduled.id), str(older_draft.id)]
+
+    def test_paginates_with_cursor(self, client_with_token, social_account, user, workspace):
+        """Regression for the silent 500-row scan cap: every visible post is
+        reachable by following ``next_cursor``, and pages never overlap.
+        """
+        created = []
+        for i in range(3):
+            p = Post.objects.create(workspace=workspace, author=user, caption=f"post {i}")
+            PlatformPost.objects.create(post=p, social_account=social_account, status="draft")
+            created.append(str(p.id))
+
+        page1 = _list_posts(client_with_token, limit=2)
+        assert len(page1["posts"]) == 2
+        assert page1["limit"] == 2
+        assert page1["next_cursor"] is not None
+
+        page2 = _list_posts(client_with_token, limit=2, cursor=page1["next_cursor"])
+        assert len(page2["posts"]) == 1
+        assert page2["next_cursor"] is None
+
+        ids1 = {p["id"] for p in page1["posts"]}
+        ids2 = {p["id"] for p in page2["posts"]}
+        assert ids1.isdisjoint(ids2)
+        assert ids1 | ids2 == set(created)
+
+    def test_foreign_posts_do_not_consume_page_slots(
+        self, client_with_token, social_account, second_account, user, workspace
+    ):
+        """The allowlist is applied in SQL, so out-of-scope posts never eat a
+        slot in a page. Under the old post-query filtering, a foreign post
+        interleaved with own posts returned a short page plus a cursor.
+        """
+        own_ids = []
+        for i in range(4):
+            mine = Post.objects.create(workspace=workspace, author=user, caption=f"mine {i}")
+            PlatformPost.objects.create(post=mine, social_account=social_account, status="draft")
+            own_ids.append(str(mine.id))
+            theirs = Post.objects.create(workspace=workspace, author=user, caption=f"theirs {i}")
+            PlatformPost.objects.create(post=theirs, social_account=second_account, status="draft")
+
+        seen, cursor = [], None
+        for _ in range(4):  # bounded so a broken cursor can't loop forever
+            page = _list_posts(client_with_token, limit=2, **({"cursor": cursor} if cursor else {}))
+            assert len(page["posts"]) == 2  # never short despite the foreign rows
+            seen.extend(p["id"] for p in page["posts"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+
+        assert cursor is None
+        assert sorted(seen) == sorted(own_ids)
+
+    def test_key_with_empty_allowlist_sees_nothing(self, client_with_token, issued_key, own_post):
+        """A key whose last allowlisted account was disconnected must fail
+        closed — not fall through to the whole workspace.
+        """
+        assert len(_list_posts(client_with_token)["posts"]) == 1
+        issued_key.api_key.social_accounts.clear()
+        assert _list_posts(client_with_token)["posts"] == []
+
+    def test_status_filter_narrows(self, client_with_token, own_post, scheduled_post):
+        inner = _list_posts(client_with_token, status="scheduled")
+        assert [p["id"] for p in inner["posts"]] == [str(scheduled_post.id)]
+
+    def test_unknown_status_is_invalid_params(self, client_with_token, own_post):
+        """An unknown status used to return an empty list, which reads as
+        "no posts" rather than "you asked for something that isn't a status".
+        The schema ``enum`` makes the transport reject it before dispatch.
+        """
+        error = _list_posts_error(client_with_token, status="totally_not_a_status")
+        assert error["code"] == INVALID_PARAMS
+        assert "status" in error["message"]
+        assert "totally_not_a_status" in error["message"]
+
+    def test_unknown_status_rejected_by_handler_too(self, issued_key, own_post):
+        """Backstop behind the schema check, for any caller that reaches the
+        handler without transport-level validation.
+        """
+        from apps.mcp.handlers import _list_posts as list_posts_handler
+        from apps.mcp.protocol import JsonRpcError
+
+        with pytest.raises(JsonRpcError) as exc:
+            list_posts_handler(
+                {"status": "totally_not_a_status"},
+                {"api_key": issued_key.api_key, "membership": None},
+            )
+        assert "status must be one of" in str(exc.value)
+
+    def test_every_platform_post_status_is_accepted_and_filters(
+        self, client_with_token, social_account, user, workspace
+    ):
+        """The schema enum must cover the full model enum — ``changes_requested``
+        and ``rejected`` were missing from the documented list — and each value
+        must actually narrow, not just be accepted.
+        """
+        by_status = {}
+        for value in PlatformPost.Status.values:
+            p = Post.objects.create(workspace=workspace, author=user, caption=f"{value} post")
+            PlatformPost.objects.create(post=p, social_account=social_account, status=value)
+            by_status[value] = str(p.id)
+
+        for value, post_id in by_status.items():
+            assert [p["id"] for p in _list_posts(client_with_token, status=value)["posts"]] == [post_id]
+
+    def test_limit_out_of_range_is_invalid_params(self, client_with_token):
+        """Out-of-range limits are rejected rather than silently clamped —
+        same contract as search_media.
+        """
+        for bad in (0, 101):
+            error = _list_posts_error(client_with_token, limit=bad)
+            assert error["code"] == INVALID_PARAMS
+            assert "limit" in error["message"]
+
+    def test_malformed_cursor_is_invalid_params(self, client_with_token):
+        error = _list_posts_error(client_with_token, cursor="not-a-cursor")
+        assert error["code"] == INVALID_PARAMS
+        assert "cursor" in error["message"]
+
+    def test_serialization_does_not_scale_queries_with_page_size(
+        self,
+        client_with_token,
+        social_account,
+        user,
+        workspace,
+        own_post,
+        django_assert_max_num_queries,
+    ):
+        """``PostResponse.from_post`` used to re-query children per post; the
+        query count must not grow with the number of posts returned.
+        """
+        _list_posts(client_with_token)  # warm anything cached lazily
+
+        with django_assert_max_num_queries(100) as one_post:
+            assert len(_list_posts(client_with_token)["posts"]) == 1
+
+        for i in range(4):
+            p = Post.objects.create(workspace=workspace, author=user, caption=f"extra {i}")
+            PlatformPost.objects.create(post=p, social_account=social_account, status="draft")
+
+        with django_assert_max_num_queries(100) as five_posts:
+            assert len(_list_posts(client_with_token)["posts"]) == 5
+
+        assert len(five_posts.captured_queries) == len(one_post.captured_queries)
 
 
 # ---------------------------------------------------------------------------
