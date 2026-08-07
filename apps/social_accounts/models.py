@@ -91,6 +91,16 @@ class SocialAccount(models.Model):
         return f"{self.account_name} ({self.get_platform_display()})"
 
     @property
+    def display_label(self) -> str:
+        """Human name for pickers and filters: the account name, else the handle.
+
+        Mirrors the ``account_name|default:account_handle`` the channel filters
+        used inline, so a component that can only read one attribute (the
+        ``ui_select`` tag's ``label_field``) still renders the same text.
+        """
+        return self.account_name or self.account_handle
+
+    @property
     def is_token_expiring_soon(self) -> bool:
         """Token expires within 7 days."""
         if not self.token_expires_at:

@@ -72,16 +72,16 @@ Toolbar: nav arrows + period + Today + view dropdown | right: filter dropdowns.
         <!-- Right side: filter dropdowns -->
         <div class="cal-filters-scroll flex items-center gap-2 ml-auto overflow-x-auto flex-nowrap" style="-webkit-overflow-scrolling: touch; scrollbar-width: none;">
             <!-- Status filter -->
-            {% ui_select model="calendarFilters.status" options=status_choices onchange="reloadCalendar()" placeholder="All Posts" %}
+            {% ui_select model="calendarFilters.status" options=status_choices onchange="reloadCalendar()" placeholder="All Posts" icon="status" %}
 
             <!-- Channels filter (multi-select) -->
-            {% include "calendar/partials/_channel_multiselect.html" with model="calendarFilters.channels" onchange="reloadCalendar()" accounts=social_accounts %}
+            {% ui_select model="calendarFilters.channels" options=social_accounts multiple=True onchange="reloadCalendar()" placeholder="Channels" icon="channel" label_field="display_label" icon_field="platform" %}
 
             <!-- Tags filter -->
-            {% ui_select model="calendarFilters.tag" options=all_tags onchange="reloadCalendar()" placeholder="Tags" %}
+            {% ui_select model="calendarFilters.tag" options=all_tags onchange="reloadCalendar()" placeholder="Tags" icon="tag" %}
 
             <!-- Timezone -->
-            {% ui_select model="calendarFilters.tz" options=timezone_options onchange="reloadCalendar()" placeholder="Timezone" %}
+            {% ui_select model="calendarFilters.tz" options=timezone_options onchange="reloadCalendar()" placeholder="Timezone" icon="clock" %}
         </div>
     </div>
 

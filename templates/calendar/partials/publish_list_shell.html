@@ -30,13 +30,13 @@ Tab switching is HTMX partial swaps only - no full page reload.
         <!-- Right: filter dropdowns -->
         <div class="flex items-center gap-2 pb-2 overflow-x-auto flex-shrink-0">
             <!-- Channels filter (multi-select) -->
-            {% include "calendar/partials/_channel_multiselect.html" with model="selectedChannels" onchange="reloadTab()" accounts=channels_with_posts %}
+            {% ui_select model="selectedChannels" options=channels_with_posts multiple=True onchange="reloadTab()" placeholder="Channels" icon="channel" label_field="display_label" icon_field="platform" %}
 
             <!-- Tags filter -->
-            {% ui_select model="activeTag" options=all_tags onchange="reloadTab()" placeholder="All Tags" %}
+            {% ui_select model="activeTag" options=all_tags onchange="reloadTab()" placeholder="All Tags" icon="tag" %}
 
             <!-- Timezone dropdown -->
-            {% ui_select model="displayTimezone" options=timezone_options onchange="reloadTab()" placeholder="Timezone" %}
+            {% ui_select model="displayTimezone" options=timezone_options onchange="reloadTab()" placeholder="Timezone" icon="clock" %}
         </div>
     </div>
 

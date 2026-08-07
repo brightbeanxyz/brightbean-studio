@@ -20,7 +20,7 @@ Shows all scheduled platform posts grouped by date. Loaded via HTMX into #tab-co
             <div class="flex gap-4">
                 <!-- Bulk-select checkbox -->
                 <div class="flex items-center shrink-0 pt-3">
-                    {% include "calendar/partials/_select_checkbox.html" with pp_id=pp.id extra_class="row-select-box" %}
+                    {% if pp.is_bulk_selectable %}{% include "calendar/partials/_select_checkbox.html" with pp_id=pp.id extra_class="row-select-box" %}{% endif %}
                 </div>
                 <!-- Left: time + source -->
                 <div class="w-20 shrink-0 pt-3 text-right">

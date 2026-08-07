@@ -333,35 +333,53 @@ def _cell_compose_params(display_date, hour, display_tz, workspace_tz):
     return workspace_dt.strftime("%Y-%m-%d"), workspace_dt.strftime("%H:%M")
 
 
-def _publish_tab_counts(workspace):
+_APPROVAL_TAB_STATUSES = [
+    "pending_review",
+    "pending_client",
+    "approved",
+    "rejected",
+    "changes_requested",
+    "on_hold",
+]
+
+
+def _publish_tab_counts(workspace, request):
     """The four Publish tab-bar badge counts (queue / drafts / approvals / sent).
 
     Shared by the initial page render (`_get_publish_context`) and each HTMX
     tab partial, so switching a tab can refresh all four badges out-of-band and
     they never drift from the real data.
+
+    The counts carry the same channel/tag filters the tab lists do — a badge
+    reading "12" over a channel-filtered list of 3 is exactly the drift the
+    out-of-band refresh exists to prevent.
     """
+    from django.db.models import Exists, OuterRef
+
+    def _pp(**kwargs):
+        return _apply_pp_publish_filters(
+            PlatformPost.objects.filter(post__workspace_id=workspace.id, **kwargs), request
+        ).count()
+
+    # Approvals is a distinct-Post count (one row per post in the redesigned
+    # tab). Status and channel must be satisfied by the SAME child row, so this
+    # reuses the tab's own Exists subquery shape rather than chaining
+    # .filter(platform_posts__...) — see the comment in `_get_tab_context`.
+    pp_match = PlatformPost.objects.filter(post_id=OuterRef("pk"), status__in=_APPROVAL_TAB_STATUSES)
+    channels = _get_channel_filters(request)
+    if channels:
+        pp_match = pp_match.filter(social_account_id__in=channels)
+    approvals = Post.objects.for_workspace(workspace.id).filter(Exists(pp_match))
+    # Tag is a Post-level attribute (can't cross child rows) — apply it directly.
+    tag = request.GET.get("tag")
+    if tag:
+        approvals = approvals.filter(tags__contains=[tag])
+
     return {
-        "queue_count": PlatformPost.objects.filter(post__workspace_id=workspace.id, status="scheduled").count(),
-        "drafts_count": PlatformPost.objects.filter(post__workspace_id=workspace.id, status="draft").count(),
-        # Distinct posts (one row per post in the redesigned tab), incl. on_hold —
-        # matches the tab's "All" pill count.
-        "approvals_count": Post.objects.for_workspace(workspace.id)
-        .filter(
-            platform_posts__status__in=[
-                "pending_review",
-                "pending_client",
-                "approved",
-                "rejected",
-                "changes_requested",
-                "on_hold",
-            ]
-        )
-        .distinct()
-        .count(),
-        "sent_count": PlatformPost.objects.filter(
-            post__workspace_id=workspace.id,
-            status__in=["published", "failed"],
-        ).count(),
+        "queue_count": _pp(status="scheduled"),
+        "drafts_count": _pp(status="draft"),
+        "approvals_count": approvals.distinct().count(),
+        "sent_count": _pp(status__in=["published", "failed"]),
     }
 
 
@@ -381,9 +399,13 @@ def _get_publish_context(workspace, request):
 
     all_tags = set(Tag.objects.for_workspace(workspace.id).values_list("name", flat=True))
 
-    # Display timezone
+    # Display timezone. Coerced here rather than at each consumer: this value is
+    # a raw user-supplied ``?tz=`` and every reader (the grid view builders, the
+    # Today-in-view check, the ``{% timezone %}`` tag) feeds it straight to
+    # ``zoneinfo.ZoneInfo``, which raises on an unknown zone. Coercing once at
+    # the source means no caller can turn ``?tz=garbage`` into a 500.
     ws_tz = workspace.effective_timezone or "UTC"
-    display_timezone = request.GET.get("tz", ws_tz)
+    display_timezone = _coerce_timezone(request.GET.get("tz"), ws_tz)
 
     # Build ordered timezone list (workspace default first, then common ones)
     tz_list = [ws_tz]
@@ -407,7 +429,7 @@ def _get_publish_context(workspace, request):
         "timezone_choices": tz_list,
         "timezone_options": tz_options,
         "workspace_timezone": ws_tz,
-        **_publish_tab_counts(workspace),
+        **_publish_tab_counts(workspace, request),
     }
 
 
@@ -633,19 +655,6 @@ def calendar_view(request, workspace_id):
     view_type = request.GET.get("view", "month")
     target_date = _parse_date(request.GET.get("date"))
 
-    # Whether "today" already falls inside the period the calendar is showing.
-    # Lets the toolbar render the Today button as a no-op instead of firing an
-    # unnecessary navigation/reload when the user is already on the current
-    # month/week/day.
-    today = date.today()
-    if view_type == "week":
-        week_start = target_date - timedelta(days=target_date.weekday())
-        is_today_in_view = week_start <= today <= week_start + timedelta(days=6)
-    elif view_type == "day":
-        is_today_in_view = target_date == today
-    else:  # month (and any fallback)
-        is_today_in_view = (target_date.year, target_date.month) == (today.year, today.month)
-
     # Connected accounts for calendar filter UI
     social_accounts = (
         SocialAccount.objects.for_workspace(workspace.id)
@@ -683,6 +692,27 @@ def calendar_view(request, workspace_id):
 
     # Publish page context (channels, tags, timezone dropdowns)
     publish_ctx = _get_publish_context(workspace, request)
+
+    # Whether "today" already falls inside the period the calendar is showing.
+    # Lets the toolbar render the Today button as a no-op instead of firing an
+    # unnecessary navigation/reload when the user is already on the current
+    # month/week/day. "Today" must mean the same day the grids highlight, so it
+    # is read in the active display timezone rather than the server's — with a
+    # server on UTC and the calendar in Asia/Tokyo the two disagree for nine
+    # hours a day.
+    import zoneinfo
+
+    from django.utils import timezone as _tz
+
+    display_tz = zoneinfo.ZoneInfo(publish_ctx["display_timezone"])
+    today = _tz.now().astimezone(display_tz).date()
+    if view_type == "week":
+        week_start = target_date - timedelta(days=target_date.weekday())
+        is_today_in_view = week_start <= today <= week_start + timedelta(days=6)
+    elif view_type == "day":
+        is_today_in_view = target_date == today
+    else:  # month (and any fallback)
+        is_today_in_view = (target_date.year, target_date.month) == (today.year, today.month)
 
     context = {
         "workspace": workspace,
@@ -1040,7 +1070,7 @@ def _render_tab(request, workspace, tab):
     ctx["is_htmx"] = True
     # Refresh all four tab-bar badges out-of-band so counts stay in sync when a
     # tab is switched or reloaded (they live outside the swapped #tab-content).
-    ctx.update(_publish_tab_counts(workspace))
+    ctx.update(_publish_tab_counts(workspace, request))
     ctx["render_tab_counts_oob"] = True
     return render(request, _TAB_TEMPLATES[tab], ctx)
 
@@ -1124,9 +1154,18 @@ def reschedule_post(request, workspace_id):
         # (re)schedule / retry: move it into "scheduled" so the publisher picks
         # it up. Other statuses (approved, scheduled, pending_*) just change
         # time and keep their editorial status.
+        fields = ["status", "scheduled_at", "updated_at"]
+        if pp.status == "failed":
+            # Retrying: don't carry the previous attempt's failure state into
+            # the fresh one (a stale publish_error renders on the chip, and a
+            # stale retry_count eats the new attempt's retry budget).
+            pp.publish_error = ""
+            pp.retry_count = 0
+            pp.next_retry_at = None
+            fields += ["publish_error", "retry_count", "next_retry_at"]
         if pp.status in _IMPLICIT_SCHEDULE_STATUSES and pp.can_transition_to("scheduled"):
             pp.transition_to("scheduled")
-        pp.save(update_fields=["status", "scheduled_at", "updated_at"])
+        pp.save(update_fields=fields)
         # Keep any queue entry's slot mirror in step with the manual reschedule
         # so the queue list shows the real time (the slot ops read scheduled_at,
         # but the detail page still orders by assigned_slot_datetime).
@@ -1143,6 +1182,55 @@ def reschedule_post(request, workspace_id):
     )
 
 
+def _bulk_save_platform_posts(rows):
+    """Persist the fields the bulk actions mutate, in one statement.
+
+    ``PlatformPost`` has no save signals, so ``bulk_update`` is equivalent to a
+    per-row ``save(update_fields=...)`` here and turns an N-query loop into one.
+    ``updated_at`` is ``auto_now``, which ``bulk_update`` does not apply, so it
+    is stamped explicitly — same reason the per-row saves list it.
+    """
+    from django.utils import timezone as _tz
+
+    if not rows:
+        return
+    stamp = _tz.now()
+    for row in rows:
+        row.updated_at = stamp
+    PlatformPost.objects.bulk_update(
+        rows,
+        ["status", "scheduled_at", "publish_error", "retry_count", "next_retry_at", "updated_at"],
+    )
+
+
+def _sync_queue_entries(touched):
+    """Keep queue mirrors in step with rows a bulk action just changed.
+
+    ``touched`` is ``(platform_post, new_slot_datetime | None)``. A row that was
+    deleted or sent back to draft leaves its queue — matching
+    ``services.remove_from_queue``, which deletes the entry rather than leaving
+    it pointing at an unscheduled post. A row that moved in time carries its
+    entry's ``assigned_slot_datetime`` along, matching ``reschedule_post``.
+    Without this the queue detail page (which orders by that column) keeps
+    showing the old slot, and a deleted child on a multi-platform post strands
+    an entry whose channel no longer has a row.
+    """
+    drop, move = [], {}
+    for pp, slot in touched:
+        if slot is None:
+            drop.append((pp.post_id, pp.social_account_id))
+        else:
+            move.setdefault(slot, []).append((pp.post_id, pp.social_account_id))
+
+    for post_id, account_id in drop:
+        QueueEntry.objects.filter(post_id=post_id, queue__social_account_id=account_id).delete()
+    for slot, pairs in move.items():
+        for post_id, account_id in pairs:
+            QueueEntry.objects.filter(post_id=post_id, queue__social_account_id=account_id).update(
+                assigned_slot_datetime=slot
+            )
+
+
 @login_required
 @require_POST
 def bulk_platform_action(request, workspace_id):
@@ -1151,7 +1239,15 @@ def bulk_platform_action(request, workspace_id):
     Powers the Publish page's floating selection bar (list + calendar). Only
     rows the user may edit are touched, and ``published``/``publishing`` rows
     are never deleted or moved. Returns the number of rows acted on.
+
+    The whole mutation runs in one transaction: it spans N platform rows, their
+    queue mirrors and the parent-Post reconciliation, and a half-applied bulk
+    action would leave parents whose ``scheduled_at`` aggregate points at
+    children that no longer exist.
     """
+    from django.db import transaction
+    from django.db.models import F
+    from django.db.models.functions import Coalesce
     from django.utils import timezone as _tz
 
     from apps.composer.services import sync_post_scheduled_at
@@ -1171,62 +1267,89 @@ def bulk_platform_action(request, workspace_id):
     if action == "publish" and not perms.get("publish_directly", False):
         return JsonResponse({"error": "You do not have permission to publish directly."}, status=403)
 
-    pps = list(PlatformPost.objects.filter(id__in=pp_ids, post__workspace=workspace).select_related("post"))
+    # Ordered by the time each row is currently due, because the publish branch
+    # staggers same-channel rows in iteration order — an unordered ``id__in``
+    # would hand out those offsets in arbitrary database order and could publish
+    # a later-scheduled Queue post ahead of an earlier one. Rows with no time at
+    # all (drafts) sort last, then by creation so the order is fully determined.
+    pps = list(
+        PlatformPost.objects.filter(id__in=pp_ids, post__workspace=workspace)
+        .select_related("post")
+        .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
+        .order_by(F("effective_at").asc(nulls_last=True), "post__created_at", "id")
+    )
     can_edit_others = perms.get("edit_others_posts", False)
     pps = [pp for pp in pps if pp.post.author_id == request.user.id or can_edit_others]
 
     affected = set()
-    count = 0
-    if action == "delete":
-        for pp in pps:
-            if pp.status in PlatformPost.PROTECTED_STATUSES:
-                continue
-            affected.add(pp.post_id)
-            pp.delete()
-            count += 1
-    elif action == "draft":
-        # Unschedule: back to draft and drop the time.
-        for pp in pps:
-            if pp.status in PlatformPost.PROTECTED_STATUSES or pp.status == "draft":
-                continue
-            if not pp.can_transition_to("draft"):
-                continue
-            pp.scheduled_at = None
-            pp.transition_to("draft")
-            pp.save(update_fields=["status", "scheduled_at", "updated_at"])
-            affected.add(pp.post_id)
-            count += 1
-    else:
-        # Publish now: schedule at the current time so the worker picks it up.
-        now = _tz.now()
-        for pp in pps:
-            if pp.status in PlatformPost.PROTECTED_STATUSES:
-                continue
-            if pp.status == "scheduled":
-                # Already scheduled — the whole Queue tab. scheduled → scheduled
-                # is not a valid transition, so only pull the time forward: the
-                # publisher takes any scheduled row whose effective time passed.
-                pp.scheduled_at = now
-                pp.save(update_fields=["scheduled_at", "updated_at"])
-            elif pp.can_transition_to("scheduled"):
-                pp.scheduled_at = now
-                pp.transition_to("scheduled")
-                pp.save(update_fields=["status", "scheduled_at", "updated_at"])
-            else:
-                continue
-            affected.add(pp.post_id)
-            count += 1
-
-    # Reconcile each touched parent Post (aggregate scheduled_at) and drop any
-    # post whose last platform row was just deleted.
-    for pid in affected:
-        post = Post.objects.filter(id=pid, workspace=workspace).first()
-        if not post:
-            continue
-        if not post.platform_posts.exists():
-            post.delete()
+    touched = []  # rows whose queue mirror must follow, as (pp, new_slot_dt|None)
+    with transaction.atomic():
+        if action == "delete":
+            deletable = [pp for pp in pps if pp.status not in PlatformPost.PROTECTED_STATUSES]
+            for pp in deletable:
+                affected.add(pp.post_id)
+                touched.append((pp, None))
+            PlatformPost.objects.filter(id__in=[pp.id for pp in deletable]).delete()
+            count = len(deletable)
+        elif action == "draft":
+            # Unschedule: back to draft and drop the time.
+            changed = []
+            for pp in pps:
+                if pp.status in PlatformPost.PROTECTED_STATUSES or pp.status == "draft":
+                    continue
+                if not pp.can_transition_to("draft"):
+                    continue
+                pp.scheduled_at = None
+                pp.transition_to("draft")
+                changed.append(pp)
+                affected.add(pp.post_id)
+                touched.append((pp, None))
+            _bulk_save_platform_posts(changed)
+            count = len(changed)
         else:
-            sync_post_scheduled_at(post)
+            # Publish now. Rows on the same channel are staggered a minute apart
+            # rather than all stamped with the same instant: posting slots exist
+            # to space a channel's output, and firing eight posts at one account
+            # in the same publisher tick invites rate limiting.
+            now = _tz.now()
+            per_channel: dict = {}
+            changed = []
+            for pp in pps:
+                if pp.status in PlatformPost.PROTECTED_STATUSES:
+                    continue
+                # scheduled → scheduled is not a valid transition (the whole Queue
+                # tab is `scheduled`), so those rows only move in time — the
+                # publisher takes any scheduled row whose effective time passed.
+                if pp.status != "scheduled" and not pp.can_transition_to("scheduled"):
+                    continue
+                slot = now + timedelta(minutes=per_channel.get(pp.social_account_id, 0))
+                per_channel[pp.social_account_id] = per_channel.get(pp.social_account_id, 0) + 1
+                pp.scheduled_at = slot
+                if pp.status == "failed":
+                    # Retrying: the previous attempt's failure state must not
+                    # ride along into the fresh one.
+                    pp.publish_error = ""
+                    pp.retry_count = 0
+                    pp.next_retry_at = None
+                if pp.status != "scheduled":
+                    pp.transition_to("scheduled")
+                changed.append(pp)
+                affected.add(pp.post_id)
+                touched.append((pp, slot))
+            _bulk_save_platform_posts(changed)
+            count = len(changed)
+
+        _sync_queue_entries(touched)
+
+        # Reconcile each touched parent Post (aggregate scheduled_at) and drop any
+        # post whose last platform row was just deleted. Fetched in one query with
+        # the children prefetched, so the loop below adds none.
+        posts = Post.objects.filter(id__in=affected, workspace=workspace).prefetch_related("platform_posts")
+        for post in posts:
+            if not post.platform_posts.all():
+                post.delete()
+            else:
+                sync_post_scheduled_at(post)
 
     # Plain JSON, not an HX-Trigger header: the selection bar posts with fetch(),
     # not htmx, and fires its own calendar/tab refresh events on success.

@@ -15,8 +15,9 @@ JS body can't see the parent scope.
         uiToggle(e){ if (this.open) { this.open = false; return; } const r = e.currentTarget.getBoundingClientRect(); this.top = r.bottom + 4; this.left = Math.min(r.left, window.innerWidth - 236); this.open = true; }
      }"
      @click.away="open = false" @keydown.escape="open = false" @scroll.window="open = false">
+    {% include "components/_filter_icon.html" with name=icon %}
     <button type="button" @click="uiToggle($event)"
-            class="cal-filter-select flex items-center gap-1 whitespace-nowrap"
+            class="cal-filter-select{% if icon %} has-icon{% endif %} flex items-center gap-1 whitespace-nowrap"
             :class="{% if multiple %}{{ model }}.length{% else %}{{ model }}{% endif %} && 'border-orange-300 text-orange-700'">
         <span x-text="{% if multiple %}{{ model }}.length ? {{ model }}.length + ' selected' : '{{ placeholder|escapejs }}'{% else %}uiLabel({{ model }}){% endif %}"></span>
         <svg class="w-3 h-3 text-stone-400 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>

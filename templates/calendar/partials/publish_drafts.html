@@ -24,7 +24,7 @@ Shows all draft platform posts in a table. Loaded via HTMX into #tab-content.
             <tr class="border-b border-stone-100 hover:bg-stone-50 transition-colors duration-100 cursor-pointer"
                 @click="window.location='{% url 'composer:compose_edit' workspace_id=workspace.id post_id=pp.post_id %}?account={{ pp.social_account_id }}'">
                 <td class="pl-4 pr-1 py-3" @click.stop>
-                    {% include "calendar/partials/_select_checkbox.html" with pp_id=pp.id extra_class="row-select-box" %}
+                    {% if pp.is_bulk_selectable %}{% include "calendar/partials/_select_checkbox.html" with pp_id=pp.id extra_class="row-select-box" %}{% endif %}
                 </td>
                 <td class="px-4 py-3">
                     {% with first_att=pp.post.media_attachments.all.0 %}
