@@ -148,6 +148,13 @@ class TestPerPlatformCapabilities:
         # Facebook: also defaults to supports_first_comment=True.
         assert accs["facebook"]["supports_first_comment"] is True
 
+        # LinkedIn escapes its reserved set, so a client budgeting char_limit
+        # against the raw caption would overflow; every other platform publishes
+        # the caption verbatim.
+        assert set(accs["linkedin_company"]["escaped_chars"]) == set("\\|{}@[]()<>#*_~")
+        assert accs["youtube"]["escaped_chars"] == ""
+        assert accs["facebook"]["escaped_chars"] == ""
+
     def test_accounts_endpoint_surfaces_same_capabilities(self, client):
         body = client.get("/api/v1/accounts/").json()
         accs = self._by_platform(body["accounts"])

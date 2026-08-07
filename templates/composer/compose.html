@@ -522,8 +522,8 @@
                                 Media Library
                             </button>
                             <span class="text-xs tabular-nums font-medium"
-                                  :class="(() => { const min = Math.min(...selectedAccounts.map(id => charLimits[id]?.limit || 9999)); return caption.length > min ? 'text-red-500' : 'text-stone-400'; })()"
-                                  x-text="(() => { const limits = selectedAccounts.map(id => charLimits[id]?.limit).filter(Boolean); const min = limits.length ? Math.min(...limits) : null; return min ? caption.length + ' / ' + min : caption.length; })()">
+                                  :class="captionOverLimit() ? 'text-red-500' : 'text-stone-400'"
+                                  x-text="captionLimit() ? captionCount() + ' / ' + captionLimit() : captionCount()">
                             </span>
                         </div>
                     </div>
@@ -2012,6 +2012,46 @@ function composerApp() {
         // Declared here so scoped writes (inside x-for panels) hit this
         // component instead of the iteration scope.
         _filmstripRun: 0,
+
+        // Caption length as a platform counts it. LinkedIn escapes reserved
+        // characters in what it publishes, so each one costs two against the
+        // limit — mirrors providers.caption_wire_length on the server.
+        wireLength(text, accId) {
+            const escaped = this.charLimits[accId]?.escaped_chars || '';
+            if (!escaped) return text.length;
+            let extra = 0;
+            for (const ch of text) {
+                if (escaped.includes(ch)) extra++;
+            }
+            return text.length + extra;
+        },
+        // The counter shows one account: the one with the least headroom. Both
+        // numbers have to come from the same account or the pair lies — 200 '#'
+        // on LinkedIn and Bluesky would read as 400 / 300 (LinkedIn's escaped
+        // count against Bluesky's limit) with nothing actually over.
+        captionBinding() {
+            let binding = null;
+            for (const id of this.selectedAccounts) {
+                const limit = this.charLimits[id]?.limit;
+                if (!limit) continue;
+                const count = this.wireLength(this.caption, id);
+                if (binding === null || limit - count < binding.limit - binding.count) {
+                    binding = { count, limit };
+                }
+            }
+            return binding;
+        },
+        captionCount() {
+            return this.captionBinding()?.count ?? this.caption.length;
+        },
+        captionLimit() {
+            return this.captionBinding()?.limit ?? null;
+        },
+        // The least-headroom account is over exactly when any account is.
+        captionOverLimit() {
+            const binding = this.captionBinding();
+            return binding !== null && binding.count > binding.limit;
+        },
 
         // Computed-like getters for title field visibility
         get anyPlatformNeedsTitle() {

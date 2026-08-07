@@ -52,6 +52,15 @@ class AccountSummary(Schema):
         2200,
         description="Maximum caption length the platform accepts. Reject locally before calling /posts.",
     )
+    escaped_chars: str = Field(
+        "",
+        description=(
+            "Characters the platform requires escaped, each costing two against ``char_limit``. "
+            "LinkedIn escapes its reserved little-text set, so count a caption as "
+            "``len(caption) + sum(caption.count(c) for c in escaped_chars)`` before rejecting it. "
+            "Empty for platforms that publish the caption verbatim."
+        ),
+    )
     needs_title: bool = Field(
         False,
         description="True when the platform requires a title (YouTube, Pinterest). When false, the title field is ignored.",
@@ -75,6 +84,7 @@ class AccountSummary(Schema):
             account_handle=getattr(sa, "account_handle", "") or "",
             connection_status=sa.connection_status,
             char_limit=sa.char_limit,
+            escaped_chars=sa.escaped_chars,
             needs_title=bool(sa.field_config.get("needs_title", False)),
             supports_first_comment=sa.supports_first_comment(),
         )
