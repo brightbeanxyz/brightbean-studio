@@ -399,9 +399,13 @@ def _get_publish_context(workspace, request):
 
     all_tags = set(Tag.objects.for_workspace(workspace.id).values_list("name", flat=True))
 
-    # Display timezone
+    # Display timezone. Coerced here rather than at each consumer: this value is
+    # a raw user-supplied ``?tz=`` and every reader (the grid view builders, the
+    # Today-in-view check, the ``{% timezone %}`` tag) feeds it straight to
+    # ``zoneinfo.ZoneInfo``, which raises on an unknown zone. Coercing once at
+    # the source means no caller can turn ``?tz=garbage`` into a 500.
     ws_tz = workspace.effective_timezone or "UTC"
-    display_timezone = request.GET.get("tz", ws_tz)
+    display_timezone = _coerce_timezone(request.GET.get("tz"), ws_tz)
 
     # Build ordered timezone list (workspace default first, then common ones)
     tz_list = [ws_tz]
@@ -1242,6 +1246,8 @@ def bulk_platform_action(request, workspace_id):
     children that no longer exist.
     """
     from django.db import transaction
+    from django.db.models import F
+    from django.db.models.functions import Coalesce
     from django.utils import timezone as _tz
 
     from apps.composer.services import sync_post_scheduled_at
@@ -1261,7 +1267,17 @@ def bulk_platform_action(request, workspace_id):
     if action == "publish" and not perms.get("publish_directly", False):
         return JsonResponse({"error": "You do not have permission to publish directly."}, status=403)
 
-    pps = list(PlatformPost.objects.filter(id__in=pp_ids, post__workspace=workspace).select_related("post"))
+    # Ordered by the time each row is currently due, because the publish branch
+    # staggers same-channel rows in iteration order — an unordered ``id__in``
+    # would hand out those offsets in arbitrary database order and could publish
+    # a later-scheduled Queue post ahead of an earlier one. Rows with no time at
+    # all (drafts) sort last, then by creation so the order is fully determined.
+    pps = list(
+        PlatformPost.objects.filter(id__in=pp_ids, post__workspace=workspace)
+        .select_related("post")
+        .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
+        .order_by(F("effective_at").asc(nulls_last=True), "post__created_at", "id")
+    )
     can_edit_others = perms.get("edit_others_posts", False)
     pps = [pp for pp in pps if pp.post.author_id == request.user.id or can_edit_others]
 

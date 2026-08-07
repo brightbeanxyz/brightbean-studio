@@ -373,6 +373,28 @@ class BulkPublishStaggerTests(BulkActionBase):
         self.assertEqual((times[1] - times[0]), timedelta(minutes=1))
         self.assertEqual((times[2] - times[1]), timedelta(minutes=1))
 
+    def test_stagger_follows_the_existing_schedule_order(self):
+        """Offsets are handed out in iteration order, so the order must be fixed.
+
+        An unordered ``id__in`` queryset could otherwise assign the later slot to
+        the earlier-scheduled post and publish the Queue out of order.
+        """
+        base = timezone.now() + timedelta(days=1)
+        # Created in reverse-schedule order on purpose: insertion order is what
+        # an unordered queryset tends to return, so rows whose physical order
+        # already matched their schedule would let the bug pass unnoticed.
+        third = self._pp("scheduled", scheduled_at=base + timedelta(hours=2))
+        second = self._pp("scheduled", scheduled_at=base + timedelta(hours=1))
+        first = self._pp("scheduled", scheduled_at=base)
+
+        # Submitted in a third, unrelated order.
+        self._bulk("publish", second, third, first)
+
+        for pp in (first, second, third):
+            pp.refresh_from_db()
+        self.assertLess(first.scheduled_at, second.scheduled_at)
+        self.assertLess(second.scheduled_at, third.scheduled_at)
+
     def test_different_channels_both_start_now(self):
         a = self._pp("draft")
         b = self._pp("draft", account=self.other_account)
@@ -449,6 +471,38 @@ class TodayInViewTimezoneTests(BulkActionBase):
                 url, {"mode": "calendar", "view": "day", "date": "2026-08-07", "tz": "Asia/Tokyo"}
             )
             self.assertFalse(response.context["is_today_in_view"])
+
+
+class InvalidTimezoneTests(BulkActionBase):
+    """``?tz=`` is raw user input and reaches zoneinfo.ZoneInfo on every path."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.owner)
+
+    def test_list_mode_survives_a_bogus_timezone(self):
+        url = reverse("calendar:calendar", kwargs={"workspace_id": self.workspace.id})
+
+        response = self.client.get(url, {"mode": "list", "tab": "queue", "tz": "Not/AZone"})
+
+        self.assertEqual(response.status_code, 200)
+        # Coerced at the source, so every consumer downstream gets a real zone.
+        self.assertEqual(response.context["display_timezone"], "UTC")
+
+    def test_calendar_mode_survives_a_bogus_timezone(self):
+        url = reverse("calendar:calendar", kwargs={"workspace_id": self.workspace.id})
+
+        for view in ("month", "week", "day"):
+            with self.subTest(view=view):
+                response = self.client.get(url, {"mode": "calendar", "view": view, "tz": "Not/AZone"})
+                self.assertEqual(response.status_code, 200)
+
+    def test_a_real_timezone_is_still_honoured(self):
+        url = reverse("calendar:calendar", kwargs={"workspace_id": self.workspace.id})
+
+        response = self.client.get(url, {"mode": "list", "tab": "queue", "tz": "Asia/Tokyo"})
+
+        self.assertEqual(response.context["display_timezone"], "Asia/Tokyo")
 
 
 class SentTabCheckboxTests(BulkActionBase):
