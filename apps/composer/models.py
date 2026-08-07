@@ -393,6 +393,12 @@ class PlatformPost(models.Model):
         "published": set(),  # terminal
     }
 
+    class FirstCommentStatus(models.TextChoices):
+        NONE = "none", "Not requested"
+        PENDING = "pending", "Pending"
+        POSTED = "posted", "Posted"
+        FAILED = "failed", "Failed"
+
     STATUS_COLORS = {
         "draft": "gray",
         "pending_review": "orange",
@@ -450,6 +456,23 @@ class PlatformPost(models.Model):
     )
     publish_error = models.TextField(blank=True, default="")
     published_at = models.DateTimeField(blank=True, null=True)
+
+    # First-comment outcome. Kept in dedicated columns rather than in
+    # ``platform_extra``: that field is an *input* channel — the publish engine
+    # merges it into ``PublishContent.extra``, which providers forward into
+    # their API payloads — so status written there would ride along on the next
+    # publish. A post whose comment failed must also be distinguishable from a
+    # fully successful one, which needs a queryable column.
+    first_comment_status = models.CharField(
+        max_length=10,
+        choices=FirstCommentStatus.choices,
+        default=FirstCommentStatus.NONE,
+        db_index=True,
+    )
+    first_comment_id = models.CharField(max_length=255, blank=True, default="")
+    first_comment_error = models.TextField(blank=True, default="")
+    first_comment_retry_count = models.PositiveIntegerField(default=0)
+    first_comment_posted_at = models.DateTimeField(blank=True, null=True)
     scheduled_at = models.DateTimeField(
         blank=True,
         null=True,

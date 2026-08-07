@@ -24,12 +24,14 @@ from datetime import timedelta
 from background_task import background
 from django.conf import settings
 from django.db import transaction
+from django.db.models import F
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.composer.models import PlatformPost
 from apps.credentials.models import resolve_platform_credentials
 from providers import get_provider
+from providers.exceptions import ProviderError, RateLimitError
 from providers.types import PostType, PublishContent
 
 from .models import PublishLog, RateLimitState
@@ -91,9 +93,61 @@ def _resolve_publish_credentials(account):
 
 
 MAX_RETRIES = 3
-FIRST_COMMENT_DELAY = getattr(settings, "PUBLISHER_FIRST_COMMENT_DELAY", 120)
 MAX_CONCURRENT_PUBLISHES = getattr(settings, "PUBLISHER_MAX_CONCURRENT_PUBLISHES", 10)
 MAX_CONCURRENT_POSTS = getattr(settings, "PUBLISHER_MAX_CONCURRENT_POSTS", 4)
+
+# First comments retry on their own schedule, separate from the publish retry:
+# the post has already gone out, so there is no double-post risk and no reason
+# to hurry. Deliberately bounded — django-background-tasks' own retry default is
+# 25 attempts, which is not a thing to do to a live Page.
+FIRST_COMMENT_MAX_RETRIES = getattr(settings, "PUBLISHER_FIRST_COMMENT_MAX_RETRIES", 3)
+FIRST_COMMENT_RETRY_BACKOFF = [120, 600, 1800]  # 2min, 10min, 30min
+FirstCommentStatus = PlatformPost.FirstCommentStatus
+
+
+def _first_comment_delay(workspace_id) -> int:
+    """Seconds to wait after publishing before posting the first comment.
+
+    Resolved per workspace at call time through the normal settings cascade
+    (workspace → org → deployment default), so the
+    ``publishing.first_comment_delay_seconds`` knob that already exists in the
+    settings UI actually takes effect. ``PUBLISHER_FIRST_COMMENT_DELAY`` is
+    passed in as the deployment default rather than read afterwards — the
+    cascade's own APP_DEFAULTS floor would otherwise answer for every workspace
+    without an override row, and the env var would never be consulted.
+    """
+    default = getattr(settings, "PUBLISHER_FIRST_COMMENT_DELAY", 120)
+    try:
+        from apps.settings_manager.helpers import get_setting
+
+        value = get_setting(workspace_id, "publishing.first_comment_delay_seconds", default=default)
+        return int(value) if value is not None else default
+    except Exception:
+        logger.warning("Could not resolve first_comment_delay_seconds; using %ss", default, exc_info=True)
+        return default
+
+
+def _provider_and_access_token(account):
+    """Build the provider for ``account`` and return a usably-fresh token.
+
+    Shared by the publish path and the first-comment task: the comment fires
+    minutes after the publish, which is long enough for a token that was fine
+    at publish time to have gone stale.
+
+    Best-effort refresh — on failure we keep the old token and let the API call
+    surface the real error rather than masking it with a refresh error.
+    """
+    provider = get_provider(account.platform, _resolve_publish_credentials(account))
+
+    access_token = account.oauth_access_token
+    if account.token_expires_at and account.is_token_expiring_soon and account.oauth_refresh_token:
+        try:
+            access_token = account.refresh_oauth_token(provider)
+            logger.info("Refreshed token for %s", account)
+        except Exception:
+            logger.exception("Token refresh failed for %s", account)
+
+    return provider, access_token
 
 
 class PublishEngine:
@@ -197,13 +251,37 @@ class PublishEngine:
         # Schedule first comments for successful publishes (non-blocking)
         for pp in platform_posts:
             pp.refresh_from_db()
-            if pp.status != PlatformPost.Status.PUBLISHED:
-                continue
-            if not pp.social_account.supports_first_comment():
-                continue
-            comment_text = pp.effective_first_comment
-            if comment_text:
-                _post_first_comment_task(str(pp.id), schedule=FIRST_COMMENT_DELAY)
+            self._maybe_schedule_first_comment(pp)
+
+    def _maybe_schedule_first_comment(self, platform_post):
+        """Queue the first comment for a freshly published post, once.
+
+        Called from both publish paths — a post that only succeeds on retry
+        used to get no first comment at all. The PENDING guard keeps a second
+        call from queueing a duplicate; the POSTED check inside the task is the
+        real backstop against double-commenting.
+        """
+        if platform_post.status != PlatformPost.Status.PUBLISHED:
+            return
+        if not platform_post.social_account.supports_first_comment():
+            return
+        if not platform_post.effective_first_comment:
+            return
+        if platform_post.first_comment_status in (
+            PlatformPost.FirstCommentStatus.PENDING,
+            PlatformPost.FirstCommentStatus.POSTED,
+        ):
+            return
+
+        # Enqueue before marking PENDING: @background writes its Task row
+        # synchronously, so a crash between the two leaves a task that will
+        # still run (and is idempotent) rather than a row stuck on PENDING
+        # with nothing queued to clear it.
+        delay = _first_comment_delay(platform_post.post.workspace_id)
+        _post_first_comment_task(str(platform_post.id), schedule=delay)
+        PlatformPost.objects.filter(pk=platform_post.pk).update(
+            first_comment_status=PlatformPost.FirstCommentStatus.PENDING
+        )
 
     def _publish_platform_post(self, platform_post):
         """Publish a single PlatformPost to its target platform.
@@ -318,22 +396,10 @@ class PublishEngine:
         account = platform_post.social_account
         platform = account.platform
 
-        credentials = _resolve_publish_credentials(account)
-        provider = get_provider(platform, credentials)
-
-        # Refresh token if expired or expiring soon, for any provider that has
-        # a refresh token stored. This covers OAuth2 providers *and* session
-        # providers like Bluesky, whose accessJwt expires after only a few
-        # hours and must be renewed via refreshSession before each publish.
-        # Best-effort: on refresh failure we keep the old token and let the
-        # publish attempt surface the real error.
-        access_token = account.oauth_access_token
-        if account.token_expires_at and account.is_token_expiring_soon and account.oauth_refresh_token:
-            try:
-                access_token = account.refresh_oauth_token(provider)
-                logger.info("Refreshed token for %s", account)
-            except Exception:
-                logger.exception("Token refresh failed for %s", account)
+        # Refreshes an expiring token first — covers OAuth2 providers *and*
+        # session providers like Bluesky, whose accessJwt expires after only a
+        # few hours and must be renewed before each publish.
+        provider, access_token = _provider_and_access_token(account)
 
         # Download media from storage (S3/cloud) to temp files for upload
         # and collect public URLs (presigned R2 / absolute) for providers
@@ -584,6 +650,7 @@ class PublishEngine:
                 result = self._publish_platform_post(pp)
                 if result.get("success"):
                     self._sync_parent_published_at(pp.post)
+                    self._maybe_schedule_first_comment(pp)
             except Exception:
                 logger.exception("Error retrying PlatformPost %s", pp.id)
 
@@ -619,6 +686,111 @@ class PublishEngine:
             post.save(update_fields=["published_at", "updated_at"])
 
 
+def _is_ambiguous_submission_failure(exc) -> bool:
+    """True when the comment may or may not have been created on the platform.
+
+    A clean 4xx is the platform refusing the request outright, so nothing was
+    created and retrying is safe. A timeout, a dropped connection, or a 5xx
+    leaves it unknown — ``FacebookProvider.publish_comment`` already declines to
+    retry a second target for this reason, and re-queueing the whole task would
+    reintroduce exactly the double-comment it avoids.
+    """
+    if isinstance(exc, RateLimitError):
+        # 429 is a rejection before the write, not an ambiguous outcome.
+        return False
+    status = getattr(exc, "status_code", None)
+    return status is None or status >= 500
+
+
+def _can_reconcile_comments(provider) -> bool:
+    """Whether this provider can check for an already-posted comment.
+
+    The base implementation raises, so identity against it is what distinguishes
+    a real lookup from the no-op default — same test as ``_supports_webhooks``.
+    """
+    from providers.base import SocialProvider
+
+    implementation = getattr(type(provider), "find_own_comment", None)
+    return implementation is not None and implementation is not SocialProvider.find_own_comment
+
+
+def _mark_first_comment_posted(platform_post, comment_id: str) -> None:
+    """Record a first comment that exists on the platform.
+
+    Nothing here may raise: the comment is already live, and an escaping
+    exception would let django-background-tasks re-run the task (its default is
+    25 attempts) against a row still marked PENDING, posting a second one.
+    """
+    try:
+        PlatformPost.objects.filter(pk=platform_post.pk).update(
+            first_comment_status=FirstCommentStatus.POSTED,
+            first_comment_id=str(comment_id or "")[:255],
+            first_comment_error="",
+            first_comment_posted_at=timezone.now(),
+        )
+    except Exception:
+        logger.exception(
+            "First comment for PlatformPost %s is POSTED on the platform but could not be recorded. "
+            "The row still reads pending; do not re-run this task or it will comment twice.",
+            platform_post.id,
+        )
+
+
+def _record_first_comment_failure(
+    platform_post,
+    error_msg: str,
+    *,
+    retryable: bool,
+    retry_after: int | None = None,
+    unexpected: bool = False,
+):
+    """Persist a first-comment failure, and re-queue it when that can help.
+
+    Every exit records state. The old version logged and returned, so a comment
+    that 4xx'd left the post looking completely successful — the failure was
+    only recoverable from worker logs.
+    """
+    exhausted = platform_post.first_comment_retry_count >= FIRST_COMMENT_MAX_RETRIES
+
+    if not retryable or exhausted:
+        reason = "non-retryable" if not retryable else f"after {FIRST_COMMENT_MAX_RETRIES} retries"
+        # An unexpected exception is a bug in this code path, not a platform
+        # rejection — log the stack, or it is indistinguishable from a Graph 4xx.
+        log = logger.exception if unexpected else logger.warning
+        log(
+            "First comment for PlatformPost %s failed (%s): %s",
+            platform_post.id,
+            reason,
+            error_msg,
+        )
+        PlatformPost.objects.filter(pk=platform_post.pk).update(
+            first_comment_status=FirstCommentStatus.FAILED,
+            first_comment_error=error_msg[:2000],
+        )
+        return
+
+    index = min(platform_post.first_comment_retry_count, len(FIRST_COMMENT_RETRY_BACKOFF) - 1)
+    backoff = retry_after or FIRST_COMMENT_RETRY_BACKOFF[index]
+
+    if unexpected:
+        logger.exception("Unexpected error posting first comment for PlatformPost %s", platform_post.id)
+
+    # F() so two tasks racing on the same row cannot both write the same count
+    # and slip past FIRST_COMMENT_MAX_RETRIES.
+    PlatformPost.objects.filter(pk=platform_post.pk).update(
+        first_comment_status=FirstCommentStatus.PENDING,
+        first_comment_error=error_msg[:2000],
+        first_comment_retry_count=F("first_comment_retry_count") + 1,
+    )
+    _post_first_comment_task(str(platform_post.id), schedule=backoff)
+    logger.info(
+        "Retrying first comment for PlatformPost %s in %ss: %s",
+        platform_post.id,
+        backoff,
+        error_msg,
+    )
+
+
 @background(schedule=0)
 def _post_first_comment_task(platform_post_id):
     """Post the first comment as a background task (avoids blocking the publisher thread)."""
@@ -630,21 +802,84 @@ def _post_first_comment_task(platform_post_id):
         logger.warning("PlatformPost %s not found for first comment.", platform_post_id)
         return
 
+    # Idempotency: two publish paths and a retry queue can each land here for
+    # the same row. Commenting twice on a live post is not recoverable.
+    if platform_post.first_comment_status == FirstCommentStatus.POSTED:
+        logger.info("First comment for PlatformPost %s already posted; skipping.", platform_post.id)
+        return
+
     comment_text = platform_post.effective_first_comment
     if not comment_text:
         return
 
+    if not platform_post.platform_post_id:
+        _record_first_comment_failure(
+            platform_post,
+            "No platform post id recorded; nothing to comment on.",
+            retryable=False,
+        )
+        return
+
     account = platform_post.social_account
     try:
-        credentials = _resolve_publish_credentials(account)
-        provider = get_provider(account.platform, credentials)
-        provider.publish_comment(
-            access_token=account.oauth_access_token,
+        provider, access_token = _provider_and_access_token(account)
+    except Exception as exc:
+        _record_first_comment_failure(
+            platform_post,
+            str(exc),
+            retryable=getattr(exc, "retryable", True),
+            unexpected=not isinstance(exc, ProviderError),
+        )
+        return
+
+    # This is a retry, so a previous attempt may have created the comment before
+    # failing (timeout, 5xx). Check before posting a second one.
+    if platform_post.first_comment_retry_count:
+        try:
+            existing = provider.find_own_comment(access_token, platform_post.platform_post_id, comment_text)
+        except NotImplementedError:
+            existing = None
+        except Exception:
+            logger.exception(
+                "Could not check for an existing first comment on PlatformPost %s; skipping this attempt "
+                "rather than risking a duplicate.",
+                platform_post.id,
+            )
+            return
+        if existing:
+            logger.info("First comment for PlatformPost %s was already posted as %s", platform_post.id, existing)
+            _mark_first_comment_posted(platform_post, existing)
+            return
+
+    try:
+        result = provider.publish_comment(
+            access_token=access_token,
             post_id=platform_post.platform_post_id,
             text=comment_text,
         )
-        logger.info("Posted first comment for PlatformPost %s", platform_post.id)
     except NotImplementedError:
         logger.info("First comment not supported for %s", account.platform)
-    except Exception:
-        logger.exception("Failed to post first comment for PlatformPost %s", platform_post.id)
+        return
+    except Exception as exc:
+        # An ambiguous failure is only safe to retry when we can first check
+        # whether the comment landed; otherwise stop, because a duplicate
+        # comment on a live post cannot be taken back.
+        ambiguous = _is_ambiguous_submission_failure(exc)
+        retryable = getattr(exc, "retryable", True)
+        if ambiguous and not _can_reconcile_comments(provider):
+            retryable = False
+        _record_first_comment_failure(
+            platform_post,
+            str(exc),
+            retryable=retryable,
+            # RateLimitError is a sibling of APIError, not a subclass, so branch
+            # on the attributes rather than on the exception type.
+            retry_after=getattr(exc, "retry_after", None),
+            # Provider errors are self-explanatory; anything else is a bug here
+            # and needs the stack to be diagnosable.
+            unexpected=not isinstance(exc, ProviderError),
+        )
+        return
+
+    _mark_first_comment_posted(platform_post, getattr(result, "platform_comment_id", ""))
+    logger.info("Posted first comment for PlatformPost %s", platform_post.id)

@@ -378,6 +378,24 @@
                 </div>
                 {% endif %}
 
+                {% if failed_first_comments %}
+                <!-- The post itself published; only the first comment failed. Say so
+                     explicitly, or a post with a missing comment looks fully successful. -->
+                <div class="border border-amber-200 bg-amber-50 rounded-xl p-3 space-y-1.5">
+                    <div class="flex items-center gap-1.5 text-xs font-semibold text-amber-800">
+                        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>
+                        First comment not posted
+                    </div>
+                    {% for pp in failed_first_comments %}
+                    <p class="text-xs text-amber-700 pl-5.5">
+                        <span class="font-semibold">{{ pp.social_account.account_name|default:pp.social_account.account_handle }}:</span>
+                        {{ pp.first_comment_error|default:"the platform rejected the comment" }}
+                    </p>
+                    {% endfor %}
+                    <p class="text-[11px] text-amber-600 pl-5.5">The post itself published successfully — only the comment failed.</p>
+                </div>
+                {% endif %}
+
                 {% if post and post.status == 'scheduled' %}
                 <!-- Scheduled: editable, but warn that edits affect a live schedule -->
                 <div class="border border-amber-200 bg-amber-50 rounded-xl p-3 flex items-start gap-2">

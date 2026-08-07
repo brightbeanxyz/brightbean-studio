@@ -2,6 +2,7 @@
 
 import logging
 from datetime import timedelta
+from typing import Any
 
 from background_task import background
 from django.utils import timezone
@@ -30,6 +31,39 @@ def _is_recent(ts):
     if timezone.is_naive(ts):
         ts = timezone.make_aware(ts, timezone.get_default_timezone())
     return ts >= timezone.now() - INBOX_BACKLOG_NOTIFY_WINDOW
+
+
+def _related_post_key(extra: dict | None) -> str:
+    """The post id a message hangs off, as PlatformPost stores it.
+
+    Providers report the platform's own id (Facebook's is ``PAGEID_POSTID``);
+    ``stored_post_id`` is the stripped form that matches
+    ``PlatformPost.platform_post_id``. Fall back to the raw id for providers
+    that don't strip.
+    """
+    return str((extra or {}).get("stored_post_id") or (extra or {}).get("post_id") or "")
+
+
+def resolve_related_posts(account, messages) -> dict[str, Any]:
+    """Map post ids in a batch of messages to this account's PlatformPost pks.
+
+    One query for the whole batch rather than one per message — an active Page
+    polls dozens of comments spread over a handful of posts.
+    """
+    from apps.composer.models import PlatformPost
+
+    post_ids = {_related_post_key(getattr(msg, "extra", None)) for msg in messages}
+    post_ids.discard("")
+    if not post_ids:
+        return {}
+
+    return {
+        platform_post_id: pk
+        for platform_post_id, pk in PlatformPost.objects.filter(
+            social_account=account,
+            platform_post_id__in=post_ids,
+        ).values_list("platform_post_id", "id")
+    }
 
 
 class InboxSyncEngine:
@@ -73,7 +107,14 @@ class InboxSyncEngine:
             .values_list("received_at", flat=True)
             .first()
         )
-        is_first_sync = last_msg is None
+        # First-sync suppression is per message *type*, not per account. An
+        # account that has been polling DMs for months is not "first sync", but
+        # the day comment polling starts working its whole comment backlog
+        # arrives at once — and would notify every owner and manager for each
+        # one. A type we have never seen before is a backlog by definition.
+        seen_types = set(
+            InboxMessage.objects.filter(social_account=account).values_list("message_type", flat=True).distinct()
+        )
 
         try:
             messages = provider.get_messages(
@@ -90,30 +131,42 @@ class InboxSyncEngine:
             )
             return
 
-        for msg in messages:
-            # Suppress notifications for the historical backlog pulled on an
-            # account's first sync, but still alert for genuinely recent messages:
-            # a long-quiet account's first real message also has last_msg=None, so
-            # a blanket first-sync mute would silently swallow it. backfill_inbox
-            # seeds explicit history silently (notify=False).
-            notify_new = not is_first_sync or _is_recent(msg.timestamp)
-            self._upsert_message(account, msg, notify=notify_new)
+        related_posts = resolve_related_posts(account, messages)
 
-    def _upsert_message(self, account, msg, notify=True):
+        for msg in messages:
+            # Suppress notifications for the historical backlog pulled the first
+            # time we see a message type, but still alert for genuinely recent
+            # messages: a long-quiet account's first real message also looks like
+            # a backlog, so a blanket mute would silently swallow it.
+            # backfill_inbox seeds explicit history silently (notify=False).
+            is_backlog = msg.message_type not in seen_types
+            notify_new = not is_backlog or _is_recent(msg.timestamp)
+            self._upsert_message(
+                account,
+                msg,
+                notify=notify_new,
+                related_post_id=related_posts.get(_related_post_key(msg.extra)),
+            )
+
+    def _upsert_message(self, account, msg, notify=True, related_post_id=None):
         """Create or update an inbox message, deduplicating by platform_message_id."""
+        defaults = {
+            "workspace": account.workspace,
+            "sender_name": msg.sender_name,
+            "sender_handle": msg.extra.get("sender_handle", msg.sender_id),
+            "sender_avatar_url": msg.extra.get("sender_avatar_url", ""),
+            "body": msg.text,
+            "message_type": msg.message_type,
+            "received_at": msg.timestamp,
+            "extra": msg.extra,
+        }
+        if related_post_id:
+            defaults["related_post_id"] = related_post_id
+
         obj, created = InboxMessage.objects.update_or_create(
             social_account=account,
             platform_message_id=msg.platform_message_id,
-            defaults={
-                "workspace": account.workspace,
-                "sender_name": msg.sender_name,
-                "sender_handle": msg.extra.get("sender_handle", msg.sender_id),
-                "sender_avatar_url": msg.extra.get("sender_avatar_url", ""),
-                "body": msg.text,
-                "message_type": msg.message_type,
-                "received_at": msg.timestamp,
-                "extra": msg.extra,
-            },
+            defaults=defaults,
         )
         if created:
             obj.sentiment = analyze_sentiment(obj.body)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode, urlparse
 
 from .base import SocialProvider
@@ -33,8 +33,9 @@ OAUTH_URL = "https://www.facebook.com/v25.0/dialog/oauth"
 TOKEN_URL = f"{BASE_URL}/oauth/access_token"
 # Webhook fields we subscribe a connected Page to. ``feed`` carries comments on
 # the Page's posts, ``mention`` carries mentions of the Page, ``messages``
-# carries Messenger conversations. These are the only routes by which comments
-# and mentions reach the inbox — there is no polling equivalent.
+# carries Messenger conversations. Webhooks are the low-latency route; the
+# ``get_messages`` poll is the backstop that keeps comments arriving when the
+# subscription is missing or Meta stops delivering.
 FACEBOOK_WEBHOOK_FIELDS = ["feed", "mention", "messages"]
 FACEBOOK_PAGE_INSIGHTS = [
     "page_media_view",
@@ -60,6 +61,22 @@ FACEBOOK_POST_FIELDS = [
     "comments.limit(0).summary(true)",
     "reactions.limit(0).summary(true)",
 ]
+
+# Comment-poll bounds. The poll is a backstop for the ``feed`` webhook, so it
+# trades completeness on very busy Pages for a predictable per-cycle cost: one
+# feed call plus at most FACEBOOK_COMMENT_PAGE_LIMIT follow-ups per post.
+FACEBOOK_FEED_SCAN_LIMIT = 25
+FACEBOOK_COMMENTS_PER_POST = 50
+FACEBOOK_COMMENT_PAGE_LIMIT = 4
+# How far back the *post* scan reaches. Comments on posts older than this are
+# only reachable via the webhook.
+FACEBOOK_FEED_WINDOW_DAYS = 30
+# Overlap applied to the caller's ``since``. The inbox passes the newest
+# received_at across *all* message types for the account, so a DM that arrived
+# after a comment would otherwise hide that comment forever. Re-fetching the
+# overlap is free: _upsert_message only notifies on create.
+FACEBOOK_COMMENT_LOOKBACK_HOURS = 24
+FACEBOOK_COMMENT_FIELDS = "id,message,created_time,from,parent,permalink_url"
 
 # Facebook caps the ``attached_media`` array on a single feed post. Larger sets
 # must use the album-creation flow, which this provider does not implement.
@@ -458,16 +475,74 @@ class FacebookProvider(SocialProvider):
     # Comments
     # ------------------------------------------------------------------
 
+    def _comment_target_ids(self, post_id: str) -> list[str]:
+        """Graph nodes to try, in order, when commenting on a stored post id.
+
+        ``_publish_video`` stores the bare VIDEO id whenever the feed post_id
+        lookup fails (video processing is async). Page-scoping that id
+        fabricates ``{page_id}_{video_id}``, which is not a real object — but
+        the raw video node does accept the comments edge, so it is the fallback.
+        """
+        post_id = str(post_id or "")
+        candidates = [self._page_scoped_post_id(post_id), post_id]
+        return list(dict.fromkeys(candidate for candidate in candidates if candidate))
+
     def publish_comment(self, access_token: str, post_id: str, text: str) -> CommentResult:
-        post_id = self._page_scoped_post_id(post_id)
-        resp = self._request(
-            "POST",
-            f"{BASE_URL}/{post_id}/comments",
-            access_token=access_token,
-            json={"message": text},
+        first_error: APIError | None = None
+        for target in self._comment_target_ids(post_id):
+            try:
+                resp = self._request(
+                    "POST",
+                    f"{BASE_URL}/{target}/comments",
+                    access_token=access_token,
+                    json={"message": text},
+                )
+            except APIError as exc:
+                # Only a "no such object" answer earns a second attempt. On a
+                # 5xx the comment may well have been created server-side, and
+                # posting again would double-comment on a live Page.
+                if exc.status_code not in (400, 404):
+                    raise
+                first_error = first_error or exc
+                logger.info("Facebook comment target %s rejected; trying next candidate", target)
+                continue
+            data = resp.json()
+            return CommentResult(platform_comment_id=data["id"], extra={**data, "post_id": target})
+
+        raise first_error or APIError(
+            f"No usable Facebook comment target for post {post_id}",
+            platform=self.platform_name,
         )
-        data = resp.json()
-        return CommentResult(platform_comment_id=data["id"], extra=data)
+
+    def find_own_comment(self, access_token: str, post_id: str, text: str) -> str | None:
+        """Find a comment the Page already posted on ``post_id`` with this text.
+
+        Called before retrying a first comment whose previous attempt failed
+        ambiguously. Errs toward reporting a match: a false positive costs one
+        skipped comment, a false negative posts a duplicate on a live Page.
+        """
+        page_id = str(self.credentials.get("page_id") or "")
+
+        for target in self._comment_target_ids(post_id):
+            try:
+                resp = self._request(
+                    "GET",
+                    f"{BASE_URL}/{target}/comments",
+                    access_token=access_token,
+                    params={"fields": "id,message,from", "limit": FACEBOOK_COMMENTS_PER_POST},
+                )
+            except APIError:
+                continue
+
+            for comment in resp.json().get("data", []):
+                author_id = str((comment.get("from") or {}).get("id") or "")
+                # Only skip on a *known* mismatch — an unreadable author must
+                # not turn into "not ours, go ahead and post again".
+                if page_id and author_id and author_id != page_id:
+                    continue
+                if (comment.get("message") or "") == text:
+                    return str(comment.get("id") or "")
+        return None
 
     # ------------------------------------------------------------------
     # Analytics
@@ -649,6 +724,30 @@ class FacebookProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_messages(self, access_token: str, since: datetime | None = None) -> list[InboxMessage]:
+        """Poll Messenger DMs and Page-post comments.
+
+        The two halves need different permissions (``pages_messaging`` vs.
+        ``pages_read_user_content``) and fail independently, so one missing
+        permission must not blank the other — a single raise here would abort
+        the whole account's sync in ``InboxSyncEngine._sync_account``.
+        """
+        messages: list[InboxMessage] = []
+        failures: list[Exception] = []
+
+        for label, fetch in (("DM", self._fetch_direct_messages), ("comment", self._fetch_post_comments)):
+            try:
+                messages.extend(fetch(access_token, since))
+            except Exception as exc:
+                failures.append(exc)
+                logger.warning("Facebook %s poll failed: %s", label, exc)
+
+        # Nothing came back at all: surface the first error so the sync engine
+        # logs a real cause instead of silently recording an empty poll.
+        if failures and not messages:
+            raise failures[0]
+        return messages
+
+    def _fetch_direct_messages(self, access_token: str, since: datetime | None = None) -> list[InboxMessage]:
         page_id = self.credentials.get("page_id", "me")
         params: dict = {}
         if since:
@@ -693,6 +792,157 @@ class FacebookProvider(SocialProvider):
                 )
         return messages
 
+    def _fetch_post_comments(self, access_token: str, since: datetime | None = None) -> list[InboxMessage]:
+        """Poll comments on the Page's recent posts.
+
+        The ``feed`` webhook delivers these in near real time, but only when the
+        Page subscription *and* the app's Webhooks config are both in place. A
+        Page missing either is otherwise deaf to comments forever, with no way
+        to backfill — this poll is what makes that recoverable.
+        """
+        # No page_id means the own-comment filter below cannot recognise our own
+        # activity, which would ingest the Page's own first comments as inbound
+        # customer messages. Refuse to poll rather than do that.
+        page_id = str(self.credentials.get("page_id") or "")
+        if not page_id:
+            logger.warning("Skipping Facebook comment poll: no page_id in credentials")
+            return []
+
+        # ``since`` on the /feed edge filters by POST creation time, not comment
+        # time, so it can only bound how far back we look for *posts*. Passing
+        # the caller's ``since`` here would hide every new comment on an older
+        # post. Comments are filtered on their own timestamp below.
+        feed_floor = datetime.now(UTC) - timedelta(days=FACEBOOK_FEED_WINDOW_DAYS)
+        resp = self._request(
+            "GET",
+            f"{BASE_URL}/{page_id}/feed",
+            access_token=access_token,
+            params={
+                "fields": (
+                    "id,created_time,permalink_url,"
+                    f"comments.limit({FACEBOOK_COMMENTS_PER_POST})"
+                    f"{{{FACEBOOK_COMMENT_FIELDS}}}"
+                ),
+                "limit": FACEBOOK_FEED_SCAN_LIMIT,
+                "since": int(feed_floor.timestamp()),
+            },
+        )
+
+        # Normalize once here so the per-comment compare can never mix an aware
+        # Graph timestamp with a naive caller-supplied ``since``.
+        cutoff = None
+        if since:
+            cutoff = (since if since.tzinfo else since.replace(tzinfo=UTC)) - timedelta(
+                hours=FACEBOOK_COMMENT_LOOKBACK_HOURS
+            )
+        messages: list[InboxMessage] = []
+        seen: set[str] = set()
+
+        for post in resp.json().get("data", []):
+            # One unreadable or over-paginated post must not discard the
+            # comments already collected from every earlier post in this poll.
+            try:
+                comments = post.get("comments") or {}
+                for comment in self._iter_comments(access_token, comments):
+                    message = self._comment_to_message(comment, post, page_id, cutoff, seen)
+                    if message is not None:
+                        messages.append(message)
+            except Exception as exc:
+                logger.warning("Skipping Facebook comments for post %s: %s", post.get("id"), exc)
+
+        logger.debug("Facebook comment poll for page %s produced %d message(s)", page_id, len(messages))
+        return messages
+
+    def _iter_comments(self, access_token: str, comments: dict):
+        """Yield a post's comments, following at most a bounded number of pages."""
+        pages = 0
+        while comments:
+            yield from comments.get("data", [])
+
+            next_url = (comments.get("paging") or {}).get("next")
+            pages += 1
+            if not next_url or pages >= FACEBOOK_COMMENT_PAGE_LIMIT:
+                if next_url:
+                    logger.debug("Facebook comment pagination capped at %d pages", FACEBOOK_COMMENT_PAGE_LIMIT)
+                return
+            # Pin the cursor to Graph's host — this is a URL from a response
+            # body. And re-send the token: ``_request`` authenticates with an
+            # Authorization header, so Graph builds ``paging.next`` from a query
+            # string that never contained one.
+            if urlparse(next_url).netloc != urlparse(BASE_URL).netloc:
+                logger.warning("Ignoring off-host Facebook comment paging URL")
+                return
+            comments = self._request("GET", next_url, access_token=access_token).json()
+
+    def _comment_to_message(
+        self,
+        comment: dict,
+        post: dict,
+        page_id: str,
+        cutoff: datetime | None,
+        seen: set[str],
+    ) -> InboxMessage | None:
+        """Convert one Graph comment to an InboxMessage, or None to skip it."""
+        comment_id = str(comment.get("id") or "")
+        if not comment_id or comment_id in seen:
+            return None
+
+        author = comment.get("from") or {}
+        author_id = str(author.get("id") or "")
+        # The Page's own comments — including the first comment we post
+        # ourselves — must not come back as inbound messages. An absent author
+        # means a privacy-restricted third party: the Page's own comments always
+        # carry ``from``, so keep those rather than dropping them.
+        if author_id and author_id == str(page_id):
+            return None
+
+        timestamp = self._parse_graph_time(comment.get("created_time"))
+        if timestamp is None:
+            logger.debug("Skipping Facebook comment %s with unparseable created_time", comment_id)
+            return None
+        if cutoff and timestamp < cutoff:
+            return None
+
+        seen.add(comment_id)
+        graph_post_id = str(post.get("id") or "")
+        return InboxMessage(
+            platform_message_id=comment_id,
+            sender_id=author_id,
+            sender_name=author.get("name", ""),
+            text=comment.get("message", ""),
+            timestamp=timestamp,
+            message_type="comment",
+            extra={
+                "comment_id": comment_id,
+                "post_id": graph_post_id,
+                # Matches PlatformPost.platform_post_id, which stores the id
+                # without the page prefix — used to link related_post.
+                "stored_post_id": self._stored_post_id(graph_post_id),
+                "parent_id": str((comment.get("parent") or {}).get("id") or ""),
+                "permalink_url": comment.get("permalink_url", ""),
+                "post_permalink_url": post.get("permalink_url", ""),
+                "sender_handle": author_id,
+                "reply_edge": "comment",
+                "source": "poll",
+            },
+        )
+
+    @staticmethod
+    def _parse_graph_time(value: str | None) -> datetime | None:
+        """Parse Graph's ``2026-08-07T12:34:56+0000`` timestamps.
+
+        Always returns an aware datetime. A value without an offset would
+        otherwise be compared against an aware cutoff (TypeError) and stored as
+        a naive ``received_at``; Graph serves UTC, so assume it.
+        """
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("+0000", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
     def reply_to_message(
         self,
         access_token: str,
@@ -728,10 +978,21 @@ class FacebookProvider(SocialProvider):
         return ReplyResult(platform_message_id=data.get("message_id", ""), extra=data)
 
     def reply_to_comment(self, access_token: str, comment_id: str, text: str, extra: dict | None = None) -> ReplyResult:
-        """Reply to a comment or mention by commenting on it."""
+        """Reply to a comment or mention by commenting on it.
+
+        Facebook threads comments only two levels deep, so replying *to a reply*
+        must target its parent — posting to a second-level comment's own
+        ``comments`` edge is rejected.
+
+        ``parent_id`` is only usable when it names a *comment*. The ``feed``
+        webhook sets it to the POST id for a top-level comment, and targeting
+        that would publish a new top-level comment on the post instead of
+        answering the person — so a parent that matches the post is ignored.
+        """
+        target = self._comment_reply_target(comment_id, extra)
         resp = self._request(
             "POST",
-            f"{BASE_URL}/{comment_id}/comments",
+            f"{BASE_URL}/{target}/comments",
             access_token=access_token,
             json={"message": text},
         )
@@ -752,6 +1013,39 @@ class FacebookProvider(SocialProvider):
         )
         return bool(resp.json().get("success"))
 
+    @staticmethod
+    def _comment_reply_target(comment_id: str, extra: dict | None) -> str:
+        """The node a reply to ``comment_id`` should be posted on.
+
+        Returns the parent comment for a nested reply, and the comment itself
+        otherwise. A ``parent_id`` equal to the post (what the ``feed`` webhook
+        reports for every top-level comment) is not a comment parent and must
+        not be used, or the reply becomes a new top-level post comment.
+        """
+        extra = extra or {}
+        parent_id = str(extra.get("parent_id") or "")
+        if not parent_id:
+            return comment_id
+
+        post_ids = {
+            str(extra.get("post_id") or ""),
+            str(extra.get("stored_post_id") or ""),
+        }
+        post_ids.discard("")
+        if parent_id in post_ids or FacebookProvider._stored_post_id(parent_id) in post_ids:
+            return comment_id
+        return parent_id
+
+    def get_webhook_subscriptions(self, access_token: str, account_id: str) -> list[dict]:
+        """List the apps subscribed to this Page and the fields each receives."""
+        resp = self._request(
+            "GET",
+            f"{BASE_URL}/{account_id}/subscribed_apps",
+            access_token=access_token,
+            params={"fields": "id,name,subscribed_fields"},
+        )
+        return resp.json().get("data", [])
+
     def unsubscribe_webhooks(self, access_token: str, account_id: str) -> bool:
         resp = self._request(
             "DELETE",
@@ -763,6 +1057,27 @@ class FacebookProvider(SocialProvider):
     # ------------------------------------------------------------------
     # Token management
     # ------------------------------------------------------------------
+
+    def debug_token(self, access_token: str) -> dict:
+        """Inspect a token: validity, type, expiry and the scopes it carries.
+
+        ``/me/permissions`` answers for a *user* token; a Page token has to go
+        through ``/debug_token`` with an app token, which is why this exists
+        separately from the OAuth flow.
+        """
+        app_id = self.credentials.get("client_id", "")
+        app_secret = self.credentials.get("client_secret", "")
+        if not app_id or not app_secret:
+            raise APIError(
+                "App credentials are required to inspect a Facebook token",
+                platform=self.platform_name,
+            )
+        resp = self._request(
+            "GET",
+            f"{BASE_URL}/debug_token",
+            params={"input_token": access_token, "access_token": f"{app_id}|{app_secret}"},
+        )
+        return resp.json().get("data", {})
 
     def revoke_token(self, access_token: str) -> bool:
         try:

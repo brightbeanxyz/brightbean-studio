@@ -7,6 +7,7 @@ import json
 import pytest
 from django.test import override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.inbox.models import InboxMessage
 from apps.social_accounts.models import SocialAccount
@@ -555,3 +556,290 @@ class TestInstagramMentionReplyEdge:
         msg = InboxMessage.objects.get(platform_message_id="m-2")
         assert msg.extra["reply_edge"] == "media"
         assert msg.body  # a pointer, not a blank row
+
+
+@pytest.fixture
+def fb_account(db, workspace):
+    return SocialAccount.objects.create(
+        workspace=workspace,
+        platform="facebook",
+        account_platform_id="page-feed",
+        account_name="Feed Page",
+    )
+
+
+def _post_feed_event(client, value, page_id="page-feed", secret="fb-secret"):
+    payload = {"entry": [{"id": page_id, "changes": [{"field": "feed", "value": value}]}]}
+    body = json.dumps(payload).encode()
+    return client.post(
+        reverse("inbox_webhooks:webhook_facebook"),
+        data=body,
+        content_type="application/json",
+        HTTP_X_HUB_SIGNATURE_256=_sign_body(body, secret),
+    )
+
+
+_FB_ENV = override_settings(PLATFORM_CREDENTIALS_FROM_ENV={"facebook": {"app_secret": "fb-secret"}})
+
+
+@pytest.mark.django_db
+class TestFacebookFeedItemFiltering:
+    """`feed` carries every Page timeline change, not just comments."""
+
+    @_FB_ENV
+    def test_a_reaction_on_a_comment_does_not_become_an_inbox_item(self, client, fb_account):
+        # Reactions carry comment_id too, so without an `item` gate this lands
+        # in the inbox as an empty-bodied "comment".
+        response = _post_feed_event(
+            client,
+            {
+                "item": "reaction",
+                "reaction_type": "like",
+                "comment_id": "comment-liked",
+                "post_id": "page-feed_post-1",
+                "from": {"id": "user-9", "name": "Sam"},
+            },
+        )
+
+        assert response.status_code == 200
+        assert not InboxMessage.objects.filter(social_account=fb_account).exists()
+
+    @_FB_ENV
+    def test_the_pages_own_new_post_does_not_become_an_inbox_item(self, client, fb_account):
+        response = _post_feed_event(
+            client,
+            {
+                "item": "status",
+                "post_id": "page-feed_post-2",
+                "message": "Our new post",
+                "from": {"id": "page-feed", "name": "Feed Page"},
+            },
+        )
+
+        assert response.status_code == 200
+        assert not InboxMessage.objects.filter(social_account=fb_account).exists()
+
+    @_FB_ENV
+    def test_a_removed_comment_is_archived_rather_than_recreated(self, client, fb_account):
+        existing = InboxMessage.objects.create(
+            workspace=fb_account.workspace,
+            social_account=fb_account,
+            platform_message_id="comment-gone",
+            message_type=InboxMessage.MessageType.COMMENT,
+            sender_name="Sam",
+            body="Deleted soon",
+            received_at=timezone.now(),
+        )
+
+        response = _post_feed_event(
+            client,
+            {
+                "item": "comment",
+                "verb": "remove",
+                "comment_id": "comment-gone",
+                "post_id": "page-feed_post-1",
+                "from": {"id": "user-9", "name": "Sam"},
+            },
+        )
+
+        assert response.status_code == 200
+        existing.refresh_from_db()
+        assert existing.status == InboxMessage.Status.ARCHIVED
+        assert InboxMessage.objects.filter(social_account=fb_account).count() == 1
+
+    @_FB_ENV
+    def test_an_added_comment_still_arrives(self, client, fb_account):
+        response = _post_feed_event(
+            client,
+            {
+                "item": "comment",
+                "verb": "add",
+                "comment_id": "comment-new",
+                "post_id": "page-feed_post-1",
+                "message": "Nice work",
+                "from": {"id": "user-9", "name": "Sam"},
+            },
+        )
+
+        assert response.status_code == 200
+        message = InboxMessage.objects.get(social_account=fb_account, platform_message_id="comment-new")
+        assert message.body == "Nice work"
+        assert message.extra["stored_post_id"] == "post-1"
+
+    @_FB_ENV
+    def test_an_edited_comment_we_have_not_seen_still_arrives(self, client, fb_account):
+        response = _post_feed_event(
+            client,
+            {
+                "item": "comment",
+                "verb": "edited",
+                "comment_id": "comment-edited",
+                "post_id": "page-feed_post-1",
+                "message": "Nice work, actually",
+                "from": {"id": "user-9", "name": "Sam"},
+            },
+        )
+
+        assert response.status_code == 200
+        assert InboxMessage.objects.filter(platform_message_id="comment-edited").exists()
+
+    @_FB_ENV
+    def test_a_comment_is_linked_to_the_post_it_belongs_to(self, client, fb_account):
+        from apps.composer.models import PlatformPost, Post
+
+        post = Post.objects.create(workspace=fb_account.workspace, caption="hi")
+        platform_post = PlatformPost.objects.create(
+            post=post,
+            social_account=fb_account,
+            status=PlatformPost.Status.PUBLISHED,
+            platform_post_id="post-1",
+        )
+
+        _post_feed_event(
+            client,
+            {
+                "item": "comment",
+                "verb": "add",
+                "comment_id": "comment-linked",
+                "post_id": "page-feed_post-1",
+                "message": "Nice",
+                "from": {"id": "user-9", "name": "Sam"},
+            },
+        )
+
+        message = InboxMessage.objects.get(platform_message_id="comment-linked")
+        assert message.related_post_id == platform_post.id
+
+    @_FB_ENV
+    def test_a_top_level_comments_parent_id_is_not_stored(self, client, fb_account):
+        """Facebook reports parent_id == post_id for a top-level comment. Keeping
+        it would make the inbox reply post a new top-level comment on the post
+        instead of answering the person."""
+        _post_feed_event(
+            client,
+            {
+                "item": "comment",
+                "verb": "add",
+                "comment_id": "comment-top",
+                "post_id": "page-feed_post-1",
+                "parent_id": "page-feed_post-1",
+                "message": "Hello",
+                "from": {"id": "user-9", "name": "Sam"},
+            },
+        )
+
+        message = InboxMessage.objects.get(platform_message_id="comment-top")
+        assert "parent_id" not in message.extra
+
+    @_FB_ENV
+    def test_a_real_reply_keeps_its_parent_comment_id(self, client, fb_account):
+        _post_feed_event(
+            client,
+            {
+                "item": "comment",
+                "verb": "add",
+                "comment_id": "comment-child",
+                "post_id": "page-feed_post-1",
+                "parent_id": "comment-parent",
+                "message": "Replying",
+                "from": {"id": "user-9", "name": "Sam"},
+            },
+        )
+
+        message = InboxMessage.objects.get(platform_message_id="comment-child")
+        assert message.extra["parent_id"] == "comment-parent"
+
+    @_FB_ENV
+    def test_an_edit_replaces_the_stored_body(self, client, fb_account):
+        base = {
+            "item": "comment",
+            "comment_id": "comment-edit",
+            "post_id": "page-feed_post-1",
+            "from": {"id": "user-9", "name": "Sam"},
+        }
+        _post_feed_event(client, {**base, "verb": "add", "message": "this is broken"})
+        _post_feed_event(client, {**base, "verb": "edited", "message": "never mind, fixed it"})
+
+        message = InboxMessage.objects.get(platform_message_id="comment-edit")
+        assert message.body == "never mind, fixed it"
+        assert InboxMessage.objects.filter(social_account=fb_account).count() == 1
+
+    @_FB_ENV
+    def test_a_mention_carries_the_stripped_post_id(self, client, fb_account):
+        from apps.composer.models import PlatformPost, Post
+
+        post = Post.objects.create(workspace=fb_account.workspace, caption="hi")
+        platform_post = PlatformPost.objects.create(
+            post=post,
+            social_account=fb_account,
+            status=PlatformPost.Status.PUBLISHED,
+            platform_post_id="post-9",
+        )
+        payload = {
+            "entry": [
+                {
+                    "id": "page-feed",
+                    "changes": [
+                        {
+                            "field": "mention",
+                            "value": {
+                                "post_id": "page-feed_post-9",
+                                "message": "shout out",
+                                "from": {"id": "user-9", "name": "Sam"},
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        client.post(
+            reverse("inbox_webhooks:webhook_facebook"),
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=_sign_body(body, "fb-secret"),
+        )
+
+        message = InboxMessage.objects.get(platform_message_id="page-feed_post-9")
+        assert message.extra["stored_post_id"] == "post-9"
+        assert message.related_post_id == platform_post.id
+
+    @_FB_ENV
+    def test_an_edit_does_not_overwrite_a_manual_sentiment(self, client, fb_account):
+        """A human who set the sentiment by hand outranks the classifier."""
+        base = {
+            "item": "comment",
+            "comment_id": "comment-manual",
+            "post_id": "page-feed_post-1",
+            "from": {"id": "user-9", "name": "Sam"},
+        }
+        _post_feed_event(client, {**base, "verb": "add", "message": "terrible"})
+
+        message = InboxMessage.objects.get(platform_message_id="comment-manual")
+        message.sentiment = InboxMessage.Sentiment.POSITIVE
+        message.sentiment_source = InboxMessage.SentimentSource.MANUAL
+        message.save(update_fields=["sentiment", "sentiment_source"])
+
+        _post_feed_event(client, {**base, "verb": "edited", "message": "still terrible"})
+
+        message.refresh_from_db()
+        assert message.body == "still terrible"
+        assert message.sentiment == InboxMessage.Sentiment.POSITIVE
+        assert message.sentiment_source == InboxMessage.SentimentSource.MANUAL
+
+    @_FB_ENV
+    def test_an_edit_reclassifies_an_auto_scored_comment(self, client, fb_account):
+        base = {
+            "item": "comment",
+            "comment_id": "comment-auto",
+            "post_id": "page-feed_post-1",
+            "from": {"id": "user-9", "name": "Sam"},
+        }
+        _post_feed_event(client, {**base, "verb": "add", "message": "this is terrible"})
+        _post_feed_event(client, {**base, "verb": "edited", "message": "this is great, thanks!"})
+
+        message = InboxMessage.objects.get(platform_message_id="comment-auto")
+        assert message.sentiment_source == InboxMessage.SentimentSource.AUTO
+        from apps.inbox.sentiment import analyze_sentiment
+
+        assert message.sentiment == analyze_sentiment("this is great, thanks!")
