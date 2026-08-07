@@ -262,6 +262,51 @@ class TestOAuthCallbackView:
         response = authenticated_client.get(url, {"code": "abc123", "state": "invalid_state"})
         assert response.status_code == 302
 
+    def test_threads_callback_persists_a_refresh_credential(self, authenticated_client, workspace, user):
+        """A Threads connect must leave the account refreshable.
+
+        Threads returns no separate refresh token, so the provider hands back the
+        long-lived access token as one. Runs the real provider with only the HTTP
+        layer stubbed: if any link in that chain drops it, the account stores an
+        empty oauth_refresh_token, every refresh gate skips it, and the 60-day
+        token lapses silently — the original bug.
+        """
+        from providers.threads import ThreadsProvider
+
+        nonce = "nonce-threads"
+        state = _sign_state(workspace.id, "threads", user.id, nonce)
+        session = authenticated_client.session
+        session[OAUTH_SESSION_KEY] = {"nonce": nonce}
+        session.save()
+
+        responses = {
+            "oauth/access_token": {"access_token": "short-lived", "user_id": "th-1"},
+            "/access_token": {"access_token": "long-lived", "expires_in": 5184000},
+            "/me": {"id": "th-1", "username": "tester", "name": "Tester"},
+        }
+
+        def _stub(method, url, **kwargs):
+            for fragment, body in responses.items():
+                if url.endswith(fragment):
+                    return MagicMock(json=MagicMock(return_value=body))
+            raise AssertionError(f"unexpected Threads request: {url}")
+
+        url = reverse("social_accounts:oauth_callback", kwargs={"platform": "threads"})
+        with (
+            patch.object(ThreadsProvider, "_request", side_effect=_stub),
+            patch(
+                "apps.social_accounts.views._get_provider_for_platform",
+                return_value=ThreadsProvider({"app_id": "i", "app_secret": "s"}),
+            ),
+        ):
+            response = authenticated_client.get(url, {"code": "abc123", "state": state})
+
+        assert response.status_code == 302
+        account = SocialAccount.objects.get(workspace=workspace, platform="threads", account_platform_id="th-1")
+        assert account.oauth_access_token == "long-lived"
+        assert account.oauth_refresh_token == "long-lived"
+        assert account.token_expires_at is not None
+
     def test_instagram_redirects_to_account_selection(self, authenticated_client, workspace, user):
         nonce = "nonce-123"
         state = _sign_state(workspace.id, "instagram", user.id, nonce)
