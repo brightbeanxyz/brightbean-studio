@@ -369,6 +369,17 @@ _INSTAGRAM_LOGIN_CREDENTIALS = {
     "app_id": env("PLATFORM_INSTAGRAM_APP_ID", default=""),
     "app_secret": env("PLATFORM_INSTAGRAM_APP_SECRET", default=""),
 }
+# Threads has its own app identity: a Meta app carrying the "Access the Threads
+# API" use case gets a Threads App ID / Secret distinct from the Facebook pair
+# (App settings -> Basic -> Threads App ID). Sending the Facebook App ID to
+# threads.com/oauth/authorize fails with error 4476002 ("No app ID was provided
+# in the request"), so these deliberately do NOT fall back to _META_CREDENTIALS.
+# Left unset, Threads stays unconfigured and resolves through the org's
+# admin-entered PlatformCredential row instead.
+_THREADS_CREDENTIALS = {
+    "app_id": env("PLATFORM_THREADS_APP_ID", default=""),
+    "app_secret": env("PLATFORM_THREADS_APP_SECRET", default=""),
+}
 _LINKEDIN_LEGACY_CLIENT_ID = env("PLATFORM_LINKEDIN_CLIENT_ID", default="")
 _LINKEDIN_LEGACY_CLIENT_SECRET = env("PLATFORM_LINKEDIN_CLIENT_SECRET", default="")
 
@@ -399,17 +410,20 @@ elif _LINKEDIN_COMPANY_CREDENTIALS["client_id"]:
         "_oauth_mode": "community_management",
     }
 else:
-    # No LinkedIn env vars set. Keep `_oauth_mode` out so the dict's values are all
-    # falsy and `_get_configured_platforms()` doesn't false-positive (it treats any
-    # truthy credential value as "configured"). The provider defaults to OIDC mode
+    # No LinkedIn env vars set. Keep `_oauth_mode` out so the dict carries nothing
+    # but the empty required keys — `_get_configured_platforms()` and
+    # `resolve_platform_credentials()` both gate on `derive_is_configured`, which
+    # reads only client_id / client_secret. The provider defaults to OIDC mode
     # via `_is_oidc_mode` if it ever sees an empty credentials dict.
     _LINKEDIN_PERSONAL_CREDENTIALS = {"client_id": "", "client_secret": ""}
 
 PLATFORM_CREDENTIALS_FROM_ENV = {
-    # Meta platforms - Facebook, Instagram, and Threads share the same app
+    # Meta platforms - Facebook and Instagram share the same app
     "facebook": _META_CREDENTIALS,
     "instagram": _META_CREDENTIALS,
-    "threads": _META_CREDENTIALS,
+    # Threads runs on the same Meta app but a different app identity - see
+    # _THREADS_CREDENTIALS above and the README "Meta" section.
+    "threads": _THREADS_CREDENTIALS,
     # Instagram (Direct) - uses Instagram Login with separate Instagram App credentials.
     # Despite the platform key, this targets Professional (Business/Creator) IG accounts
     # without requiring a linked Facebook Page. See providers/instagram_login.py.

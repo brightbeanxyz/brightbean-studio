@@ -22,7 +22,7 @@ from django.views.decorators.http import require_GET, require_POST
 from django_ratelimit.decorators import ratelimit
 
 from apps.common.validators import is_safe_url as _is_safe_url
-from apps.credentials.models import PlatformCredential, resolve_platform_credentials
+from apps.credentials.models import PlatformCredential, derive_is_configured, resolve_platform_credentials
 from apps.members.decorators import require_permission
 
 from .models import MastodonAppRegistration, PlatformVisibility, SocialAccount
@@ -83,7 +83,12 @@ def _get_configured_platforms(org_id):
     )
     env_creds = getattr(settings, "PLATFORM_CREDENTIALS_FROM_ENV", {})
     for platform, creds in env_creds.items():
-        if any(v for v in creds.values()):
+        # Same completeness rule the credential resolver applies, so the grid can
+        # never offer a Connect button that resolution will reject. A truthiness
+        # check here would let a half-filled pair (app id set, secret missing)
+        # render as connectable, walk the user through the platform's consent
+        # screen, and only fail at token exchange with a generic error.
+        if derive_is_configured(platform, creds):
             configured.add(platform)
 
     # Session-auth platforms (e.g. Bluesky) don't need app-level credentials —

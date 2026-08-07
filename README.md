@@ -374,10 +374,10 @@ For example, if your `APP_URL` is `https://brightbean.example.com`, the Facebook
 
 ### Meta (Facebook, Instagram, Threads)
 
-Facebook, Instagram, and Threads all use the same Meta app credentials.
+Facebook and Instagram share the same Meta app credentials. Threads runs on the same Meta app but uses a **separate app identity** — its own App ID, App Secret, and redirect URI list (steps 5-6 below).
 
 1. Go to [Meta for Developers](https://developers.facebook.com/) and create a new app (type: **Business**)
-2. Under **App Settings → Basic**, copy your **App ID** and **App Secret**
+2. Under **App Settings → Basic**, copy your **App ID** and **App Secret** — the plain ones, for Facebook and Instagram. Once the Threads use case is added this page also lists a **Threads App ID** / **Threads App Secret**; those are a different app identity and belong in the Threads variables in step 6, not here.
 3. In the App Dashboard, go to **Use cases** and add the following four use cases. For each use case, click into it and go to **Permissions and features** to add the required optional permissions:
 
    **Use case: "Manage everything on your Page"** (Facebook)
@@ -399,13 +399,23 @@ Facebook, Instagram, and Threads all use the same Meta app credentials.
    ```
    {APP_URL}/social-accounts/callback/facebook/
    {APP_URL}/social-accounts/callback/instagram/
-   {APP_URL}/social-accounts/callback/threads/
    ```
+   > **Threads is separate.** Its callback does **not** belong here — the Threads use case keeps its own redirect URI list. See step 6.
 5. Set the environment variables:
    ```
    PLATFORM_FACEBOOK_APP_ID=your-app-id
    PLATFORM_FACEBOOK_APP_SECRET=your-app-secret
    ```
+6. **Threads:** the "Access the Threads API" use case gets its own App ID, App Secret, and redirect URIs. Go to **Use cases → Access the Threads API → Settings** and add the Threads redirect URI:
+   ```
+   {APP_URL}/social-accounts/callback/threads/
+   ```
+   Then copy the **Threads App ID** and **Threads App Secret** (also listed under **App settings → Basic**, alongside — and different from — your Facebook App ID) and set:
+   ```
+   PLATFORM_THREADS_APP_ID=your-threads-app-id
+   PLATFORM_THREADS_APP_SECRET=your-threads-app-secret
+   ```
+   These have no fallback: until both are set, Threads shows as **Not Configured** on the connect page. Sending the Facebook App ID to Threads fails with error `4476002`.
 
 ### Instagram (Direct, via Instagram Login)
 
@@ -684,6 +694,9 @@ Make sure the Tailwind watcher is running: `cd theme/static_src && npm run start
 
 **OAuth callback errors ("redirect URI mismatch")**
 The redirect URI registered on the platform must exactly match `{APP_URL}/social-accounts/callback/{platform}/`. Check that `APP_URL` in `.env` matches the URL you're accessing (including `http` vs `https` and port number).
+
+**Threads: "No app ID was provided in the request" (error `4476002`)**
+Threads uses its own App ID, not the Facebook one. Set `PLATFORM_THREADS_APP_ID` / `PLATFORM_THREADS_APP_SECRET` from **Use cases → Access the Threads API → Settings**, and register `{APP_URL}/social-accounts/callback/threads/` in that same panel — the Facebook Login redirect URI list does not cover Threads. See the [Meta](#meta-facebook-instagram-threads) section.
 
 **Background tasks not running (posts not publishing)**
 Make sure the worker is running: `python manage.py process_tasks`. In Docker: check `docker compose logs worker`.

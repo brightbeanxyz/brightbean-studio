@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.core import signing
+from django.test import override_settings
 from django.urls import reverse
 
 from apps.social_accounts.models import SocialAccount
@@ -140,6 +141,54 @@ class TestConnectPlatformView:
         assert verifier  # non-empty
         _, kwargs = mock_provider.get_auth_url.call_args
         assert kwargs["code_verifier"] == verifier
+
+    @override_settings(
+        PLATFORM_CREDENTIALS_FROM_ENV={
+            "facebook": {"app_id": "FB_ID", "app_secret": "FB_SECRET"},
+            "threads": {"app_id": "", "app_secret": ""},
+        }
+    )
+    def test_threads_not_offered_on_meta_credentials_alone(self, authenticated_client, workspace):
+        """Threads authorizes against its own App ID, never the Facebook one.
+
+        With only Meta credentials set, offering a Connect button would dead-end
+        at Meta's error 4476002, so the platform must read as unconfigured.
+        """
+        url = reverse("social_accounts:connect", kwargs={"workspace_id": workspace.id})
+
+        # The grid renders Threads as "Not Configured" while Facebook stays live.
+        grid = authenticated_client.get(url)
+        assert "threads" not in grid.context["configured_platforms"]
+        assert "facebook" in grid.context["configured_platforms"]
+
+        response = authenticated_client.post(url, {"platform": "threads"})
+        assert response.status_code == 302
+        assert response.url == url  # bounced back to the grid, not off to Meta
+
+    @override_settings(PLATFORM_CREDENTIALS_FROM_ENV={"threads": {"app_id": "TH_ID", "app_secret": "TH_SECRET"}})
+    def test_threads_connect_uses_threads_app_id(self, authenticated_client, workspace):
+        url = reverse("social_accounts:connect", kwargs={"workspace_id": workspace.id})
+        response = authenticated_client.post(url, {"platform": "threads"})
+        assert response.status_code == 302
+        assert response.url.startswith("https://www.threads.com/oauth/authorize?")
+        assert "client_id=TH_ID" in response.url
+
+    @override_settings(PLATFORM_CREDENTIALS_FROM_ENV={"threads": {"app_id": "TH_ID", "app_secret": ""}})
+    def test_half_configured_platform_is_not_offered(self, authenticated_client, workspace):
+        """An app id without its secret must not render a Connect button.
+
+        The credential resolver requires both keys, so offering the button would
+        walk the user through the platform's consent screen only to fail at token
+        exchange with a generic "Failed to connect account".
+        """
+        url = reverse("social_accounts:connect", kwargs={"workspace_id": workspace.id})
+
+        grid = authenticated_client.get(url)
+        assert "threads" not in grid.context["configured_platforms"]
+
+        response = authenticated_client.post(url, {"platform": "threads"})
+        assert response.status_code == 302
+        assert response.url == url
 
     def test_non_pkce_connect_omits_verifier(self, authenticated_client, workspace):
         """A non-PKCE provider stores code_verifier=None and is called without it."""
