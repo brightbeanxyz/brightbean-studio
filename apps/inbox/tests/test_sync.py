@@ -110,3 +110,71 @@ def test_mastodon_sync_passes_per_account_instance_url(workspace):
     platform, credentials = get_provider.call_args.args
     assert platform == "mastodon"
     assert credentials["instance_url"] == "https://mastodon.social"
+
+
+def _comment(message_id, *, post_id="", minutes_ago=0):
+    return SimpleNamespace(
+        platform_message_id=message_id,
+        sender_name="Commenter",
+        sender_id="user-9",
+        text="Nice post",
+        message_type=InboxMessage.MessageType.COMMENT,
+        timestamp=timezone.now() - timedelta(minutes=minutes_ago),
+        extra={"stored_post_id": post_id} if post_id else {},
+    )
+
+
+@pytest.mark.django_db
+def test_a_polled_comment_links_to_the_post_it_belongs_to(connected_account):
+    from apps.composer.models import PlatformPost, Post
+
+    post = Post.objects.create(workspace=connected_account.workspace, caption="hi")
+    platform_post = PlatformPost.objects.create(
+        post=post,
+        social_account=connected_account,
+        status=PlatformPost.Status.PUBLISHED,
+        platform_post_id="post-1",
+    )
+
+    with patch("apps.inbox.tasks.get_provider") as get_provider:
+        get_provider.return_value.get_messages.return_value = [
+            _comment("c1", post_id="post-1"),
+            _comment("c2", post_id="post-unknown"),
+            _comment("c3"),
+        ]
+        InboxSyncEngine().sync_all()
+
+    assert InboxMessage.objects.get(platform_message_id="c1").related_post_id == platform_post.id
+    assert InboxMessage.objects.get(platform_message_id="c2").related_post_id is None
+    assert InboxMessage.objects.get(platform_message_id="c3").related_post_id is None
+
+
+@pytest.mark.django_db
+def test_a_comment_backlog_is_silent_on_an_account_that_already_has_dms(connected_account):
+    """The day comment polling starts working, an account with months of DM
+    history is not 'first sync' — but its whole comment backlog arrives at once
+    and would notify every owner and manager for each one."""
+    InboxMessage.objects.create(
+        workspace=connected_account.workspace,
+        social_account=connected_account,
+        platform_message_id="old-dm",
+        message_type=InboxMessage.MessageType.DM,
+        sender_name="Someone",
+        body="an old dm",
+        received_at=timezone.now() - timedelta(days=30),
+    )
+
+    with patch("apps.inbox.tasks.get_provider") as get_provider:
+        provider = get_provider.return_value
+        provider.get_messages.return_value = [_comment("old-comment", minutes_ago=1440)]
+        with patch.object(InboxSyncEngine, "_notify_new_message") as notify_new:
+            InboxSyncEngine().sync_all()
+
+        assert InboxMessage.objects.filter(platform_message_id="old-comment").exists()
+        notify_new.assert_not_called()
+
+        # Once comments are established, a genuinely new one notifies.
+        provider.get_messages.return_value = [_comment("new-comment", minutes_ago=0)]
+        with patch.object(InboxSyncEngine, "_notify_new_message") as notify_new:
+            InboxSyncEngine().sync_all()
+        notify_new.assert_called_once()

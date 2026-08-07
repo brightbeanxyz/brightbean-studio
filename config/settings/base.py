@@ -454,6 +454,13 @@ PLATFORM_CREDENTIALS_FROM_ENV = {
     "devto": {},
 }
 
+# Publishing engine
+# How long after a post goes live the first comment is attempted, and how many
+# times a failed attempt is retried. Both were previously read via getattr()
+# from settings that did not exist, so neither could be tuned or overridden.
+PUBLISHER_FIRST_COMMENT_DELAY = env.int("PUBLISHER_FIRST_COMMENT_DELAY", default=120)
+PUBLISHER_FIRST_COMMENT_MAX_RETRIES = env.int("PUBLISHER_FIRST_COMMENT_MAX_RETRIES", default=3)
+
 # Webhook verification
 FACEBOOK_WEBHOOK_VERIFY_TOKEN = env("FACEBOOK_WEBHOOK_VERIFY_TOKEN", default="")
 INSTAGRAM_LOGIN_WEBHOOK_VERIFY_TOKEN = env("INSTAGRAM_LOGIN_WEBHOOK_VERIFY_TOKEN", default="")

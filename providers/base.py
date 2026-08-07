@@ -224,6 +224,29 @@ class SocialProvider(ABC):
         """Remove this app's webhook subscription. Called on disconnect."""
         return False
 
+    def find_own_comment(self, access_token: str, post_id: str, text: str) -> str | None:
+        """Return the id of a comment this account already posted with ``text``.
+
+        Reconciliation hook for retrying a comment whose first attempt failed
+        ambiguously (timeout, 5xx): the platform may have created it anyway, and
+        a blind retry would double-comment. Providers that cannot answer this
+        leave the default, and callers must then treat an ambiguous failure as
+        terminal rather than risk the duplicate.
+        """
+        raise NotImplementedError(f"{self.platform_name} cannot look up its own comments")
+
+    def get_webhook_subscriptions(self, access_token: str, account_id: str) -> list[dict]:
+        """Read back which apps are subscribed to this account, and to what.
+
+        Diagnostic counterpart to ``subscribe_webhooks``: a subscription that
+        was refused or silently dropped is otherwise invisible.
+        """
+        raise NotImplementedError(f"{self.platform_name} cannot report webhook subscriptions")
+
+    def debug_token(self, access_token: str) -> dict:
+        """Inspect an access token (validity, expiry, granted scopes)."""
+        raise NotImplementedError(f"{self.platform_name} does not support token inspection")
+
     # ------------------------------------------------------------------
     # Token management
     # ------------------------------------------------------------------

@@ -542,6 +542,13 @@ def compose(request, workspace_id, post_id=None):
         pp for pp in platform_post_list if pp.status == PlatformPost.Status.FAILED and pp.publish_error
     ]
 
+    # A first comment that failed leaves the post itself published, so it never
+    # shows up in the banner above — without this the post looks fully
+    # successful while the comment is silently missing.
+    failed_first_comments = [
+        pp for pp in platform_post_list if pp.first_comment_status == PlatformPost.FirstCommentStatus.FAILED
+    ]
+
     # Build media_items for the initial preview render
     media_items = []
     for att in media_attachments:
@@ -621,6 +628,7 @@ def compose(request, workspace_id, post_id=None):
         # that account — the save endpoints use this to leave siblings alone.
         "account_scope": account_filter if (post_id and account_filter) else "",
         "failed_platform_posts": failed_platform_posts,
+        "failed_first_comments": failed_first_comments,
         "unsplash_enabled": bool(settings.UNSPLASH_ACCESS_KEY),
     }
     return render(request, "composer/compose.html", context)

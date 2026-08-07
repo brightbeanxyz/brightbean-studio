@@ -374,10 +374,10 @@ For example, if your `APP_URL` is `https://brightbean.example.com`, the Facebook
 
 ### Meta (Facebook, Instagram, Threads)
 
-Facebook and Instagram share the same Meta app credentials. Threads runs on the same Meta app but uses a **separate app identity** — its own App ID, App Secret, and redirect URI list (steps 5-6 below).
+Facebook and Instagram share the same Meta app credentials. Threads runs on the same Meta app but uses a **separate app identity** — its own App ID, App Secret, and redirect URI list (steps 6-7 below).
 
 1. Go to [Meta for Developers](https://developers.facebook.com/) and create a new app (type: **Business**)
-2. Under **App Settings → Basic**, copy your **App ID** and **App Secret** — the plain ones, for Facebook and Instagram. Once the Threads use case is added this page also lists a **Threads App ID** / **Threads App Secret**; those are a different app identity and belong in the Threads variables in step 6, not here.
+2. Under **App Settings → Basic**, copy your **App ID** and **App Secret** — the plain ones, for Facebook and Instagram. Once the Threads use case is added this page also lists a **Threads App ID** / **Threads App Secret**; those are a different app identity and belong in the Threads variables in step 7, not here.
 3. In the App Dashboard, go to **Use cases** and add the following four use cases. For each use case, click into it and go to **Permissions and features** to add the required optional permissions:
 
    **Use case: "Manage everything on your Page"** (Facebook)
@@ -400,13 +400,20 @@ Facebook and Instagram share the same Meta app credentials. Threads runs on the 
    {APP_URL}/social-accounts/callback/facebook/
    {APP_URL}/social-accounts/callback/instagram/
    ```
-   > **Threads is separate.** Its callback does **not** belong here — the Threads use case keeps its own redirect URI list. See step 6.
-5. Set the environment variables:
+   > **Threads is separate.** Its callback does **not** belong here — the Threads use case keeps its own redirect URI list. See step 7.
+5. **Webhooks (required for the inbox).** In the App Dashboard, go to **Webhooks** (also reachable via **Use cases → Manage everything on your Page → Webhooks**) and subscribe to the **Page** object:
+   - **Callback URL:** `{APP_URL}/webhooks/facebook/`
+   - **Verify token:** the value of `FACEBOOK_WEBHOOK_VERIFY_TOKEN` from your `.env` (any random string; generate one and set the env var before clicking *Verify and save*)
+   - After verification, subscribe to the `feed`, `mention`, and `messages` fields. `feed` is what carries comments on your Page's posts.
+
+   > **This step is easy to miss and fails silently.** Connecting a Page subscribes it to your app automatically, so the account shows as healthy either way — but without the callback URL configured here, Meta never delivers anything. Comments then arrive only through the 5-minute polling fallback, and mentions not at all. Run `python manage.py diagnose_facebook --account-id <uuid>` to check.
+6. Set the environment variables:
    ```
    PLATFORM_FACEBOOK_APP_ID=your-app-id
    PLATFORM_FACEBOOK_APP_SECRET=your-app-secret
+   FACEBOOK_WEBHOOK_VERIFY_TOKEN=your-random-verify-token
    ```
-6. **Threads:** the "Access the Threads API" use case gets its own App ID, App Secret, and redirect URIs. Go to **Use cases → Access the Threads API → Settings** and add the Threads redirect URI:
+7. **Threads:** the "Access the Threads API" use case gets its own App ID, App Secret, and redirect URIs. Go to **Use cases → Access the Threads API → Settings** and add the Threads redirect URI:
    ```
    {APP_URL}/social-accounts/callback/threads/
    ```
@@ -580,8 +587,24 @@ python manage.py backfill_inbox --days 7
 
 Options:
 - `--days N` - Number of days to backfill (default: 7)
-- `--platform NAME` - Only backfill a specific platform (e.g., `youtube`, `linkedin`, `tiktok`)
+- `--platform NAME` - Only backfill a specific platform (e.g., `facebook`, `youtube`, `linkedin`, `tiktok`)
 - `--account-id UUID` - Only backfill a specific account
+
+For Facebook this recovers comments on the Page's posts from the last 30 days — useful after fixing a webhook that was never delivering, since comments missed while it was broken are otherwise invisible:
+
+```bash
+python manage.py backfill_inbox --platform facebook --days 30
+```
+
+## Inbox: Diagnosing a Facebook Page That Receives Nothing
+
+When a Page's comments never reach the inbox, or a post's first comment never appears, the cause is usually a permission that was not granted or a webhook that was never configured — neither of which is visible from inside the app. Ask Meta directly:
+
+```bash
+python manage.py diagnose_facebook --account-id <uuid>
+```
+
+It reports the token's granted scopes (a missing `pages_manage_engagement` is why first comments fail), which app is subscribed to the Page and to which fields (`feed` is what carries comments), and whether comments are readable at all. Add `--subscribe` to repair a missing Page subscription in place, or `--json` for output to paste into an incident.
 
 ## API & MCP for Agents
 
