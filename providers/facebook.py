@@ -1036,6 +1036,29 @@ class FacebookProvider(SocialProvider):
             return comment_id
         return parent_id
 
+    def get_app_subscriptions(self) -> list[dict]:
+        """List the app's own webhook registrations (callback URL + fields).
+
+        This is the *other half* of Meta's webhook setup and the half nothing in
+        the app can create: ``subscribe_webhooks`` links a Page to the app, but
+        Meta only delivers if the App Dashboard also has a callback URL
+        registered for the ``page`` object. A Page can be subscribed, report
+        healthy, and still never deliver a single event.
+        """
+        app_id = self.credentials.get("client_id", "")
+        app_secret = self.credentials.get("client_secret", "")
+        if not app_id or not app_secret:
+            raise APIError(
+                "App credentials are required to read webhook registrations",
+                platform=self.platform_name,
+            )
+        resp = self._request(
+            "GET",
+            f"{BASE_URL}/{app_id}/subscriptions",
+            params={"access_token": f"{app_id}|{app_secret}"},
+        )
+        return resp.json().get("data", [])
+
     def get_webhook_subscriptions(self, access_token: str, account_id: str) -> list[dict]:
         """List the apps subscribed to this Page and the fields each receives."""
         resp = self._request(

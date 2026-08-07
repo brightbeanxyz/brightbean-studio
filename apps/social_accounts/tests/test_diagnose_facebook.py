@@ -35,6 +35,14 @@ def fb_account(db, workspace):
     )
 
 
+HEALTHY_APP_SUBSCRIPTION = {
+    "object": "page",
+    "callback_url": "https://studio.example.com/webhooks/facebook/",
+    "active": True,
+    "fields": [{"name": "feed"}, {"name": "mention"}, {"name": "messages"}],
+}
+
+
 def _provider(*, scopes, subscribed_fields, app_id="app-1"):
     provider = MagicMock()
     provider.credentials = {"client_id": app_id, "client_secret": "shh"}
@@ -43,6 +51,7 @@ def _provider(*, scopes, subscribed_fields, app_id="app-1"):
     provider.get_webhook_subscriptions.return_value = (
         [{"id": app_id, "subscribed_fields": subscribed_fields}] if subscribed_fields is not None else []
     )
+    provider.get_app_subscriptions.return_value = [HEALTHY_APP_SUBSCRIPTION]
     provider._request.return_value = MagicMock(json=MagicMock(return_value={"data": []}))
     return provider
 
@@ -96,6 +105,7 @@ def test_reports_a_subscription_missing_the_feed_field(fb_account):
 @pytest.mark.django_db
 def test_a_healthy_account_reports_no_failures(fb_account, settings):
     settings.FACEBOOK_WEBHOOK_VERIFY_TOKEN = "a-token"
+    settings.APP_URL = "https://studio.example.com"
     provider = _provider(
         scopes=["pages_manage_engagement", "pages_read_user_content"],
         subscribed_fields=["feed", "mention", "messages"],
@@ -118,6 +128,7 @@ def test_read_insights_is_not_reported_missing_when_analytics_is_off(fb_account,
     platform, so demanding it here would fail a healthy, deliberately-limited
     token."""
     settings.FACEBOOK_WEBHOOK_VERIFY_TOKEN = "a-token"
+    settings.APP_URL = "https://studio.example.com"
 
     # A real class, not a MagicMock: required_scopes has to be a property that
     # reacts to include_analytics_scopes, and setting that on MagicMock would
@@ -141,6 +152,9 @@ def test_read_insights_is_not_reported_missing_when_analytics_is_off(fb_account,
         def get_webhook_subscriptions(self, _token, _account_id):
             return [{"id": "app-1", "subscribed_fields": ["feed", "mention", "messages"]}]
 
+        def get_app_subscriptions(self):
+            return [HEALTHY_APP_SUBSCRIPTION]
+
         def _request(self, *_args, **_kwargs):
             return MagicMock(json=MagicMock(return_value={"data": []}))
 
@@ -151,4 +165,88 @@ def test_read_insights_is_not_reported_missing_when_analytics_is_off(fb_account,
 
     assert provider.include_analytics_scopes is False
     assert "read_insights" not in output
+    assert "FAIL" not in output
+
+
+def _provider_with_app_subs(app_subs, **kwargs):
+    provider = _provider(
+        scopes=["pages_manage_engagement", "pages_read_user_content"],
+        subscribed_fields=["feed", "mention", "messages"],
+        **kwargs,
+    )
+    provider.get_app_subscriptions.return_value = app_subs
+    return provider
+
+
+@pytest.mark.django_db
+def test_an_app_with_no_page_callback_url_is_reported(fb_account, settings):
+    """The Page can be subscribed and healthy while Meta never delivers."""
+    settings.FACEBOOK_WEBHOOK_VERIFY_TOKEN = "a-token"
+    settings.APP_URL = "https://studio.example.com"
+    provider = _provider_with_app_subs([])
+
+    output = _run({"id": str(fb_account.id), "provider": provider})
+
+    assert "NO callback URL registered" in output
+    assert "App Dashboard" in output
+
+
+@pytest.mark.django_db
+def test_an_inactive_app_registration_is_reported(fb_account, settings):
+    settings.FACEBOOK_WEBHOOK_VERIFY_TOKEN = "a-token"
+    settings.APP_URL = "https://studio.example.com"
+    provider = _provider_with_app_subs(
+        [
+            {
+                "object": "page",
+                "callback_url": "https://studio.example.com/webhooks/facebook/",
+                "active": False,
+                "fields": [{"name": "feed"}, {"name": "mention"}, {"name": "messages"}],
+            }
+        ]
+    )
+
+    output = _run({"id": str(fb_account.id), "provider": provider})
+
+    assert "INACTIVE" in output
+
+
+@pytest.mark.django_db
+def test_a_mismatched_callback_url_is_reported(fb_account, settings):
+    settings.FACEBOOK_WEBHOOK_VERIFY_TOKEN = "a-token"
+    settings.APP_URL = "https://studio.example.com"
+    provider = _provider_with_app_subs(
+        [
+            {
+                "object": "page",
+                "callback_url": "https://old-host.example.com/webhooks/facebook/",
+                "active": True,
+                "fields": [{"name": "feed"}, {"name": "mention"}, {"name": "messages"}],
+            }
+        ]
+    )
+
+    output = _run({"id": str(fb_account.id), "provider": provider})
+
+    assert "old-host.example.com" in output
+    assert "expected https://studio.example.com/webhooks/facebook/" in output
+
+
+@pytest.mark.django_db
+def test_a_healthy_app_registration_passes(fb_account, settings):
+    settings.FACEBOOK_WEBHOOK_VERIFY_TOKEN = "a-token"
+    settings.APP_URL = "https://studio.example.com"
+    provider = _provider_with_app_subs(
+        [
+            {
+                "object": "page",
+                "callback_url": "https://studio.example.com/webhooks/facebook/",
+                "active": True,
+                "fields": [{"name": "feed"}, {"name": "mention"}, {"name": "messages"}],
+            }
+        ]
+    )
+
+    output = _run({"id": str(fb_account.id), "provider": provider})
+
     assert "FAIL" not in output

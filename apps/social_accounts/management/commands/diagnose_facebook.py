@@ -111,6 +111,7 @@ class Command(BaseCommand):
         # Each check is isolated: a 403 on permissions must not hide the
         # webhook answer, which is usually the one that matters.
         self._check_permissions(account, provider, check)
+        self._check_app_registration(provider, check)
         self._check_subscription(account, provider, check, subscribe=options["subscribe"])
         newest_post_id = self._check_comment_readability(account, provider, check)
 
@@ -168,6 +169,51 @@ class Command(BaseCommand):
         else:
             check("granted permissions", True, f"all {len(provider.required_scopes)} required scopes granted")
 
+    def _check_app_registration(self, provider, check):
+        """Does the app itself have a callback URL registered for Pages?
+
+        The half of Meta's setup that nothing in this codebase can create, and
+        the one that fails invisibly: without it, every per-Page subscription
+        reports healthy and Meta still never delivers a single event.
+        """
+        from providers.facebook import FACEBOOK_WEBHOOK_FIELDS
+
+        try:
+            subscriptions = provider.get_app_subscriptions()
+        except Exception as exc:
+            check("app webhook registration", False, f"could not read the app's subscriptions: {exc}")
+            return
+
+        page_sub = next((s for s in subscriptions if s.get("object") == "page"), None)
+        expected = f"{getattr(settings, 'APP_URL', '').rstrip('/')}/webhooks/facebook/"
+
+        if page_sub is None:
+            check(
+                "app webhook registration",
+                False,
+                "the app has NO callback URL registered for the 'page' object. Meta will never deliver "
+                f"Page events no matter how many Pages are subscribed. Register {expected} under "
+                "App Dashboard → Webhooks → Page, then subscribe the 'feed' field.",
+            )
+            return
+
+        callback = page_sub.get("callback_url", "")
+        fields = {f.get("name") if isinstance(f, dict) else f for f in (page_sub.get("fields") or [])}
+        missing = [f for f in FACEBOOK_WEBHOOK_FIELDS if f not in fields]
+        problems = []
+        if not page_sub.get("active", True):
+            problems.append("the registration is INACTIVE (Meta disables it after repeated delivery failures)")
+        if expected and callback.rstrip("/") != expected.rstrip("/"):
+            problems.append(f"callback is {callback or 'unset'}, expected {expected}")
+        if missing:
+            problems.append(f"missing field(s) {missing} — 'feed' is what carries comments")
+
+        check(
+            "app webhook registration",
+            not problems,
+            "; ".join(problems) if problems else f"page → {callback} ({sorted(fields)})",
+        )
+
     def _check_subscription(self, account, provider, check, *, subscribe: bool):
         from apps.social_accounts.views import _webhook_target
         from providers.facebook import FACEBOOK_WEBHOOK_FIELDS
@@ -207,16 +253,18 @@ class Command(BaseCommand):
 
     def _check_comment_readability(self, account, provider, check) -> str:
         """Read the Page feed the way the inbox poll does. Returns the newest post id."""
-        from providers.facebook import BASE_URL
+        from providers.facebook import BASE_URL, FACEBOOK_FEED_SCAN_LIMIT
 
+        # Scan the same window the inbox poll uses, not just the newest few —
+        # "0 comments" is only meaningful if we looked everywhere the poll does.
         try:
             resp = provider._request(
                 "GET",
                 f"{BASE_URL}/{account.account_platform_id}/feed",
                 access_token=account.oauth_access_token,
                 params={
-                    "fields": "id,created_time,comments.limit(5){id,message,from,created_time}",
-                    "limit": 3,
+                    "fields": ("id,created_time,permalink_url,comments.limit(25){id,message,from,created_time}"),
+                    "limit": FACEBOOK_FEED_SCAN_LIMIT,
                 },
             )
             posts = resp.json().get("data", [])
@@ -230,13 +278,31 @@ class Command(BaseCommand):
         check(
             "read comments",
             True,
-            f"{len(posts)} recent post(s), {len(comments)} comment(s) visible"
+            f"{len(posts)} post(s) scanned, {len(comments)} comment(s) visible"
             + (
                 ""
                 if not comments or authored
                 else " — every comment is missing its author, which usually means pages_read_user_content is absent"
             ),
         )
+
+        # Per-post detail: a comment the user swears they left, on a post the
+        # scan can see with zero comments, is a very different problem from a
+        # comment sitting on a post older than the window.
+        for post in posts:
+            post_comments = (post.get("comments") or {}).get("data", [])
+            if not post_comments:
+                continue
+            check(
+                f"comments on {post.get('id')}",
+                None,
+                f"{post.get('created_time', '?')} → "
+                + "; ".join(
+                    f"{(c.get('from') or {}).get('name', 'unknown')}: {(c.get('message') or '')[:40]}"
+                    for c in post_comments
+                ),
+            )
+
         return str(posts[0].get("id", "")) if posts else ""
 
     def _check_comment_write(self, account, provider, check, post_id: str, text: str):

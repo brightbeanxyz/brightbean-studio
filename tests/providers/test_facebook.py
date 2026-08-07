@@ -1215,3 +1215,38 @@ def test_find_own_comment_falls_back_to_the_raw_id_like_publish_does():
 
     assert provider.find_own_comment("page-token", "video-1", "More detail") == "c-ours"
     assert provider._request.call_count == 2
+
+
+def test_get_app_subscriptions_uses_an_app_token():
+    """The app's own webhook registration is readable only with an app token."""
+    provider = FacebookProvider({"client_id": "app-1", "client_secret": "shh"})
+    provider._request = MagicMock(
+        return_value=_resp(
+            {
+                "data": [
+                    {
+                        "object": "page",
+                        "callback_url": "https://studio.example.com/webhooks/facebook/",
+                        "active": True,
+                        "fields": [{"name": "feed"}, {"name": "messages"}],
+                    }
+                ]
+            }
+        )
+    )
+
+    subscriptions = provider.get_app_subscriptions()
+
+    assert subscriptions[0]["object"] == "page"
+    provider._request.assert_called_once_with(
+        "GET",
+        "https://graph.facebook.com/v25.0/app-1/subscriptions",
+        params={"access_token": "app-1|shh"},
+    )
+
+
+def test_get_app_subscriptions_requires_app_credentials():
+    provider = FacebookProvider({})
+
+    with pytest.raises(APIError, match="App credentials are required"):
+        provider.get_app_subscriptions()

@@ -235,6 +235,10 @@ class SocialProvider(ABC):
         """
         raise NotImplementedError(f"{self.platform_name} cannot look up its own comments")
 
+    def get_app_subscriptions(self) -> list[dict]:
+        """List this app's own webhook registrations (callback URL + fields)."""
+        raise NotImplementedError(f"{self.platform_name} cannot report app webhook registrations")
+
     def get_webhook_subscriptions(self, access_token: str, account_id: str) -> list[dict]:
         """Read back which apps are subscribed to this account, and to what.
 
