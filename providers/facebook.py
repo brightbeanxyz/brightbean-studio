@@ -8,6 +8,7 @@ from urllib.parse import urlencode, urlparse
 
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, PublishError
+from .meta_comments import parse_graph_time
 from .meta_insights import fetch_insights_safe, parse_insights_response
 from .meta_messaging import build_send_payload, resolve_recipient_id
 from .types import (
@@ -531,7 +532,14 @@ class FacebookProvider(SocialProvider):
                     access_token=access_token,
                     params={"fields": "id,message,from", "limit": FACEBOOK_COMMENTS_PER_POST},
                 )
-            except APIError:
+            except APIError as exc:
+                # Only "no such object" means this candidate target was the
+                # wrong guess and the next one deserves a try. Any other failure
+                # leaves the answer unknown, and returning None for it tells the
+                # caller it is safe to post again — the duplicate this whole
+                # lookup exists to prevent.
+                if exc.status_code not in (400, 404):
+                    raise
                 continue
 
             for comment in resp.json().get("data", []):
@@ -935,13 +943,7 @@ class FacebookProvider(SocialProvider):
         otherwise be compared against an aware cutoff (TypeError) and stored as
         a naive ``received_at``; Graph serves UTC, so assume it.
         """
-        if not value:
-            return None
-        try:
-            parsed = datetime.fromisoformat(str(value).replace("+0000", "+00:00"))
-        except ValueError:
-            return None
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+        return parse_graph_time(value)
 
     def reply_to_message(
         self,

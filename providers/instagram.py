@@ -13,12 +13,18 @@ from urllib.parse import urlencode
 
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, PublishError
+from .meta_comments import (
+    fetch_instagram_comments,
+    find_own_instagram_comment,
+    resolve_comment_reply_target,
+)
 from .meta_insights import fetch_insights_safe
 from .types import (
     AccountMetrics,
     AccountProfile,
     AuthType,
     CommentResult,
+    InboxMessage,
     MediaType,
     OAuthTokens,
     PostMetrics,
@@ -34,8 +40,18 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://graph.facebook.com/v25.0"
 OAUTH_URL = "https://www.facebook.com/v25.0/dialog/oauth"
 TOKEN_URL = f"{BASE_URL}/oauth/access_token"
-# Subscribed on the linked Facebook Page: Instagram comment events are delivered
-# through it. Without this the inbox never sees an IG comment.
+# Subscribed on the Instagram user, NOT on the linked Facebook Page. These are
+# fields of Meta's *Instagram* webhook object; a Page accepts only its own
+# ({feed, mention, messages, ...}) and answers anything else with
+# "(#100) Param subscribed_fields[0] must be one of {...}". Sending them to the
+# Page is what left every Instagram inbox deaf to comments.
+#
+# The Page is also the wrong object on permissions: POST /{page-id}/subscribed_apps
+# needs ``pages_manage_metadata``, which this OAuth flow never requests, while
+# the Instagram user's edge is covered by the ``instagram_*`` scopes it does.
+# And ``subscribed_apps`` *replaces* a field list rather than merging into it,
+# so writing the Page from here would silently drop the mention and message
+# subscriptions of a Facebook Page connected in the same workspace.
 #
 # ``messages`` is deliberately absent: this OAuth flow does not request
 # ``instagram_manage_messages``, so Meta would reject the subscription and any
@@ -419,15 +435,39 @@ class InstagramProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def publish_comment(self, access_token: str, post_id: str, text: str) -> CommentResult:
+        """Comment on a media item (used for the first comment).
+
+        No ``fields`` param: Meta answers a comment POST that carries one with
+        error code 20 / subcode 1772107 ("does not support the requested
+        response format") *after* creating the comment. The call then reads as a
+        clean 400, the retry queue re-sends it, and the account ends up with one
+        comment per attempt.
+        """
         resp = self._request(
             "POST",
             f"{BASE_URL}/{post_id}/comments",
             access_token=access_token,
-            params={"fields": "id"},
             json={"message": text},
         )
         data = resp.json()
         return CommentResult(platform_comment_id=data["id"], extra=data)
+
+    def find_own_comment(self, access_token: str, post_id: str, text: str) -> str | None:
+        """Find a comment this account already left on ``post_id``.
+
+        Called before retrying a first comment whose previous attempt failed —
+        the platform may have created it anyway.
+        """
+        return find_own_instagram_comment(
+            self._request,
+            api_base=BASE_URL,
+            access_token=access_token,
+            media_id=post_id,
+            text=text,
+            # Both set by _resolve_publish_credentials in apps/publisher/engine.py.
+            own_id=str(self.credentials.get("ig_user_id") or ""),
+            own_handle=str(self.credentials.get("account_handle") or ""),
+        )
 
     # ------------------------------------------------------------------
     # Analytics
@@ -505,22 +545,50 @@ class InstagramProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     # Instagram DMs are not available on this connection: the Facebook-Login
-    # flow does not request ``instagram_manage_messages``, so ``get_messages``
-    # and ``reply_to_message`` stay unimplemented and the inbox skips this
-    # account for DMs. Accounts connected via Instagram Login do support them.
+    # flow does not request ``instagram_manage_messages``, so
+    # ``reply_to_message`` stays unimplemented and this account never appears in
+    # the DM surface. Accounts connected via Instagram Login do support them.
+
+    def get_messages(self, access_token: str, since: datetime | None = None) -> list[InboxMessage]:
+        """Poll comments on the account's recent media.
+
+        Instagram comments have only ever reached the inbox by webhook, and that
+        webhook is subscribed on the *linked Page* (see ``subscribe_webhooks``)
+        — an object this app cannot confirm is delivering anything. An account
+        whose subscription never took is deaf to comments permanently with no
+        way to backfill; this poll is the backstop, exactly as FacebookProvider
+        does for a Page feed.
+        """
+        ig_user_id = str(self.credentials.get("ig_user_id") or "")
+        if not ig_user_id:
+            # Deliberately not falling back to ``_get_ig_user_id``: it picks the
+            # first Page with a linked IG account, and on a multi-page login
+            # that is a different account whose media we would poll into this
+            # workspace's inbox.
+            logger.warning("Skipping Instagram comment poll: no ig_user_id in credentials")
+            return []
+
+        return fetch_instagram_comments(
+            self._request,
+            platform=self.platform_name,
+            host=BASE_URL,
+            media_url=f"{BASE_URL}/{ig_user_id}/media",
+            access_token=access_token,
+            since=since,
+            owner_id=ig_user_id,
+            owner_handle=str(self.credentials.get("account_handle") or ""),
+        )
 
     def reply_to_comment(self, access_token: str, comment_id: str, text: str, extra: dict | None = None) -> ReplyResult:
         """Reply to a comment, or comment on a media item.
 
-        A comment is answered on its ``replies`` edge, but a mention in a
-        caption gives us only the media ID, which has no ``replies`` edge —
-        that one is answered by commenting on the media itself. The inbox
-        records which applies as ``reply_edge``.
+        Which object and edge to post to depends on what the inbox item is —
+        see ``resolve_comment_reply_target``.
         """
-        edge = "comments" if (extra or {}).get("reply_edge") == "media" else "replies"
+        target, edge = resolve_comment_reply_target(comment_id, extra)
         resp = self._request(
             "POST",
-            f"{BASE_URL}/{comment_id}/{edge}",
+            f"{BASE_URL}/{target}/{edge}",
             access_token=access_token,
             json={"message": text},
         )
@@ -532,11 +600,12 @@ class InstagramProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def subscribe_webhooks(self, access_token: str, account_id: str) -> bool:
-        """Subscribe to Instagram webhooks via the linked Facebook Page.
+        """Subscribe to Instagram webhooks on the Instagram user.
 
-        Instagram accounts connected through Facebook Login receive comment and
-        message events through the Page they are linked to, so ``account_id``
-        here is the Page ID, not the IG user ID.
+        ``account_id`` is the IG user ID, not the ID of the Facebook Page the
+        account is linked to — see ``INSTAGRAM_WEBHOOK_FIELDS`` for why the Page
+        cannot carry these fields. The app must also be subscribed to the
+        Instagram object in the Meta App Dashboard; no API call can set that.
         """
         resp = self._request(
             "POST",

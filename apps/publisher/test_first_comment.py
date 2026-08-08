@@ -22,9 +22,14 @@ from apps.publisher.engine import (
     _is_ambiguous_submission_failure,
     _post_first_comment_task,
 )
+from apps.social_accounts.error_messages import (
+    FIRST_COMMENT_RECONNECT_MESSAGE,
+    FIRST_COMMENT_REJECTED_MESSAGE,
+    FIRST_COMMENT_TEMPORARY_MESSAGE,
+)
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
-from providers.exceptions import APIError, RateLimitError
+from providers.exceptions import APIError, PublishError, RateLimitError
 from providers.types import CommentResult
 
 Status = PlatformPost.FirstCommentStatus
@@ -120,7 +125,9 @@ class FirstCommentTaskTest(TestCase):
         self.platform_post.refresh_from_db()
         self.assertEqual(self.platform_post.first_comment_status, Status.PENDING)
         self.assertEqual(self.platform_post.first_comment_retry_count, 1)
-        self.assertIn("transient", self.platform_post.first_comment_error)
+        # The stored text is what the composer renders, so it carries none of
+        # the platform's response body.
+        self.assertEqual(self.platform_post.first_comment_error, FIRST_COMMENT_TEMPORARY_MESSAGE)
         requeue.assert_called_once_with(str(self.platform_post.id), schedule=FIRST_COMMENT_RETRY_BACKOFF[0])
 
     def test_a_non_retryable_failure_is_not_requeued(self):
@@ -139,8 +146,103 @@ class FirstCommentTaskTest(TestCase):
 
         self.platform_post.refresh_from_db()
         self.assertEqual(self.platform_post.first_comment_status, Status.FAILED)
-        self.assertIn("pages_manage_engagement", self.platform_post.first_comment_error)
+        self.assertEqual(self.platform_post.first_comment_error, FIRST_COMMENT_RECONNECT_MESSAGE)
+        self.assertNotIn("pages_manage_engagement", self.platform_post.first_comment_error)
         requeue.assert_not_called()
+
+    def test_a_clean_4xx_is_not_retried(self):
+        """The regression test for four identical comments on one post.
+
+        Instagram answered a comment POST carrying an unsupported ``fields``
+        param with a 400 *after* creating the comment. Re-sending the identical
+        request earned the identical answer three more times.
+        """
+        provider = MagicMock()
+        provider.publish_comment.side_effect = APIError(
+            'Instagram API error 400: {"error":{"message":"This API call does not support the requested '
+            'response format","type":"OAuthException","code":20,"error_subcode":1772107}}',
+            status_code=400,
+            platform="Instagram",
+        )
+
+        with patch("apps.publisher.engine._post_first_comment_task") as requeue:
+            self._run(provider)
+
+        self.platform_post.refresh_from_db()
+        self.assertEqual(self.platform_post.first_comment_status, Status.FAILED)
+        requeue.assert_not_called()
+
+    def test_an_auth_rejection_is_retried_so_the_refreshed_token_can_be_used(self):
+        """_provider_and_access_token refreshes an expiring token between
+        attempts, so a 401 retry really is a different request."""
+        provider = MagicMock()
+        provider.publish_comment.side_effect = APIError("expired", status_code=401, platform="Instagram")
+
+        with patch("apps.publisher.engine._post_first_comment_task") as requeue:
+            self._run(provider)
+
+        self.platform_post.refresh_from_db()
+        self.assertEqual(self.platform_post.first_comment_status, Status.PENDING)
+        requeue.assert_called_once()
+
+    def test_a_permission_rejection_is_not_retried(self):
+        """403 means a missing scope or a revoked grant: a reconnect, not a
+        backoff."""
+        provider = MagicMock()
+        provider.publish_comment.side_effect = APIError("no scope", status_code=403, platform="Instagram")
+
+        with patch("apps.publisher.engine._post_first_comment_task") as requeue:
+            self._run(provider)
+
+        self.platform_post.refresh_from_db()
+        self.assertEqual(self.platform_post.first_comment_status, Status.FAILED)
+        requeue.assert_not_called()
+
+    def test_the_stored_error_never_contains_the_platform_response(self):
+        provider = MagicMock()
+        provider.publish_comment.side_effect = APIError(
+            'Instagram API error 400: {"error":{"message":"This API call does not support the requested '
+            'response format","type":"OAuthException","code":20,"error_subcode":1772107,'
+            '"error_user_msg":"Your Instagram comment was not added","fbtrace_id":"A4B_mFUQTXKx"}}',
+            status_code=400,
+            platform="Instagram",
+        )
+
+        self._run(provider)
+
+        self.platform_post.refresh_from_db()
+        stored = self.platform_post.first_comment_error
+        self.assertEqual(stored, FIRST_COMMENT_REJECTED_MESSAGE)
+        self.assertNotIn("OAuthException", stored)
+        self.assertNotIn("fbtrace_id", stored)
+
+    def test_the_raw_platform_error_still_reaches_the_logs(self):
+        """Storing friendly text must not cost operators the diagnostic."""
+        provider = MagicMock()
+        provider.publish_comment.side_effect = APIError(
+            'Instagram API error 400: {"error":{"code":20,"fbtrace_id":"A4B_mFUQTXKx"}}',
+            status_code=400,
+            platform="Instagram",
+        )
+
+        with self.assertLogs("apps.publisher.engine", level="WARNING") as logs:
+            self._run(provider)
+
+        self.assertIn("fbtrace_id", "\n".join(logs.output))
+
+    def test_a_message_we_wrote_ourselves_is_shown_as_is(self):
+        """PublishError text is authored for a human and is worth keeping."""
+        provider = MagicMock()
+        provider.publish_comment.side_effect = PublishError(
+            "Instagram container processing timed out",
+            platform="Instagram",
+            retryable=False,
+        )
+
+        self._run(provider)
+
+        self.platform_post.refresh_from_db()
+        self.assertEqual(self.platform_post.first_comment_error, "Instagram container processing timed out")
 
     def test_a_rate_limit_uses_the_platforms_retry_after(self):
         provider = MagicMock()
@@ -456,9 +558,13 @@ class AmbiguousFailureTest(TestCase):
 
     def test_only_providers_implementing_the_lookup_can_reconcile(self):
         from providers.facebook import FacebookProvider
+        from providers.instagram import InstagramProvider
+        from providers.instagram_login import InstagramLoginProvider
         from providers.tiktok import TikTokProvider
 
         self.assertTrue(_can_reconcile_comments(FacebookProvider({})))
+        self.assertTrue(_can_reconcile_comments(InstagramProvider({})))
+        self.assertTrue(_can_reconcile_comments(InstagramLoginProvider({})))
         self.assertFalse(_can_reconcile_comments(TikTokProvider({})))
 
     def test_a_retry_reconciles_before_posting_again(self):
@@ -497,9 +603,17 @@ class AmbiguousFailureTest(TestCase):
         provider = MagicMock()
         provider.find_own_comment.side_effect = APIError("cannot read", status_code=500, platform="Facebook")
 
-        self._run(provider)
+        with patch("apps.publisher.engine._post_first_comment_task") as requeue:
+            self._run(provider)
 
         provider.publish_comment.assert_not_called()
+        # The attempt still has to be recorded and re-queued. A bare return
+        # would leave the row PENDING with no task behind it, and the post would
+        # read as fully successful forever.
+        self.platform_post.refresh_from_db()
+        self.assertEqual(self.platform_post.first_comment_status, Status.PENDING)
+        self.assertEqual(self.platform_post.first_comment_retry_count, 2)
+        requeue.assert_called_once()
 
     def test_the_first_attempt_does_not_pay_for_reconciliation(self):
         provider = MagicMock()

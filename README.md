@@ -407,6 +407,12 @@ Facebook and Instagram share the same Meta app credentials. Threads runs on the 
    - After verification, subscribe to the `feed`, `mention`, and `messages` fields. `feed` is what carries comments on your Page's posts.
 
    > **This step is easy to miss and fails silently.** Connecting a Page subscribes it to your app automatically, so the account shows as healthy either way — but without the callback URL configured here, Meta never delivers anything. Comments then arrive only through the 5-minute polling fallback, and mentions not at all. Run `python manage.py diagnose_facebook --account-id <uuid>` to check.
+
+   **If you connect Instagram through this Facebook app, also subscribe to the `Instagram` object** on the same Webhooks page:
+   - **Callback URL:** `{APP_URL}/webhooks/facebook/` (the same endpoint — it handles both platforms)
+   - Subscribe to the `comments` and `mentions` fields.
+
+   > `comments` and `mentions` belong to the **Instagram** object, not the Page — a Page accepts only its own fields (`feed`, `mention`, `messages`, …). Studio subscribes the Instagram *account* automatically on connect, but the object-level configuration here can only be done in the dashboard. Without it, Instagram comments arrive only via the 5-minute poll and mentions not at all.
 6. Set the environment variables:
    ```
    PLATFORM_FACEBOOK_APP_ID=your-app-id

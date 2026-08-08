@@ -15,7 +15,6 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.core.exceptions import PermissionDenied
-from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
@@ -872,12 +871,20 @@ def _create_or_update_account(
 
 
 def _webhook_target(account):
-    """The object whose webhooks we subscribe for this account.
+    """The object whose webhooks we subscribe for this account: the account itself.
 
-    Usually the account itself; for Instagram connected through Facebook Login
-    it is the linked Page, which is what actually delivers the events.
+    This used to hand Instagram's linked Page (``webhook_target_id``) to
+    ``subscribe_webhooks`` on the theory that the Page delivers Instagram
+    events. Meta disagrees: ``comments``/``mentions`` are fields of the
+    *Instagram* object, and a Page answers them with "(#100) Param
+    subscribed_fields[0] must be one of {feed, mention, ...}" — so every
+    Instagram account ended up with ``webhooks_active=False`` and an inbox that
+    never saw a comment.
+
+    ``webhook_target_id`` is still stored: ``_is_own_activity`` uses it to
+    recognise the account's own Page-side activity.
     """
-    return account.webhook_target_id or account.account_platform_id
+    return account.account_platform_id
 
 
 def _supports_webhooks(provider) -> bool:
@@ -967,16 +974,12 @@ def _webhook_target_is_shared(account) -> bool:
     would silence the others' inboxes too, so we leave it in place and let the
     revoked token end our access.
     """
-    target = _webhook_target(account)
-    # Compare each candidate's *effective* target. Matching the raw column
-    # would treat every account with a blank webhook_target_id as sharing one.
-    same_target = Q(webhook_target_id=target) | Q(webhook_target_id="", account_platform_id=target)
     return (
         SocialAccount.objects.filter(
             platform=account.platform,
             connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+            account_platform_id=_webhook_target(account),
         )
-        .filter(same_target)
         .exclude(pk=account.pk)
         .exists()
     )

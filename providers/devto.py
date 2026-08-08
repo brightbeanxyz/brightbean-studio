@@ -146,7 +146,10 @@ class DevtoProvider(SocialProvider):
         article_id = data.get("id")
         if not article_id:
             raise PublishError(
-                f"DEV.to article creation returned no id: {data}",
+                # The body goes in raw_response, not the message: publish_error
+                # is rendered to users, and a ProviderError message is the one
+                # thing the sanitizer passes through verbatim.
+                "DEV.to accepted the request but returned no article id",
                 platform=self.platform_name,
                 raw_response=data,
             )
