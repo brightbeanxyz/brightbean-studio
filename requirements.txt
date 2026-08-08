@@ -52,7 +52,11 @@ mypy>=1.11,<1.20
 django-stubs>=5.0,<6.0
 types-python-dateutil>=2.9,<3.0
 pytest>=8.3,<9.0
-pytest-django>=4.8,<5.0
+# Capped below 4.13: it errors every class-based test that uses the ``db``
+# fixture with "type object 'PytestDjangoTestCase' has no attribute
+# '_pre_setup_ran_eagerly'" — 509 of ours. CI resolves the newest match, so
+# every run since 2026-08-07 failed on this while local envs on 4.12 passed.
+pytest-django>=4.8,<4.13
 pytest-cov>=5.0,<6.0
 factory-boy>=3.3,<4.0
 
