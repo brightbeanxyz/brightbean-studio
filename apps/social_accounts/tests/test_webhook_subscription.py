@@ -98,24 +98,29 @@ def test_instagram_remembers_the_linked_page_as_its_webhook_target(workspace):
         )
 
     assert account.webhook_target_id == "page-77"
-    assert _webhook_target(account) == "page-77"
+    # Stored for _is_own_activity, but NOT what we subscribe: comments/mentions
+    # are Instagram-object fields and a Page rejects them outright.
+    assert _webhook_target(account) == "ig-99"
 
 
-def test_webhook_target_defaults_to_the_account_itself(workspace):
+def test_webhook_target_is_always_the_account_itself(workspace):
     assert _webhook_target(_account(workspace, account_platform_id="page-5")) == "page-5"
 
 
 # -------------------------------------------------------------- subscribing
 
 
-def test_subscribe_uses_the_webhook_target(workspace):
+def test_subscribe_targets_the_instagram_user_not_its_linked_page(workspace):
+    """Meta answers comments/mentions on a Page with "(#100) Param
+    subscribed_fields[0] must be one of {feed, mention, ...}", so every account
+    subscribed against the Page was left with a permanently deaf inbox."""
     account = _account(workspace, platform="instagram", account_platform_id="ig-99", webhook_target_id="page-77")
     provider = _WebhookProvider()
 
     with patch("apps.social_accounts.views._get_provider_for_platform", return_value=provider):
         assert _subscribe_account_webhooks(account) is True
 
-    assert provider.subscribe_calls == [("page-token", "page-77")]
+    assert provider.subscribe_calls == [("page-token", "ig-99")]
 
 
 def test_a_failed_subscription_is_recorded_on_the_account(workspace):
@@ -172,14 +177,14 @@ def test_supports_webhooks_distinguishes_real_implementations():
 # ------------------------------------------------------------ unsubscribing
 
 
-def test_unsubscribe_uses_the_stored_webhook_target(workspace):
+def test_unsubscribe_targets_the_same_object_subscribe_did(workspace):
     account = _account(workspace, platform="instagram", account_platform_id="ig-99", webhook_target_id="page-77")
     provider = _WebhookProvider()
 
     with patch("apps.social_accounts.views._get_provider_for_platform", return_value=provider):
         assert _unsubscribe_account_webhooks(account) is True
 
-    assert provider.unsubscribe_calls == [("page-token", "page-77")]
+    assert provider.unsubscribe_calls == [("page-token", "ig-99")]
 
 
 def test_unsubscribe_failure_is_swallowed_so_disconnect_still_happens(workspace):
@@ -318,7 +323,25 @@ def test_the_last_connection_does_unsubscribe(workspace, organization):
     assert provider.unsubscribe_calls == [("page-token", "page-solo")]
 
 
-def test_a_shared_instagram_page_target_is_also_protected(workspace, organization):
+def test_the_same_instagram_account_in_two_workspaces_is_protected(workspace, organization):
+    """The subscription belongs to the IG user, so a second workspace holding
+    the same account still depends on it."""
+    from apps.workspaces.models import Workspace
+
+    other_ws = Workspace.objects.create(name="Other WS", organization=organization)
+    account = _account(workspace, platform="instagram", account_platform_id="ig-1", webhook_target_id="page-77")
+    _account(other_ws, platform="instagram", account_platform_id="ig-1", webhook_target_id="page-77")
+    provider = _WebhookProvider()
+
+    with patch("apps.social_accounts.views._get_provider_for_platform", return_value=provider):
+        assert _unsubscribe_account_webhooks(account) is False
+
+    assert provider.unsubscribe_calls == []
+
+
+def test_two_instagram_accounts_sharing_a_page_do_not_share_a_subscription(workspace, organization):
+    """Each IG user carries its own subscription now, so disconnecting one must
+    not leave the other's dangling."""
     from apps.workspaces.models import Workspace
 
     other_ws = Workspace.objects.create(name="Other WS", organization=organization)
@@ -327,9 +350,9 @@ def test_a_shared_instagram_page_target_is_also_protected(workspace, organizatio
     provider = _WebhookProvider()
 
     with patch("apps.social_accounts.views._get_provider_for_platform", return_value=provider):
-        assert _unsubscribe_account_webhooks(account) is False
+        assert _unsubscribe_account_webhooks(account) is True
 
-    assert provider.unsubscribe_calls == []
+    assert provider.unsubscribe_calls == [("page-token", "ig-1")]
 
 
 # ------------------------------------------------------- the backfill command

@@ -389,6 +389,129 @@ class TestInstagramCommentEvents:
     @override_settings(
         PLATFORM_CREDENTIALS_FROM_ENV={"instagram_login": {"app_secret": "ig-secret"}},
     )
+    def test_an_instagram_comment_is_linked_to_the_media_it_belongs_to(self, client, ig_login_account):
+        """Instagram nests the media id where a Page sends a flat ``post_id``.
+
+        Without lifting it out, related_post is NULL for every Instagram comment
+        even though PlatformPost holds that exact id — IG media ids carry no
+        page prefix to strip, so the two match directly.
+        """
+        from apps.composer.models import PlatformPost, Post
+
+        post = Post.objects.create(workspace=ig_login_account.workspace, caption="hi")
+        platform_post = PlatformPost.objects.create(
+            post=post,
+            social_account=ig_login_account,
+            status=PlatformPost.Status.PUBLISHED,
+            platform_post_id="media-1",
+            published_at=timezone.now(),
+        )
+
+        payload = {
+            "entry": [
+                {
+                    "id": "ig-login-123",
+                    "changes": [
+                        {
+                            "field": "comments",
+                            "value": {
+                                "id": "ig-comment-3",
+                                "text": "Test from a different account",
+                                "from": {"id": "igsid-9", "username": "lenasorensen"},
+                                "media": {"id": "media-1", "media_product_type": "FEED"},
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        response = client.post(
+            reverse("inbox_webhooks:webhook_instagram_login"),
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=_sign_body(body, "ig-secret"),
+        )
+
+        assert response.status_code == 200
+        msg = InboxMessage.objects.get(platform_message_id="ig-comment-3")
+        assert msg.related_post_id == platform_post.id
+        assert msg.extra["post_id"] == "media-1"
+        assert msg.extra["stored_post_id"] == "media-1"
+
+    @override_settings(
+        PLATFORM_CREDENTIALS_FROM_ENV={"instagram_login": {"app_secret": "ig-secret"}},
+    )
+    def test_an_instagram_reply_keeps_its_parent_comment_id(self, client, ig_login_account):
+        payload = {
+            "entry": [
+                {
+                    "id": "ig-login-123",
+                    "changes": [
+                        {
+                            "field": "comments",
+                            "value": {
+                                "id": "ig-reply-1",
+                                "text": "Answering you",
+                                "from": {"id": "igsid-9", "username": "lenasorensen"},
+                                "parent_id": "ig-comment-1",
+                                "media": {"id": "media-1"},
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        client.post(
+            reverse("inbox_webhooks:webhook_instagram_login"),
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=_sign_body(body, "ig-secret"),
+        )
+
+        msg = InboxMessage.objects.get(platform_message_id="ig-reply-1")
+        assert msg.extra["parent_id"] == "ig-comment-1"
+
+    @override_settings(
+        PLATFORM_CREDENTIALS_FROM_ENV={"instagram_login": {"app_secret": "ig-secret"}},
+    )
+    def test_a_parent_id_naming_the_media_is_not_stored(self, client, ig_login_account):
+        """Replying on the media publishes a new top-level comment instead of a
+        threaded reply."""
+        payload = {
+            "entry": [
+                {
+                    "id": "ig-login-123",
+                    "changes": [
+                        {
+                            "field": "comments",
+                            "value": {
+                                "id": "ig-comment-4",
+                                "text": "Top level",
+                                "from": {"id": "igsid-9", "username": "lenasorensen"},
+                                "parent_id": "media-1",
+                                "media": {"id": "media-1"},
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        client.post(
+            reverse("inbox_webhooks:webhook_instagram_login"),
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=_sign_body(body, "ig-secret"),
+        )
+
+        msg = InboxMessage.objects.get(platform_message_id="ig-comment-4")
+        assert "parent_id" not in msg.extra
+
+    @override_settings(
+        PLATFORM_CREDENTIALS_FROM_ENV={"instagram_login": {"app_secret": "ig-secret"}},
+    )
     def test_comment_without_an_id_is_ignored(self, client, ig_login_account):
         payload = {
             "entry": [

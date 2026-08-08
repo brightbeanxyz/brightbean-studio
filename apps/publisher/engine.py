@@ -30,6 +30,14 @@ from django.utils import timezone
 
 from apps.composer.models import PlatformPost
 from apps.credentials.models import resolve_platform_credentials
+from apps.social_accounts.error_messages import (
+    FIRST_COMMENT_GENERIC_MESSAGE,
+    PUBLISH_EXHAUSTED_MESSAGE,
+    PUBLISH_GENERIC_MESSAGE,
+    PUBLISH_RATE_LIMIT_MESSAGE,
+    friendly_first_comment_error,
+    friendly_publish_error,
+)
 from providers import get_provider
 from providers.exceptions import ProviderError, RateLimitError
 from providers.types import PostType, PublishContent
@@ -88,6 +96,11 @@ def _resolve_publish_credentials(account):
         credentials["page_id"] = account.account_platform_id
     elif platform in ("instagram", "instagram_login"):
         credentials["ig_user_id"] = account.account_platform_id
+        # The comment poll and the first-comment reconciliation both match our
+        # own comments on handle as well as id: Instagram often returns a
+        # comment's ``username`` without a ``from`` object, and an unrecognised
+        # own comment lands in the inbox as an inbound message from ourselves.
+        credentials["account_handle"] = account.account_handle
 
     return credentials
 
@@ -299,7 +312,9 @@ class PublishEngine:
 
         if rate_state and rate_state.is_rate_limited:
             error_msg = f"Rate limited until {rate_state.window_resets_at}"
-            self._schedule_retry(platform_post, error_msg)
+            # Our own sentence, not a provider body — but routed through the
+            # same parameter so publish_error has exactly one writer.
+            self._schedule_retry(platform_post, error_msg, user_message=PUBLISH_RATE_LIMIT_MESSAGE)
             return {"success": False, "error": error_msg}
 
         try:
@@ -366,7 +381,11 @@ class PublishEngine:
                     duration_ms=duration_ms,
                 )
 
-                self._schedule_retry(platform_post, error_msg)
+                # A provider that reports failure in the result dict rather than
+                # raising gives us no exception to classify, and result["error"]
+                # may well be a response body — so this one always gets the
+                # generic sentence. The raw text is in the PublishLog row above.
+                self._schedule_retry(platform_post, error_msg, user_message=PUBLISH_GENERIC_MESSAGE)
                 return result
 
         except Exception as e:
@@ -380,10 +399,11 @@ class PublishEngine:
                 duration_ms=duration_ms,
             )
 
+            user_message = friendly_publish_error(e)
             if getattr(e, "retryable", True):
-                self._schedule_retry(platform_post, error_msg)
+                self._schedule_retry(platform_post, error_msg, user_message=user_message)
             else:
-                self._fail_permanently(platform_post, error_msg)
+                self._fail_permanently(platform_post, error_msg, user_message=user_message)
             return {"success": False, "error": error_msg}
 
     def _dispatch_to_provider(self, platform_post):
@@ -590,10 +610,17 @@ class PublishEngine:
             return PostType.IMAGE
         return PostType.TEXT
 
-    def _fail_permanently(self, platform_post, error_msg, *, reason="non-retryable"):
-        """Mark a post FAILED with no further retries."""
+    def _fail_permanently(self, platform_post, error_msg, *, user_message, reason="non-retryable"):
+        """Mark a post FAILED with no further retries.
+
+        ``error_msg`` is the diagnostic and stays in the log line below and in
+        the PublishLog row the caller already wrote. ``publish_error`` holds
+        what the composer and the calendar render, so it must never carry a raw
+        provider response body — which is why ``user_message`` has no default:
+        every caller has to decide, and a forgotten one is a leak.
+        """
         platform_post.status = PlatformPost.Status.FAILED
-        platform_post.publish_error = error_msg
+        platform_post.publish_error = (user_message or PUBLISH_GENERIC_MESSAGE)[:2000]
         platform_post.save()
         logger.warning(
             "PlatformPost %s failed (%s): %s",
@@ -602,10 +629,18 @@ class PublishEngine:
             error_msg,
         )
 
-    def _schedule_retry(self, platform_post, error_msg):
+    def _schedule_retry(self, platform_post, error_msg, *, user_message):
         """Schedule a retry with exponential backoff."""
         if platform_post.retry_count >= MAX_RETRIES:
-            self._fail_permanently(platform_post, error_msg, reason=f"after {MAX_RETRIES} retries")
+            # Not ``user_message``: everything that reaches this branch is a
+            # retryable failure whose copy promises "We'll retry shortly", and
+            # the post is about to be marked permanently failed.
+            self._fail_permanently(
+                platform_post,
+                error_msg,
+                user_message=PUBLISH_EXHAUSTED_MESSAGE,
+                reason=f"after {MAX_RETRIES} retries",
+            )
             return
 
         backoff_seconds = RETRY_BACKOFF[min(platform_post.retry_count, len(RETRY_BACKOFF) - 1)]
@@ -614,7 +649,7 @@ class PublishEngine:
         # Drop back to SCHEDULED so the next _process_retries tick picks it up
         # once next_retry_at passes.
         platform_post.status = PlatformPost.Status.SCHEDULED
-        platform_post.publish_error = error_msg
+        platform_post.publish_error = (user_message or PUBLISH_GENERIC_MESSAGE)[:2000]
         platform_post.save()
 
         logger.info(
@@ -702,6 +737,32 @@ def _is_ambiguous_submission_failure(exc) -> bool:
     return status is None or status >= 500
 
 
+def _is_retryable_first_comment_failure(exc) -> bool:
+    """Whether re-sending this exact comment could plausibly land differently.
+
+    A provider that already called the error permanent is believed. Past that: a
+    rate limit is a "not now", and a 5xx or a transport error is an unknown
+    outcome (the caller gates those on reconciliation). A clean 4xx is the
+    platform refusing *this request*, and re-sending it unchanged earns the same
+    refusal — Instagram made that concrete by answering a comment POST carrying
+    an unsupported ``fields`` param with a 400 while creating the comment
+    anyway, so three retries left four comments on a live account.
+
+    401 is the exception: ``_provider_and_access_token`` refreshes an expiring
+    token between attempts, so the next attempt really is a different request.
+    403 is not — Meta uses it for missing scopes and revoked grants, which need
+    a reconnect rather than a backoff.
+    """
+    if not getattr(exc, "retryable", True):
+        return False
+    if isinstance(exc, RateLimitError):
+        return True
+    status = getattr(exc, "status_code", None)
+    if status is None or status >= 500:
+        return True
+    return status == 401
+
+
 def _can_reconcile_comments(provider) -> bool:
     """Whether this provider can check for an already-posted comment.
 
@@ -741,6 +802,7 @@ def _record_first_comment_failure(
     error_msg: str,
     *,
     retryable: bool,
+    user_message: str = "",
     retry_after: int | None = None,
     unexpected: bool = False,
 ):
@@ -749,7 +811,14 @@ def _record_first_comment_failure(
     Every exit records state. The old version logged and returned, so a comment
     that 4xx'd left the post looking completely successful — the failure was
     only recoverable from worker logs.
+
+    ``error_msg`` is the diagnostic: raw provider text, logged, never stored.
+    ``user_message`` is what the composer and the calendar render, so it must
+    stay free of response bodies — the Graph payload that motivated this split
+    reached the UI as a wall of OAuthException and fbtrace noise. The log line
+    below is the only place the raw text survives, so it always emits.
     """
+    stored = (user_message or FIRST_COMMENT_GENERIC_MESSAGE)[:2000]
     exhausted = platform_post.first_comment_retry_count >= FIRST_COMMENT_MAX_RETRIES
 
     if not retryable or exhausted:
@@ -765,7 +834,7 @@ def _record_first_comment_failure(
         )
         PlatformPost.objects.filter(pk=platform_post.pk).update(
             first_comment_status=FirstCommentStatus.FAILED,
-            first_comment_error=error_msg[:2000],
+            first_comment_error=stored,
         )
         return
 
@@ -779,7 +848,7 @@ def _record_first_comment_failure(
     # and slip past FIRST_COMMENT_MAX_RETRIES.
     PlatformPost.objects.filter(pk=platform_post.pk).update(
         first_comment_status=FirstCommentStatus.PENDING,
-        first_comment_error=error_msg[:2000],
+        first_comment_error=stored,
         first_comment_retry_count=F("first_comment_retry_count") + 1,
     )
     _post_first_comment_task(str(platform_post.id), schedule=backoff)
@@ -817,6 +886,7 @@ def _post_first_comment_task(platform_post_id):
             platform_post,
             "No platform post id recorded; nothing to comment on.",
             retryable=False,
+            user_message="The post's id on the platform wasn't recorded, so the first comment couldn't be added.",
         )
         return
 
@@ -828,6 +898,7 @@ def _post_first_comment_task(platform_post_id):
             platform_post,
             str(exc),
             retryable=getattr(exc, "retryable", True),
+            user_message=friendly_first_comment_error(exc),
             unexpected=not isinstance(exc, ProviderError),
         )
         return
@@ -839,11 +910,22 @@ def _post_first_comment_task(platform_post_id):
             existing = provider.find_own_comment(access_token, platform_post.platform_post_id, comment_text)
         except NotImplementedError:
             existing = None
-        except Exception:
+        except Exception as exc:
+            # Whether the comment landed is unknown, so this attempt stops
+            # without posting — but it must still be recorded and re-queued, or
+            # the row sits PENDING forever with no task behind it and the post
+            # reads as fully successful. The retry budget bounds it: a lookup
+            # that never recovers ends FAILED and visible, never duplicated.
             logger.exception(
                 "Could not check for an existing first comment on PlatformPost %s; skipping this attempt "
                 "rather than risking a duplicate.",
                 platform_post.id,
+            )
+            _record_first_comment_failure(
+                platform_post,
+                f"Could not check for an existing first comment: {exc}",
+                retryable=True,
+                user_message=friendly_first_comment_error(exc),
             )
             return
         if existing:
@@ -865,13 +947,14 @@ def _post_first_comment_task(platform_post_id):
         # whether the comment landed; otherwise stop, because a duplicate
         # comment on a live post cannot be taken back.
         ambiguous = _is_ambiguous_submission_failure(exc)
-        retryable = getattr(exc, "retryable", True)
+        retryable = _is_retryable_first_comment_failure(exc)
         if ambiguous and not _can_reconcile_comments(provider):
             retryable = False
         _record_first_comment_failure(
             platform_post,
             str(exc),
             retryable=retryable,
+            user_message=friendly_first_comment_error(exc),
             # RateLimitError is a sibling of APIError, not a subclass, so branch
             # on the attributes rather than on the exception type.
             retry_after=getattr(exc, "retry_after", None),

@@ -146,13 +146,12 @@ def test_facebook_dm_reply_refuses_without_a_recipient():
 def test_instagram_via_facebook_offers_no_dm_surface():
     """That OAuth flow never requests instagram_manage_messages.
 
-    Leaving the methods in place would produce runtime API rejections instead
-    of a clear "this connection cannot do DMs".
+    Leaving the method in place would produce runtime API rejections instead of
+    a clear "this connection cannot do DMs". ``get_messages`` is not part of
+    this: it polls comments, which the connection *can* read.
     """
     provider = InstagramProvider({**CREDS, "ig_user_id": "ig-1"})
 
-    with pytest.raises(NotImplementedError):
-        provider.get_messages("token")
     with pytest.raises(NotImplementedError):
         provider.reply_to_message("token", "mid.in", "Hi", extra={"sender_id": "igsid-2"})
 
@@ -427,6 +426,11 @@ def test_instagram_login_polling_skips_the_accounts_own_replies():
         )
     )
 
+    # get_messages polls DMs and comments; this test is about the DM half, and
+    # the shared _request mock would otherwise feed the conversations payload to
+    # the comment half too.
+    provider._fetch_media_comments = MagicMock(return_value=[])
+
     messages = provider.get_messages("token")
 
     assert [m.platform_message_id for m in messages] == ["mid.customer"]
@@ -456,5 +460,6 @@ def test_instagram_login_without_its_own_id_keeps_every_message():
             }
         )
     )
+    provider._fetch_media_comments = MagicMock(return_value=[])
 
     assert len(provider.get_messages("token")) == 1

@@ -393,3 +393,91 @@ class PublishedPostLeavesQueueTest(TestCase):
         self.assertEqual(self.pp.status, PlatformPost.Status.PUBLISHED)
         self.assertEqual(self.pp.retry_count, 0)
         self.assertIsNone(self.pp.next_retry_at)
+
+
+class PublishErrorIsNeverRawTest(TestCase):
+    """publish_error renders in the composer and the calendar, so no path may
+    write a provider response body into it."""
+
+    def setUp(self):
+        from apps.composer.models import PlatformPost, Post
+        from apps.organizations.models import Organization
+        from apps.social_accounts.models import SocialAccount
+        from apps.workspaces.models import Workspace
+
+        org = Organization.objects.create(name="Org")
+        workspace = Workspace.objects.create(organization=org, name="WS")
+        account = SocialAccount.objects.create(
+            workspace=workspace,
+            platform="instagram",
+            account_platform_id="ig-1",
+            account_name="IG",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        post = Post.objects.create(workspace=workspace, caption="hi")
+        self.platform_post = PlatformPost.objects.create(
+            post=post,
+            social_account=account,
+            status=PlatformPost.Status.SCHEDULED,
+            scheduled_at=timezone.now(),
+        )
+
+    def test_a_rate_limited_account_does_not_show_an_internal_timestamp(self):
+        from apps.publisher.models import RateLimitState
+        from apps.social_accounts.error_messages import PUBLISH_RATE_LIMIT_MESSAGE
+
+        RateLimitState.objects.create(
+            social_account=self.platform_post.social_account,
+            platform="instagram",
+            requests_remaining=0,
+            window_resets_at=timezone.now() + timedelta(hours=1),
+        )
+
+        PublishEngine()._publish_platform_post(self.platform_post)
+
+        self.platform_post.refresh_from_db()
+        self.assertEqual(self.platform_post.publish_error, PUBLISH_RATE_LIMIT_MESSAGE)
+
+    def test_a_provider_reporting_failure_in_its_result_does_not_leak_the_body(self):
+        """This branch has no exception to classify, so it always gets the
+        generic sentence; the raw text lives in the PublishLog row."""
+        from apps.social_accounts.error_messages import PUBLISH_GENERIC_MESSAGE
+
+        raw = 'Instagram API error 400: {"error":{"fbtrace_id":"A4B_mFUQTXKx"}}'
+        with patch.object(
+            PublishEngine,
+            "_dispatch_to_provider",
+            return_value={"success": False, "error": raw, "status_code": 400},
+        ):
+            PublishEngine()._publish_platform_post(self.platform_post)
+
+        self.platform_post.refresh_from_db()
+        self.assertEqual(self.platform_post.publish_error, PUBLISH_GENERIC_MESSAGE)
+        self.assertNotIn("fbtrace_id", self.platform_post.publish_error)
+        self.assertIn("fbtrace_id", PublishLog.objects.get(platform_post=self.platform_post).error_message)
+
+    def test_an_exhausted_retry_budget_stops_promising_a_retry(self):
+        """The copy that got us here says "We'll retry shortly", which is true
+        only while attempts remain."""
+        from apps.composer.models import PlatformPost
+        from apps.social_accounts.error_messages import (
+            PUBLISH_EXHAUSTED_MESSAGE,
+            PUBLISH_TEMPORARY_MESSAGE,
+        )
+        from providers.exceptions import APIError
+
+        self.platform_post.retry_count = MAX_RETRIES
+        self.platform_post.save(update_fields=["retry_count"])
+
+        with patch.object(
+            PublishEngine,
+            "_dispatch_to_provider",
+            side_effect=APIError("upstream down", status_code=503, platform="Instagram"),
+        ):
+            PublishEngine()._publish_platform_post(self.platform_post)
+
+        self.platform_post.refresh_from_db()
+        self.assertEqual(self.platform_post.status, PlatformPost.Status.FAILED)
+        self.assertEqual(self.platform_post.publish_error, PUBLISH_EXHAUSTED_MESSAGE)
+        self.assertNotEqual(self.platform_post.publish_error, PUBLISH_TEMPORARY_MESSAGE)
+        self.assertNotIn("retry shortly", self.platform_post.publish_error)

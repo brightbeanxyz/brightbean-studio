@@ -389,7 +389,7 @@
                     {% for pp in failed_first_comments %}
                     <p class="text-xs text-amber-700 pl-5.5">
                         <span class="font-semibold">{{ pp.social_account.account_name|default:pp.social_account.account_handle }}:</span>
-                        {{ pp.first_comment_error|default:"the platform rejected the comment" }}
+                        {{ pp.first_comment_error|default:"The first comment couldn't be added. Add it manually on the post." }}
                     </p>
                     {% endfor %}
                     <p class="text-[11px] text-amber-600 pl-5.5">The post itself published successfully — only the comment failed.</p>

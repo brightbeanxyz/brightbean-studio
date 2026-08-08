@@ -232,6 +232,32 @@ def _facebook_comment_extra(value: dict) -> dict:
     return extra
 
 
+def _instagram_comment_extra(value: dict, *, reply_edge: str) -> dict:
+    """Normalize an Instagram comment or mention payload for the inbox.
+
+    Instagram nests the media under ``value["media"]["id"]`` (flat ``media_id``
+    on a mention) where a Page sends a flat ``post_id``. ``_related_post_key``
+    only reads ``stored_post_id``/``post_id``, so without this every Instagram
+    comment stores a NULL related_post even though PlatformPost holds that exact
+    media id — Instagram ids carry no page prefix to strip, so the two match
+    directly and both keys are the same value.
+    """
+    media_id = str((value.get("media") or {}).get("id") or value.get("media_id") or "")
+    extra = {**value, "reply_edge": reply_edge, "source": "webhook"}
+    if media_id:
+        extra["post_id"] = media_id
+        extra["stored_post_id"] = media_id
+    # A parent_id naming the media or the comment itself is not a parent
+    # *comment*; replying on it would publish a new top-level comment instead of
+    # a threaded reply.
+    parent_id = str(value.get("parent_id") or "")
+    if parent_id and parent_id not in {str(value.get("id") or ""), media_id}:
+        extra["parent_id"] = parent_id
+    else:
+        extra.pop("parent_id", None)
+    return extra
+
+
 def _upsert_facebook_comment(account, value: dict):
     """Upsert a Facebook comment from a webhook event."""
     # Both default leniently: an older or variant payload shape that omits them
@@ -331,7 +357,7 @@ def _upsert_instagram_comment(account, value: dict):
         sender_name=from_data.get("username", "Unknown"),
         sender_id=from_data.get("id", ""),
         body=value.get("text", ""),
-        extra={**value, "reply_edge": "comment"},
+        extra=_instagram_comment_extra(value, reply_edge="comment"),
     )
 
 
@@ -361,7 +387,7 @@ def _upsert_instagram_mention(account, value: dict):
         sender_name="Instagram",
         sender_id="",
         body=INSTAGRAM_MENTION_PLACEHOLDER,
-        extra={**value, "reply_edge": "comment" if comment_id else "media"},
+        extra=_instagram_comment_extra(value, reply_edge="comment" if comment_id else "media"),
     )
 
 

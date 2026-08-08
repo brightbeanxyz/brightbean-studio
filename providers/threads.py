@@ -279,7 +279,10 @@ class ThreadsProvider(SocialProvider):
 
         if not creation_id:
             raise PublishError(
-                f"Threads container creation failed: {create_body}",
+                # The body goes in raw_response, not the message: publish_error
+                # is rendered to users, and a ProviderError message is the one
+                # thing the sanitizer passes through verbatim.
+                "Threads container creation failed",
                 platform=self.platform_name,
                 raw_response=create_body,
             )
@@ -373,7 +376,7 @@ class ThreadsProvider(SocialProvider):
             item_id = item_body.get("id")
             if not item_id:
                 raise PublishError(
-                    f"Threads carousel item creation failed: {item_body}",
+                    "Threads carousel item creation failed",
                     platform=self.platform_name,
                     raw_response=item_body,
                 )
@@ -398,7 +401,7 @@ class ThreadsProvider(SocialProvider):
         creation_id = carousel_body.get("id")
         if not creation_id:
             raise PublishError(
-                f"Threads carousel container creation failed: {carousel_body}",
+                "Threads carousel container creation failed",
                 platform=self.platform_name,
                 raw_response=carousel_body,
             )
