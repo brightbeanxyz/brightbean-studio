@@ -307,6 +307,38 @@ All platforms with ephemeral filesystems require `STORAGE_BACKEND=s3` - see `.en
 
 See `architecture.md` for detailed per-platform instructions and cost breakdowns.
 
+### Restricting Sign-up
+
+A self-hosted install has to be reachable from the internet — that is where
+the platforms deliver OAuth callbacks and webhooks — so by default anyone
+who finds the domain can create an account. `SIGNUP_MODE` controls that:
+
+| Value | Who may create an account |
+|---|---|
+| `open` (default) | Anyone. |
+| `invite` | Only visitors who followed a valid invitation link. |
+| `closed` | Nobody. Create accounts in the Django admin. |
+
+```bash
+SIGNUP_MODE=invite
+```
+
+Applies to both the email form and social logins — guarding only the form
+would leave the provider callback open, since `SOCIALACCOUNT_AUTO_SIGNUP`
+creates the account there without ever rendering the signup page.
+
+**Signing in is never affected**, including for users who authenticate
+through Google: an existing account is connected by email rather than
+signed up.
+
+In `invite` mode the invitation must be unaccepted and unexpired, so a
+single link cannot be reused indefinitely. Invitations are sent from
+**Settings → Members**.
+
+An unrecognised value stops the app at startup rather than falling back to
+a default — a typo that silently leaves sign-up open is the failure worth
+being loud about.
+
 ## Project Structure
 
 ```
