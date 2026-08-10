@@ -8,7 +8,6 @@ import secrets
 from datetime import timedelta
 from urllib.parse import urlsplit
 
-from background_task import background
 from csp.decorators import csp_update
 from django.conf import settings
 from django.contrib import messages
@@ -21,30 +20,23 @@ from django.views.decorators.http import require_GET, require_POST
 from django_ratelimit.decorators import ratelimit
 
 from apps.common.validators import is_safe_url as _is_safe_url
-from apps.credentials.models import PlatformCredential, derive_is_configured, resolve_platform_credentials
+from apps.credentials.models import PlatformCredential, derive_is_configured
 from apps.members.decorators import require_permission
 
 from .models import MastodonAppRegistration, PlatformVisibility, SocialAccount
 from .oauth_aliases import from_url_slug, redirect_uri_from_request, to_url_slug
 from .oauth_pkce import issue_pkce_verifier, pkce_kwargs
+from .provider_factory import _get_provider_for_platform
+from .webhooks import (
+    subscribe_account_webhooks,
+    subscribe_account_webhooks_task,
+    unsubscribe_account_webhooks,
+)
 
 logger = logging.getLogger(__name__)
 
 OAUTH_STATE_MAX_AGE = 600  # 10 minutes
 OAUTH_SESSION_KEY = "social_oauth"
-
-
-def _get_provider_for_platform(platform: str, org_id, **extra_credentials):
-    """Resolve app credentials and instantiate the provider."""
-    from providers import get_provider
-
-    # .env is dominant; admin-entered org credentials are the fallback.
-    credentials = resolve_platform_credentials(platform, org_id)
-
-    if extra_credentials:
-        credentials = {**credentials, **extra_credentials}
-
-    return get_provider(platform, credentials)
 
 
 def _get_visible_platform_choices():
@@ -762,6 +754,63 @@ def reconnect(request, workspace_id, account_id):
     return redirect(auth_url)
 
 
+@login_required
+@require_permission("manage_social_accounts")
+@require_POST
+@ratelimit(key="user", rate="10/m", method="POST", block=True)
+def retry_webhooks(request, workspace_id, account_id):
+    """Re-run a failed webhook subscription without a new OAuth grant.
+
+    A subscription can fail for reasons that have nothing to do with the token —
+    a transient Graph error, or a bug in what we asked for — and sending the
+    user through the full OAuth dance to retry one API call is theatre. Runs
+    inline rather than through ``subscribe_account_webhooks_task``: that task
+    exists so connecting *several* Pages at once doesn't stack a round trip per
+    Page inside the redirect the user is waiting on, which a single deliberate
+    retry doesn't. Rate limited because each press is a live round trip to the
+    platform on a request thread.
+    """
+    account = get_object_or_404(SocialAccount.objects.for_workspace(workspace_id), id=account_id)
+
+    # A dead connection cannot carry a subscription: the call would spend a
+    # round trip to be rejected, then overwrite the warning with one about
+    # real-time delivery when the real problem is the connection itself. Gated
+    # on the same ``needs_reconnect`` the card uses to hide the retry button, so
+    # this can only be reached by a stale card or a direct POST — and answers
+    # both with the reconnect state rather than an unchanged card.
+    if account.needs_reconnect:
+        if request.headers.get("HX-Request"):
+            return _render_account_card(request, account, workspace_id)
+        messages.error(request, f"Reconnect {account.display_label} first — its connection isn't healthy.")
+        return redirect("social_accounts:list", workspace_id=workspace_id)
+
+    # An explicit press is a fresh mandate: clear the automatic retry budget so
+    # a user can always get one more attempt out of a capped-out account.
+    SocialAccount.objects.filter(pk=account.pk).update(webhook_retry_count=0)
+    account.webhook_retry_count = 0
+
+    subscribed = subscribe_account_webhooks(account)
+    account.refresh_from_db()
+
+    if request.headers.get("HX-Request"):
+        return _render_account_card(request, account, workspace_id)
+
+    if subscribed:
+        messages.success(request, f"Real-time updates are back on for {account.display_label}.")
+    else:
+        messages.error(request, account.webhook_error or "Couldn't set up real-time updates. Please try again.")
+    return redirect("social_accounts:list", workspace_id=workspace_id)
+
+
+def _render_account_card(request, account, workspace_id):
+    """Render one account card for an htmx ``outerHTML`` swap of ``#account-<id>``."""
+    return render(
+        request,
+        "social_accounts/partials/_account_card.html",
+        {"account": account, "workspace_id": workspace_id},
+    )
+
+
 # ------------------------------------------------------------------
 # Disconnect
 # ------------------------------------------------------------------
@@ -777,7 +826,7 @@ def disconnect(request, workspace_id, account_id):
     # Stop the platform pushing us this account's activity before we drop the
     # token that would let us unsubscribe.
     if account.oauth_access_token:
-        _unsubscribe_account_webhooks(account)
+        unsubscribe_account_webhooks(account)
 
     # Try to revoke token
     try:
@@ -857,6 +906,16 @@ def _create_or_update_account(
             "last_error": "",
             # Fresh OAuth grant invalidates any prior analytics-scope failure.
             "analytics_needs_reconnect": False,
+            # Likewise the webhook verdict: the subscription is about to be
+            # retried below, and subscribe_account_webhooks returns early
+            # without recording when the provider has no webhooks at all — so
+            # without this reset a stale failure would outlive the reconnect
+            # that was supposed to clear it.
+            "webhooks_active": None,
+            "webhook_error": "",
+            "webhook_needs_reconnect": False,
+            "webhook_error_detail": "",
+            "webhook_retry_count": 0,
         },
     )
 
@@ -865,142 +924,6 @@ def _create_or_update_account(
 
         create_default_queue_and_slots(account)
 
-    _subscribe_account_webhooks_task(str(account.id))
+    subscribe_account_webhooks_task(str(account.id))
 
     return account
-
-
-def _webhook_target(account):
-    """The object whose webhooks we subscribe for this account: the account itself.
-
-    This used to hand Instagram's linked Page (``webhook_target_id``) to
-    ``subscribe_webhooks`` on the theory that the Page delivers Instagram
-    events. Meta disagrees: ``comments``/``mentions`` are fields of the
-    *Instagram* object, and a Page answers them with "(#100) Param
-    subscribed_fields[0] must be one of {feed, mention, ...}" — so every
-    Instagram account ended up with ``webhooks_active=False`` and an inbox that
-    never saw a comment.
-
-    ``webhook_target_id`` is still stored: ``_is_own_activity`` uses it to
-    recognise the account's own Page-side activity.
-    """
-    return account.account_platform_id
-
-
-def _supports_webhooks(provider) -> bool:
-    """Whether this provider actually implements a subscription.
-
-    The base class returns False for every platform that has no webhooks, so
-    without this check a genuine API rejection is indistinguishable from a
-    platform that was never going to subscribe.
-    """
-    from providers.base import SocialProvider
-
-    return type(provider).subscribe_webhooks is not SocialProvider.subscribe_webhooks
-
-
-def _subscribe_account_webhooks(account):
-    """Ask the platform to push this account's activity to us.
-
-    Comments and mentions have no polling fallback — if this never runs they
-    simply never reach the inbox. Best-effort on purpose: a platform that
-    refuses the subscription should not block the user from connecting, but the
-    failure is recorded on the account so the UI can prompt a reconnect instead
-    of leaving a silently deaf inbox.
-    """
-    try:
-        provider = _get_provider_for_platform(account.platform, account.workspace.organization_id)
-    except Exception:
-        logger.exception("Could not build provider to subscribe webhooks for %s", account.id)
-        return False
-
-    if not _supports_webhooks(provider):
-        return False
-
-    try:
-        subscribed = provider.subscribe_webhooks(account.oauth_access_token, _webhook_target(account))
-    except Exception as exc:
-        logger.exception("Webhook subscription failed for %s (%s)", account.id, account.platform)
-        _record_subscription_result(account, False, str(exc))
-        return False
-
-    if not subscribed:
-        logger.warning(
-            "%s declined the webhook subscription for account %s; its inbox will miss comments.",
-            account.platform,
-            account.id,
-        )
-    _record_subscription_result(
-        account,
-        subscribed,
-        "" if subscribed else "the platform declined the subscription",
-    )
-    return subscribed
-
-
-def _record_subscription_result(account, active: bool, detail: str):
-    """Record whether the platform is pushing this account's activity to us.
-
-    Kept off ``last_error``, which the periodic health check owns and clears —
-    a webhook failure would be wiped on the next successful token check while
-    the inbox stayed deaf.
-    """
-    SocialAccount.objects.filter(pk=account.pk).update(
-        webhooks_active=active,
-        webhook_error="" if active else f"Comments and mentions are not being delivered: {detail}"[:500],
-    )
-
-
-@background(schedule=0)
-def _subscribe_account_webhooks_task(account_id):
-    """Subscribe webhooks off the OAuth request path.
-
-    Connecting several Pages at once would otherwise fire one blocking round
-    trip to Meta per Page inside the redirect the user is waiting on.
-    """
-    try:
-        account = SocialAccount.objects.select_related("workspace").get(pk=account_id)
-    except SocialAccount.DoesNotExist:
-        logger.info("Account %s gone before webhooks could be subscribed.", account_id)
-        return
-    _subscribe_account_webhooks(account)
-
-
-def _webhook_target_is_shared(account) -> bool:
-    """Whether another live connection depends on this same subscription.
-
-    A subscription belongs to the platform object, not to our row: the same
-    Page can be connected in two workspaces. Unsubscribing on one disconnect
-    would silence the others' inboxes too, so we leave it in place and let the
-    revoked token end our access.
-    """
-    return (
-        SocialAccount.objects.filter(
-            platform=account.platform,
-            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
-            account_platform_id=_webhook_target(account),
-        )
-        .exclude(pk=account.pk)
-        .exists()
-    )
-
-
-def _unsubscribe_account_webhooks(account):
-    """Stop the platform pushing this account's activity to us."""
-    if _webhook_target_is_shared(account):
-        logger.info(
-            "Leaving the webhook subscription for %s in place; another connected account shares it.",
-            _webhook_target(account),
-        )
-        return False
-
-    try:
-        provider = _get_provider_for_platform(account.platform, account.workspace.organization_id)
-        return provider.unsubscribe_webhooks(account.oauth_access_token, _webhook_target(account))
-    except Exception:
-        logger.warning(
-            "Failed to unsubscribe webhooks for %s (%s); continuing with disconnect.",
-            account.id,
-            account.platform,
-        )
-        return False

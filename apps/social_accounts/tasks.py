@@ -6,6 +6,8 @@ from datetime import timedelta
 from background_task import background
 from django.utils import timezone
 
+from .webhooks import retry_failed_subscription
+
 logger = logging.getLogger(__name__)
 
 # Platforms whose stored token is only usable for a bounded window and whose
@@ -109,6 +111,11 @@ def check_social_account_health(account_id: str):
             "updated_at",
         ]
     )
+
+    # A fix for a broken subscription is worthless if nothing re-runs it; this
+    # is the only thing that does so unattended. Bounded inside
+    # ``retry_failed_subscription`` so a hopeless account isn't retried forever.
+    retry_failed_subscription(account)
 
 
 @background(schedule=0)

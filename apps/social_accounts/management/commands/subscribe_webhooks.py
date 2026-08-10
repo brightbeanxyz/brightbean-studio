@@ -1,10 +1,13 @@
 """Subscribe already-connected accounts to their platform webhooks.
 
 Subscription happens when an account is connected, so every account connected
-before that code existed is still unsubscribed — its inbox silently misses
-comments and mentions, which have no polling fallback. Run this once after
-deploying, and again whenever you want to repair accounts whose subscription
-was refused.
+before that code existed is still unsubscribed — its comments reach the inbox
+only on the polling cycle, minutes late, instead of instantly. Run this once
+after deploying, and again whenever you want to repair accounts whose
+subscription was refused.
+
+Mostly a bulk tool now: the periodic health check retries failed subscriptions
+on its own, and the account card offers a one-click retry.
 
     python manage.py subscribe_webhooks --dry-run
     python manage.py subscribe_webhooks
@@ -40,7 +43,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from apps.social_accounts.views import _subscribe_account_webhooks, _supports_webhooks, _webhook_target
+        from apps.social_accounts.webhooks import subscribe_account_webhooks, supports_webhooks, webhook_target
 
         accounts = SocialAccount.objects.filter(
             connection_status=SocialAccount.ConnectionStatus.CONNECTED,
@@ -62,7 +65,7 @@ class Command(BaseCommand):
             label = f"{account.platform}/{account.account_name} ({account.id})"
 
             try:
-                from apps.social_accounts.views import _get_provider_for_platform
+                from apps.social_accounts.provider_factory import _get_provider_for_platform
 
                 provider = _get_provider_for_platform(account.platform, account.workspace.organization_id)
             except Exception as exc:
@@ -70,7 +73,7 @@ class Command(BaseCommand):
                 failed += 1
                 continue
 
-            if not _supports_webhooks(provider):
+            if not supports_webhooks(provider):
                 skipped += 1
                 continue
 
@@ -80,11 +83,11 @@ class Command(BaseCommand):
                 continue
 
             if options["dry_run"]:
-                self.stdout.write(f"  would subscribe {label} -> {_webhook_target(account)}")
+                self.stdout.write(f"  would subscribe {label} -> {webhook_target(account)}")
                 subscribed += 1
                 continue
 
-            if _subscribe_account_webhooks(account):
+            if subscribe_account_webhooks(account):
                 self.stdout.write(self.style.SUCCESS(f"  subscribed {label}"))
                 subscribed += 1
             else:

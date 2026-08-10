@@ -29,10 +29,10 @@ from apps.notifications.engine import notify
 from apps.notifications.models import EventType
 from apps.social_accounts.oauth_aliases import from_url_slug, redirect_uri_from_request, to_url_slug
 from apps.social_accounts.oauth_pkce import issue_pkce_verifier, pkce_kwargs
+from apps.social_accounts.provider_factory import _get_provider_for_platform
 from apps.social_accounts.views import (
     _create_or_update_account,
     _get_configured_platforms,
-    _get_provider_for_platform,
     _normalize_mastodon_instance_url,
     _resolve_mastodon_extra_creds,
 )
