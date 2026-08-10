@@ -56,6 +56,19 @@ class SocialAccount(models.Model):
     # health check) must not be borrowed for it.
     webhooks_active = models.BooleanField(null=True, blank=True, default=None)
     webhook_error = models.CharField(max_length=500, blank=True, default="")
+    # Set when the subscription failed for a reason a retry cannot fix: the
+    # grant itself is missing what it needs. Splits the card's CTA between
+    # "Try again" (re-run the call) and "Reconnect" (get a new grant), so the
+    # warning never asks for something the UI doesn't offer.
+    webhook_needs_reconnect = models.BooleanField(default=False)
+    # The provider's own words about the last failure. `webhook_error` is
+    # rewritten for a human and is all the card shows; operators running
+    # `diagnose_facebook` need the error code and fbtrace_id this keeps.
+    webhook_error_detail = models.TextField(blank=True, default="")
+    # Consecutive failed attempts, so the periodic health check can stop
+    # re-trying a subscription that will never succeed. Reset by a success, by
+    # a reconnect, and by the user pressing "Try again".
+    webhook_retry_count = models.PositiveSmallIntegerField(default=0)
 
     # Connection health
     connection_status = models.CharField(

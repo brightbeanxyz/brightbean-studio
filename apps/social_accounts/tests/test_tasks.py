@@ -341,3 +341,105 @@ class TestCheckSocialAccountHealth:
         assert account.oauth_refresh_token == "rotated"
         assert account.token_expires_at > timezone.now() + timedelta(days=7)
         assert account.connection_status == SocialAccount.ConnectionStatus.CONNECTED
+
+
+@pytest.mark.django_db
+class TestWebhookResubscription:
+    """A failed subscription heals itself instead of waiting to be noticed.
+
+    Subscribing otherwise happens only when an account is connected, so before
+    this the Instagram accounts left with ``webhooks_active=False`` by a bug we
+    had already fixed kept showing the warning indefinitely — the fix shipped
+    and nothing re-ran the call.
+    """
+
+    @patch("providers.get_provider")
+    def test_a_failed_subscription_is_retried(self, mock_get_provider, connected_account):
+        mock_get_provider.return_value = MagicMock(get_profile=MagicMock(return_value=_profile()))
+        SocialAccount.objects.filter(pk=connected_account.pk).update(
+            webhooks_active=False,
+            webhook_error="whatever went wrong",
+        )
+
+        with patch("apps.social_accounts.webhooks.subscribe_account_webhooks") as subscribe:
+            check_social_account_health.now(str(connected_account.id))
+
+        subscribe.assert_called_once()
+
+    @patch("providers.get_provider")
+    def test_a_working_subscription_is_left_alone(self, mock_get_provider, connected_account):
+        mock_get_provider.return_value = MagicMock(get_profile=MagicMock(return_value=_profile()))
+        SocialAccount.objects.filter(pk=connected_account.pk).update(webhooks_active=True)
+
+        with patch("apps.social_accounts.webhooks.subscribe_account_webhooks") as subscribe:
+            check_social_account_health.now(str(connected_account.id))
+
+        subscribe.assert_not_called()
+
+    @patch("providers.get_provider")
+    def test_a_platform_without_webhooks_is_left_alone(self, mock_get_provider, connected_account):
+        """Null means "never attempted or not applicable" — not a failure to retry."""
+        mock_get_provider.return_value = MagicMock(get_profile=MagicMock(return_value=_profile()))
+
+        with patch("apps.social_accounts.webhooks.subscribe_account_webhooks") as subscribe:
+            check_social_account_health.now(str(connected_account.id))
+
+        subscribe.assert_not_called()
+
+    @patch("providers.get_provider")
+    def test_an_auth_failure_is_not_retried(self, mock_get_provider, connected_account):
+        """Only a new grant can fix it, so retrying every cycle just annoys the platform."""
+        mock_get_provider.return_value = MagicMock(get_profile=MagicMock(return_value=_profile()))
+        SocialAccount.objects.filter(pk=connected_account.pk).update(
+            webhooks_active=False,
+            webhook_needs_reconnect=True,
+        )
+
+        with patch("apps.social_accounts.webhooks.subscribe_account_webhooks") as subscribe:
+            check_social_account_health.now(str(connected_account.id))
+
+        subscribe.assert_not_called()
+
+    @patch("providers.get_provider")
+    def test_a_broken_connection_is_not_retried(self, mock_get_provider, connected_account):
+        """The token check just failed; a subscription call would fail too."""
+        mock_get_provider.return_value = MagicMock(
+            get_profile=MagicMock(side_effect=RuntimeError("bad token")),
+        )
+        SocialAccount.objects.filter(pk=connected_account.pk).update(webhooks_active=False)
+
+        with patch("apps.social_accounts.webhooks.subscribe_account_webhooks") as subscribe:
+            check_social_account_health.now(str(connected_account.id))
+
+        subscribe.assert_not_called()
+
+    @patch("providers.get_provider")
+    def test_a_failing_retry_does_not_break_the_health_check(self, mock_get_provider, connected_account):
+        mock_get_provider.return_value = MagicMock(get_profile=MagicMock(return_value=_profile(follower_count=7)))
+        SocialAccount.objects.filter(pk=connected_account.pk).update(webhooks_active=False)
+
+        with patch(
+            "apps.social_accounts.webhooks.subscribe_account_webhooks",
+            side_effect=RuntimeError("boom"),
+        ):
+            check_social_account_health.now(str(connected_account.id))
+
+        connected_account.refresh_from_db()
+        assert connected_account.follower_count == 7
+        assert connected_account.connection_status == SocialAccount.ConnectionStatus.CONNECTED
+
+    @patch("providers.get_provider")
+    def test_a_capped_out_account_is_not_retried(self, mock_get_provider, connected_account):
+        """A permanent rejection must stop being re-sent every cycle."""
+        from apps.social_accounts.webhooks import MAX_AUTOMATIC_RETRIES
+
+        mock_get_provider.return_value = MagicMock(get_profile=MagicMock(return_value=_profile()))
+        SocialAccount.objects.filter(pk=connected_account.pk).update(
+            webhooks_active=False,
+            webhook_retry_count=MAX_AUTOMATIC_RETRIES,
+        )
+
+        with patch("apps.social_accounts.webhooks.subscribe_account_webhooks") as subscribe:
+            check_social_account_health.now(str(connected_account.id))
+
+        subscribe.assert_not_called()

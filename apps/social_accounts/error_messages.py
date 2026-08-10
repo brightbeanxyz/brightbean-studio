@@ -7,6 +7,8 @@ shapes need different advice when a health check fails than when a post's first
 comment fails.
 """
 
+from typing import NamedTuple
+
 from providers.exceptions import (
     APIError,
     OAuthError,
@@ -39,6 +41,17 @@ PUBLISH_GENERIC_MESSAGE = "Publishing failed. Please try again."
 PUBLISH_EXHAUSTED_MESSAGE = (
     "Publishing kept failing, so we stopped retrying. Try again, or reconnect the account if it keeps happening."
 )
+
+# A failed webhook subscription costs real-time delivery, not delivery itself:
+# the inbox still polls comments every few minutes. The copy says so, so nobody
+# reads a missing subscription as a broken inbox.
+WEBHOOK_RECONNECT_MESSAGE = "The account's permissions no longer cover comment delivery."
+WEBHOOK_TEMPORARY_MESSAGE = "The platform was temporarily unavailable when we asked it to push updates."
+WEBHOOK_REJECTED_MESSAGE = "The platform declined to push updates for this account."
+WEBHOOK_GENERIC_MESSAGE = "We couldn't set up real-time updates for this account."
+# Not a platform failure at all: this app could not build a client for the
+# platform, which in practice means its app credentials are missing.
+WEBHOOK_UNAVAILABLE_MESSAGE = "This platform isn't fully configured, so real-time updates couldn't be set up."
 
 _EXPIRED_TOKEN_ERRORS = {
     "ExpiredToken",
@@ -154,6 +167,43 @@ def friendly_first_comment_error(exc: Exception) -> str:
         },
         FIRST_COMMENT_GENERIC_MESSAGE,
     )
+
+
+class WebhookFailure(NamedTuple):
+    """What to tell the user about a failed subscription, and what to offer them.
+
+    One value rather than two functions so the message and the button can never
+    describe different failures: both come from a single ``_classify`` call.
+    """
+
+    message: str
+    needs_reconnect: bool
+
+
+def classify_webhook_failure(exc: Exception) -> WebhookFailure:
+    """Map a failed webhook subscription to user-facing text and a next step.
+
+    Deliberately does not use ``_friendly``: its ``PublishError`` pass-through
+    would emit a provider-authored message while ``needs_reconnect`` still came
+    from ``_classify``, which is exactly the divergence this type exists to
+    prevent. Nothing raised by ``subscribe_webhooks`` is safe to show raw —
+    ``SocialProvider._request`` builds ``APIError`` messages from
+    ``response.text[:500]``, so a rejection arrives as a truncated Graph payload
+    ("(#100) Param subscribed_fields[0] must be one of {feed, mention, ...}",
+    cut off mid-token). The full body is kept by the caller's
+    ``logger.exception`` and in ``webhook_error_detail``.
+
+    ``needs_reconnect`` marks the one class a retry can never fix: an auth
+    failure means the grant is missing what the subscription needs.
+    """
+    kind = _classify(exc)
+    message = {
+        _RECONNECT: WEBHOOK_RECONNECT_MESSAGE,
+        _RATE_LIMITED: WEBHOOK_TEMPORARY_MESSAGE,
+        _UNAVAILABLE: WEBHOOK_TEMPORARY_MESSAGE,
+        _REJECTED: WEBHOOK_REJECTED_MESSAGE,
+    }.get(kind, WEBHOOK_GENERIC_MESSAGE)
+    return WebhookFailure(message=message, needs_reconnect=kind == _RECONNECT)
 
 
 def friendly_publish_error(exc: Exception) -> str:
