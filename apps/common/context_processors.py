@@ -67,14 +67,13 @@ def sidebar_context(request):
         # Connectable platforms: not yet connected in this workspace.
         # Show all known platforms (configured or not) so the sidebar
         # always surfaces what can be connected. The connect page itself
-        # handles the "not configured" case with an admin prompt.
+        # handles the "not configured" case with an admin prompt, and shares
+        # PlatformVisibility.visible_choices() with us so the two can't disagree.
         connected_platforms = {ch.platform for ch in sidebar_channels}
-        hidden_platforms = set(PlatformVisibility.objects.filter(is_visible=False).values_list("platform", flat=True))
-        sidebar_connectable_platforms = [
-            (p, label)
-            for p, label in _platform_display_names()
-            if p not in connected_platforms and p not in hidden_platforms
-        ]
+        sidebar_connectable_platforms = sorted(
+            ((p, label) for p, label in PlatformVisibility.visible_choices() if p not in connected_platforms),
+            key=_connect_suggestion_rank,
+        )
 
     # Unread inbox count for sidebar badge
     sidebar_unread_inbox_count = 0
@@ -116,11 +115,6 @@ def sidebar_context(request):
     if org_membership and org_membership.org_role in ("owner", "admin"):
         can_create_workspace = True
 
-    # Filter the sidebar channel list to those whose platform is analytics-enabled,
-    # so the per-channel deep-links under the Analytics nav item never point at a
-    # disabled platform. The full sidebar channel list above is unrelated.
-    analytics_sidebar_channels = [ch for ch in sidebar_channels if ch.platform in analytics_enabled_platforms]
-
     return {
         "sidebar_workspaces": sidebar_workspaces,
         "can_create_workspace": can_create_workspace,
@@ -132,23 +126,38 @@ def sidebar_context(request):
         "sidebar_idea_columns": sidebar_idea_columns,
         "sidebar_idea_tags": sidebar_idea_tags,
         "analytics_enabled_platforms": analytics_enabled_platforms,
-        "analytics_sidebar_channels": analytics_sidebar_channels,
     }
 
 
-def _platform_display_names():
-    """Return list of (platform_key, display_name) tuples."""
-    return [
-        ("instagram", "Instagram"),
-        ("facebook", "Facebook"),
-        ("linkedin_personal", "LinkedIn (Personal)"),
-        ("linkedin_company", "LinkedIn (Company)"),
-        ("tiktok", "TikTok"),
-        ("youtube", "YouTube"),
-        ("pinterest", "Pinterest"),
-        ("threads", "Threads"),
-        ("bluesky", "Bluesky"),
-        ("mastodon", "Mastodon"),
-        ("twitter", "X (Twitter)"),
-        ("google_business", "Google Business"),
-    ]
+# Display order for the sidebar's connect shortcuts, most-asked-for first.
+# The template shows only the first three, and ``Platform.choices`` is ordered
+# for the publish pipeline — leaving it to decide would put Facebook, Instagram
+# and Instagram (Direct) in all three slots and push LinkedIn/TikTok/YouTube
+# out of sight.
+#
+# Unlike the hand-maintained list this replaced, this is a *ranking*, not the
+# set: a platform missing from here still appears (ranked last), so a new
+# platform can never be silently hidden from the sidebar again.
+_CONNECT_SUGGESTION_ORDER: tuple[str, ...] = (
+    "instagram",
+    "linkedin_company",
+    "tiktok",
+    "youtube",
+    "facebook",
+    "linkedin_personal",
+    "threads",
+    "pinterest",
+    "instagram_login",
+    "google_business",
+    "bluesky",
+    "mastodon",
+    "devto",
+)
+
+
+def _connect_suggestion_rank(choice):
+    platform, _label = choice
+    try:
+        return (0, _CONNECT_SUGGESTION_ORDER.index(platform))
+    except ValueError:
+        return (1, 0)

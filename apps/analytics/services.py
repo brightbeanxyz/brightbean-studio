@@ -12,7 +12,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from datetime import date as dt_date
 from datetime import timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 from django.utils import timezone
 
@@ -39,39 +39,78 @@ from .models import AccountInsightsSnapshot, PostInsightsSnapshot
 _POST_FALLBACK_DENYLIST: frozenset[str] = frozenset({"reach"})
 
 
-def unavailable_reason(platform: str, enabled_platforms: list[str] | None = None) -> str | None:
+class Unavailable(NamedTuple):
+    """Why a platform has no live analytics: a machine-readable cause + copy.
+
+    ``cause`` exists so callers can branch on *which* gate fired without
+    re-deriving it. A UI that only knows "unavailable" can't tell the user
+    whether there is anything they can do about it, and re-testing
+    ``NO_ANALYTICS_PLATFORMS`` at the call site to find out would silently
+    mislabel every gate added later as an admin toggle.
+    """
+
+    cause: str
+    message: str
+
+
+# ``cause`` values. NO_API and UNSUPPORTED are dead ends for the user;
+# DISABLED is the only one an admin can do something about.
+CAUSE_NO_API = "no_api"
+CAUSE_DISABLED = "disabled"
+CAUSE_UNSUPPORTED = "unsupported"
+
+
+def analytics_availability(platform: str, enabled_platforms: list[str] | None = None) -> Unavailable | None:
     """Why ``platform`` has no live analytics, or ``None`` if it does.
 
-    Combines the two independent gates that the analytics stack honors:
+    Combines every gate the analytics stack honors:
 
-    * :data:`apps.analytics.constants.NO_ANALYTICS_PLATFORMS` — the
-      platform's API exposes no aggregate analytics at all (LinkedIn
-      Personal, Bluesky, Mastodon).
-    * :class:`apps.social_accounts.models.AnalyticsPlatformConfig` — an
-      admin has switched the platform off (e.g. provider app-review for
+    * ``CAUSE_UNSUPPORTED`` — the slug isn't a platform this version knows
+      about (a retired slug left behind on an old account row). The admin
+      list is built from the same choices, so it can't be switched on
+      there; reporting it as an admin toggle would send the user after a
+      row that cannot exist.
+    * ``CAUSE_NO_API`` — :data:`apps.analytics.constants.NO_ANALYTICS_PLATFORMS`:
+      the platform exposes no aggregate analytics we can read (LinkedIn
+      Personal, Bluesky, Mastodon, DEV.to).
+    * ``CAUSE_DISABLED`` — :class:`apps.social_accounts.models.AnalyticsPlatformConfig`:
+      an admin has switched the platform off (e.g. provider app-review for
       analytics scopes is still pending), so the background sync skips it.
 
     Lives in ``services.py`` (not the agent-API builders) so the web view
     (``apps/analytics/views.py``), the sync cron
     (``apps/analytics/tasks.py``) and the agent-API surface all import
-    the same predicate — if a third gate ever lands, only this function
+    the same predicate — if a fourth gate ever lands, only this function
     needs to know.
 
     ``enabled_platforms`` may be supplied (e.g. in a per-request cache)
     to avoid re-querying ``AnalyticsPlatformConfig`` once per call.
     """
+    # Lazy imports to avoid pulling these apps at module load time —
+    # services.py is imported by URL config.
+    from apps.credentials.models import PlatformCredential
+
+    if platform not in PlatformCredential.Platform.values:
+        return Unavailable(CAUSE_UNSUPPORTED, "This account is on a platform this version no longer supports.")
     inherent = NO_ANALYTICS_PLATFORMS.get(platform)
     if inherent is not None:
-        return inherent
+        return Unavailable(CAUSE_NO_API, inherent)
     if enabled_platforms is None:
-        # Lazy import to avoid pulling the social_accounts app at module
-        # load time — services.py is imported by URL config.
         from apps.social_accounts.models import AnalyticsPlatformConfig
 
         enabled_platforms = AnalyticsPlatformConfig.enabled_platforms()
     if platform not in enabled_platforms:
-        return "Analytics is not currently enabled for this platform."
+        return Unavailable(CAUSE_DISABLED, "Analytics is not currently enabled for this platform.")
     return None
+
+
+def unavailable_reason(platform: str, enabled_platforms: list[str] | None = None) -> str | None:
+    """The message half of :func:`analytics_availability`, or ``None``.
+
+    For callers that only render the copy (the agent-API builders).
+    """
+    verdict = analytics_availability(platform, enabled_platforms)
+    return verdict.message if verdict else None
 
 
 def _series_for(

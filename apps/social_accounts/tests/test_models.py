@@ -161,3 +161,38 @@ class TestMastodonAppRegistration:
             client_secret="secret",
         )
         assert str(reg) == "https://mastodon.social"
+
+
+@pytest.mark.django_db
+class TestAnalyticsPlatformConfigEnabledPlatforms:
+    """``enabled_platforms`` decides which platforms the analytics stack serves."""
+
+    def test_platform_without_a_row_counts_as_enabled(self):
+        """The seed migration enumerated the choices as of its own migration, so
+        every slug added afterwards (``devto`` was the first) has no row. Reading
+        that as "disabled" switched analytics off for them silently — and
+        invisibly, since a platform with no row isn't listed in the admin either.
+        """
+        from apps.credentials.models import PlatformCredential
+        from apps.social_accounts.models import AnalyticsPlatformConfig
+
+        AnalyticsPlatformConfig.objects.filter(platform=PlatformCredential.Platform.DEVTO).delete()
+
+        assert PlatformCredential.Platform.DEVTO in AnalyticsPlatformConfig.enabled_platforms()
+
+    def test_disabled_row_is_honored(self):
+        from apps.social_accounts.models import AnalyticsPlatformConfig
+
+        AnalyticsPlatformConfig.objects.update_or_create(platform="instagram_login", defaults={"is_enabled": False})
+
+        assert "instagram_login" not in AnalyticsPlatformConfig.enabled_platforms()
+
+    def test_stale_slug_row_does_not_leak_into_the_result(self):
+        """``instagram_personal`` was renamed to ``instagram_login``; a row left
+        behind by a partially-applied rename must not appear as a platform.
+        """
+        from apps.social_accounts.models import AnalyticsPlatformConfig
+
+        AnalyticsPlatformConfig.objects.create(platform="instagram_personal", is_enabled=True)
+
+        assert "instagram_personal" not in AnalyticsPlatformConfig.enabled_platforms()

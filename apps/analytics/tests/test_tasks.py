@@ -198,3 +198,39 @@ def test_sync_account_metrics_refreshes_empty_follower_count_when_today_rows_exi
 
     account.refresh_from_db()
     assert account.follower_count == 1234
+
+
+@pytest.mark.django_db
+def test_resolve_provider_carries_instagram_login_credentials(workspace):
+    """``_resolve_provider`` was a hand-copy of the publish engine's resolver and
+    had drifted: no ``instagram_login`` branch, so Instagram Direct providers
+    were built with neither ``ig_user_id`` nor ``account_handle``.
+    """
+    from apps.analytics.tasks import _resolve_provider
+
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform="instagram_login",
+        account_platform_id="ig-direct-1",
+        account_name="Direct IG",
+        account_handle="direct.ig",
+        oauth_access_token="token",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+
+    provider = _resolve_provider(account)
+
+    assert provider.credentials["ig_user_id"] == "ig-direct-1"
+    assert provider.credentials["account_handle"] == "direct.ig"
+
+
+def test_no_analytics_platforms_all_have_a_zero_backfill_window():
+    """``NO_ANALYTICS_PLATFORMS``'s docstring mandates the pairing: without a
+    0-day window the cron still tries to fetch metrics the platform can't give.
+    """
+    from apps.analytics.constants import NO_ANALYTICS_PLATFORMS
+    from apps.analytics.tasks import BACKFILL_DAYS_PER_PLATFORM
+
+    assert {p: BACKFILL_DAYS_PER_PLATFORM.get(p) for p in NO_ANALYTICS_PLATFORMS} == dict.fromkeys(
+        NO_ANALYTICS_PLATFORMS, 0
+    )

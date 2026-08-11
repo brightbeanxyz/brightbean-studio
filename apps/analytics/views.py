@@ -22,7 +22,6 @@ from apps.social_accounts.models import AnalyticsPlatformConfig, SocialAccount
 from apps.workspaces.models import Workspace
 
 from . import services
-from .constants import NO_ANALYTICS_PLATFORMS
 from .metrics import PLATFORM_COLOR, PLATFORM_PRIMARY
 
 logger = logging.getLogger(__name__)
@@ -38,15 +37,38 @@ def _get_workspace(request, workspace_id):
     return workspace
 
 
-def _enabled_accounts(workspace):
-    enabled = AnalyticsPlatformConfig.enabled_platforms()
-    return list(
+def _analytics_accounts(workspace, enabled_platforms):
+    """Every connected account in the workspace, annotated with why (if at all)
+    analytics is unavailable for it.
+
+    Deliberately unfiltered by platform: an account whose platform is switched
+    off in ``AnalyticsPlatformConfig`` used to be dropped here, so it vanished
+    from the account switcher with nothing anywhere saying why. It stays in the
+    list now and carries its verdict, which the switcher and the page body both
+    render.
+    """
+    accounts = list(
         SocialAccount.objects.filter(
             workspace=workspace,
             connection_status=SocialAccount.ConnectionStatus.CONNECTED,
-            platform__in=enabled,
         ).order_by("platform", "account_name")
     )
+    for account in accounts:
+        verdict = services.analytics_availability(account.platform, enabled_platforms)
+        account.analytics_verdict = verdict
+        account.analytics_unavailable_reason = verdict.message if verdict else None
+    return accounts
+
+
+def _preferred_account(accounts):
+    """The account to land on: the first with working analytics, else the first.
+
+    Shared by the index redirect and the unknown-``account_id`` fallback so the
+    two ways of arriving without a specific account agree. Falling back to
+    ``accounts[0]`` rather than the no-accounts page means a workspace whose
+    only account is unavailable still gets the page explaining why.
+    """
+    return next((a for a in accounts if a.analytics_verdict is None), accounts[0])
 
 
 def _parse_range(value: str | None) -> int:
@@ -83,11 +105,12 @@ def _parse_page(value: str | None) -> int:
 
 @login_required
 def analytics_index(request: HttpRequest, workspace_id) -> HttpResponse:
-    """Landing route: redirects to the first enabled connected account."""
+    """Landing route: redirects to the first connected account with analytics."""
     workspace = _get_workspace(request, workspace_id)
-    if not AnalyticsPlatformConfig.enabled_platforms():
+    enabled = AnalyticsPlatformConfig.enabled_platforms()
+    if not enabled:
         raise Http404("Analytics is disabled.")
-    accounts = _enabled_accounts(workspace)
+    accounts = _analytics_accounts(workspace, enabled)
     if not accounts:
         return render(
             request,
@@ -96,23 +119,26 @@ def analytics_index(request: HttpRequest, workspace_id) -> HttpResponse:
         )
     from django.urls import reverse
 
-    return redirect(reverse("analytics:account", kwargs={"workspace_id": workspace.id, "account_id": accounts[0].id}))
+    target = _preferred_account(accounts)
+
+    return redirect(reverse("analytics:account", kwargs={"workspace_id": workspace.id, "account_id": target.id}))
 
 
 @login_required
 def analytics_account(request: HttpRequest, workspace_id, account_id) -> HttpResponse:
     """Main analytics page for one connected SocialAccount."""
     workspace = _get_workspace(request, workspace_id)
-    if not AnalyticsPlatformConfig.enabled_platforms():
+    enabled = AnalyticsPlatformConfig.enabled_platforms()
+    if not enabled:
         raise Http404("Analytics is disabled.")
 
-    accounts = _enabled_accounts(workspace)
+    accounts = _analytics_accounts(workspace, enabled)
     if not accounts:
         return render(request, "analytics/no_accounts.html", {"workspace": workspace})
 
     account = next((a for a in accounts if str(a.id) == str(account_id)), None)
     if account is None:
-        return redirect("analytics:account", workspace_id=workspace.id, account_id=accounts[0].id)
+        return redirect("analytics:account", workspace_id=workspace.id, account_id=_preferred_account(accounts).id)
 
     days = _parse_range(request.GET.get("range"))
     primary_color = "var(--primary)"  # locked in chat — design's locked accent
@@ -127,7 +153,11 @@ def analytics_account(request: HttpRequest, workspace_id, account_id) -> HttpRes
 
     has_snapshots = AccountInsightsSnapshot.objects.filter(social_account=account).exists()
     is_fresh = not has_any_post and not has_snapshots
-    analytics_unavailable = account.platform in NO_ANALYTICS_PLATFORMS
+    # Every gate comes from the one shared predicate, which also reports which
+    # of them fired — only the admin-disabled one has a fix to offer (enable,
+    # then reconnect), so the template needs the cause, not just the message.
+    verdict = account.analytics_verdict
+    analytics_unavailable = verdict is not None
 
     context: dict = {
         "workspace": workspace,
@@ -138,9 +168,13 @@ def analytics_account(request: HttpRequest, workspace_id, account_id) -> HttpRes
         "primary_color": primary_color,
         "platform_color": PLATFORM_COLOR.get(account.platform, "var(--primary)"),
         "is_fresh": is_fresh,
-        "analytics_needs_reconnect": account.analytics_needs_reconnect,
+        # An unavailable platform gets its own reconnect instructions inside
+        # the empty state, so suppressing the scope banner here keeps one set
+        # of instructions on screen instead of two competing ones.
+        "analytics_needs_reconnect": account.analytics_needs_reconnect and not analytics_unavailable,
         "analytics_unavailable": analytics_unavailable,
-        "analytics_unavailable_notice": NO_ANALYTICS_PLATFORMS.get(account.platform, ""),
+        "analytics_unavailable_notice": verdict.message if verdict else "",
+        "analytics_disabled_by_admin": bool(verdict and verdict.cause == services.CAUSE_DISABLED),
     }
 
     if analytics_unavailable:

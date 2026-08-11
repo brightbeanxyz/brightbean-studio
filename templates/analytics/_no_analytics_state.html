@@ -12,6 +12,22 @@
         <p style="font-size: 0.9375rem; color: var(--text-secondary); line-height: 1.6;">
             {{ analytics_unavailable_notice }}
         </p>
+        {% if analytics_disabled_by_admin %}
+        {% comment %}
+        Admin-disabled, not an API limitation — so unlike the LinkedIn Personal
+        / Bluesky / Mastodon copy above, there is something to do about it.
+        The reconnect matters: the insights scope is requested at connect time
+        based on this same toggle, so a token granted while it was off can't
+        read insights even once it's back on. ({# #} is single-line only in
+        Django — a multi-line one renders as visible page text.)
+        {% endcomment %}
+        <p style="font-size: 0.875rem; color: var(--text-tertiary); line-height: 1.6; margin-top: 12px;">
+            An administrator can switch it on under <strong>Analytics platforms</strong> in the
+            Django admin. Reconnect this account afterwards — the analytics permission is
+            requested when the account connects, so the current connection can't read insights
+            until it's granted.
+        </p>
+        {% endif %}
         <div style="margin-top: 28px; display: flex; gap: 10px; justify-content: center;">
             <a href="{% url 'composer:create_landing' workspace_id=workspace.id %}" class="btn-brand" style="width: auto; padding: 9px 20px;">Create a post</a>
         </div>
