@@ -3,10 +3,11 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from providers.exceptions import APIError
+from providers.exceptions import APIError, PublishError
 from providers.instagram import InstagramProvider
 from providers.instagram_login import InstagramLoginProvider
 from providers.meta_comments import INSTAGRAM_COMMENT_FIELD_SETS
+from providers.types import PostType, PublishContent
 
 
 def _resp(data):
@@ -908,3 +909,30 @@ def test_comment_poll_keeps_the_author_when_only_replies_are_rejected(make_provi
     sent = provider._request.call_args_list[1].kwargs["params"]["fields"]
     assert "from{" in sent
     assert "replies" not in sent
+
+
+class TestMediaRequired:
+    """A media-less publish must fail with a clear, non-retryable error —
+    not a raw IndexError (production incident: text-only post to Instagram
+    crashed with 'list index out of range' and burned the retry schedule)."""
+
+    def _content(self, post_type):
+        return PublishContent(text="hello", post_type=post_type, extra={"ig_user_id": "17841400000000000"})
+
+    def _assert_clean_media_error(self, post_type):
+        provider = InstagramProvider({"client_id": "id", "client_secret": "secret"})
+        provider._request = MagicMock()  # any API call would be a bug here
+        with pytest.raises(PublishError) as excinfo:
+            provider.publish_post("token", self._content(post_type))
+        assert "media" in str(excinfo.value).lower() or "image or video" in str(excinfo.value).lower()
+        assert excinfo.value.retryable is False
+        provider._request.assert_not_called()
+
+    def test_image_post_without_media_raises_publish_error(self):
+        self._assert_clean_media_error(PostType.IMAGE)
+
+    def test_reel_without_media_raises_publish_error(self):
+        self._assert_clean_media_error(PostType.REEL)
+
+    def test_carousel_without_media_raises_publish_error(self):
+        self._assert_clean_media_error(PostType.CAROUSEL)

@@ -297,6 +297,17 @@ class InstagramProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def publish_post(self, access_token: str, content: PublishContent) -> PublishResult:
+        if not content.media_urls:
+            # Instagram has no text-only posts; without this guard an empty
+            # media list surfaces as a raw IndexError (or an empty carousel
+            # spinning in the container wait loop) and burns the retry
+            # schedule on an unfixable input.
+            raise PublishError(
+                "Instagram requires at least one image or video — attach media to this post.",
+                platform=self.platform_name,
+                retryable=False,
+            )
+
         ig_user_id = content.extra.get("ig_user_id") or self._get_ig_user_id(access_token)
 
         if content.post_type == PostType.CAROUSEL:
