@@ -49,6 +49,11 @@ WEBHOOK_RECONNECT_MESSAGE = "The account's permissions no longer cover comment d
 WEBHOOK_TEMPORARY_MESSAGE = "The platform was temporarily unavailable when we asked it to push updates."
 WEBHOOK_REJECTED_MESSAGE = "The platform declined to push updates for this account."
 WEBHOOK_GENERIC_MESSAGE = "We couldn't set up real-time updates for this account."
+WEBHOOK_CAPABILITY_MESSAGE = (
+    "The platform doesn't allow this app's access level to register push "
+    "delivery for this account — retrying or reconnecting won't change that; "
+    "it lifts with elevated platform access (app review)."
+)
 # Not a platform failure at all: this app could not build a client for the
 # platform, which in practice means its app credentials are missing.
 WEBHOOK_UNAVAILABLE_MESSAGE = "This platform isn't fully configured, so real-time updates couldn't be set up."
@@ -180,6 +185,20 @@ class WebhookFailure(NamedTuple):
     needs_reconnect: bool
 
 
+def _is_capability_gate(exc: Exception) -> bool:
+    """Graph error code 3 — the app's access tier cannot use the endpoint.
+
+    Distinct from a permission problem on the token: a reconnect issues a
+    same-tier token and a retry replays the same call, so neither remedy the
+    card offers for other failures applies here. Meta returns it as
+    ``{"error": {"code": 3, "type": "OAuthException", ...}}`` with HTTP 400.
+    """
+    if not isinstance(exc, APIError):
+        return False
+    error = (exc.raw_response or {}).get("error")
+    return isinstance(error, dict) and error.get("code") == 3
+
+
 def classify_webhook_failure(exc: Exception) -> WebhookFailure:
     """Map a failed webhook subscription to user-facing text and a next step.
 
@@ -196,6 +215,9 @@ def classify_webhook_failure(exc: Exception) -> WebhookFailure:
     ``needs_reconnect`` marks the one class a retry can never fix: an auth
     failure means the grant is missing what the subscription needs.
     """
+    if _is_capability_gate(exc):
+        return WebhookFailure(message=WEBHOOK_CAPABILITY_MESSAGE, needs_reconnect=False)
+
     kind = _classify(exc)
     message = {
         _RECONNECT: WEBHOOK_RECONNECT_MESSAGE,
