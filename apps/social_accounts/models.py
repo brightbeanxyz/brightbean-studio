@@ -325,6 +325,19 @@ class PlatformVisibility(models.Model):
     def __str__(self):
         return f"{self.get_platform_display()} ({'visible' if self.is_visible else 'hidden'})"
 
+    @classmethod
+    def visible_choices(cls) -> list[tuple[str, str]]:
+        """``Platform.choices`` minus the platforms an admin has hidden.
+
+        The single source for "what can be connected" — the connect page and
+        the sidebar's connect shortcuts both read it, so they can't drift
+        (the sidebar used to keep its own hand-maintained copy, which had
+        fallen behind by two platforms). Platforms without a row default to
+        visible, matching ``is_visible``.
+        """
+        hidden = set(cls.objects.filter(is_visible=False).values_list("platform", flat=True))
+        return [(value, label) for value, label in PlatformCredential.Platform.choices if value not in hidden]
+
 
 class AnalyticsPlatformConfig(models.Model):
     """Site-wide toggle controlling which platforms are enabled for the
@@ -360,10 +373,16 @@ class AnalyticsPlatformConfig(models.Model):
     def enabled_platforms(cls) -> list[str]:
         """Return the list of platform slugs with analytics enabled.
 
-        Falls back to "all platforms" if no rows exist yet (fresh DB before
-        the seed migration has run). Otherwise honors only ``is_enabled=True``.
+        A platform with no row counts as enabled, matching ``is_enabled``'s
+        default and the fact that the admin forbids adding or deleting rows —
+        so a missing row always means "nothing has been said about this
+        platform", never "an admin turned it off". Without that, every platform
+        slug added after the seed migration (``devto`` was the first) had its
+        analytics silently switched off, which is invisible from the admin
+        because the platform isn't listed there either.
+
+        Driven off ``Platform.choices`` rather than the table, so a row left
+        behind by a renamed slug can't leak into the result.
         """
-        rows = list(cls.objects.values_list("platform", "is_enabled"))
-        if not rows:
-            return [value for value, _label in PlatformCredential.Platform.choices]
-        return [platform for platform, enabled in rows if enabled]
+        rows = dict(cls.objects.values_list("platform", "is_enabled"))
+        return [value for value, _label in PlatformCredential.Platform.choices if rows.get(value, True)]

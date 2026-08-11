@@ -50,6 +50,15 @@
                                 <span style="display: block; font-size: 0.8125rem; font-weight: 600; color: var(--neutral-900); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ acc.account_name }}</span>
                                 <span style="display: block; font-size: 0.6875rem; color: var(--text-tertiary);">{{ acc.follower_count|intcomma }} followers</span>
                             </span>
+                            {% if acc.analytics_unavailable_reason %}
+                                {% comment %}
+                                Present but unavailable. Listing it silently would be the same
+                                dead end as dropping it from the switcher entirely — select it
+                                and the page body says which of the two reasons applies.
+                                {% endcomment %}
+                                <span title="{{ acc.analytics_unavailable_reason }}"
+                                      style="flex-shrink: 0; font-size: 0.625rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); background: var(--surface-2); border-radius: var(--radius-full); padding: 2px 7px;">No data</span>
+                            {% endif %}
                             {% if acc.id == active_account.id %}
                                 <svg width="16" height="16" fill="none" stroke="var(--primary)" viewBox="0 0 24 24" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
                             {% endif %}

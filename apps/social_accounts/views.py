@@ -44,8 +44,7 @@ def _get_visible_platform_choices():
 
     Platforms without a PlatformVisibility row default to visible.
     """
-    hidden = set(PlatformVisibility.objects.filter(is_visible=False).values_list("platform", flat=True))
-    return [(value, label) for value, label in PlatformCredential.Platform.choices if value not in hidden]
+    return PlatformVisibility.visible_choices()
 
 
 def _apply_analytics_scope_flag(provider, platform):

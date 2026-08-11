@@ -18,7 +18,9 @@
             </div>
             <h2 style="font-family: var(--font-display); font-size: 1.5rem; font-weight: 700; color: var(--text-primary); margin-bottom: 8px;">Connect an account to see analytics</h2>
             <p style="font-size: 0.9375rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 20px;">
-                No analytics-enabled accounts are connected to this workspace yet. Connect one to start tracking per-post performance.
+                This workspace has no connected accounts. Connect one to start tracking per-post
+                performance — and if you have connected an account before, check the Channels page:
+                one that needs reconnecting doesn't show up here.
             </p>
             <a href="{% url 'social_accounts:connect' workspace_id=workspace.id %}" class="btn-brand" style="width: auto; padding: 9px 20px;">Connect a channel</a>
         </div>
