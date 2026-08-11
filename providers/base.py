@@ -155,6 +155,19 @@ class SocialProvider(ABC):
         """Post a comment on an existing post (e.g. first comment)."""
         raise NotImplementedError(f"{self.platform_name} does not support comments")
 
+    # Platforms that validate the file AFTER accepting the upload (TikTok)
+    # set this True and implement verify_publish; the engine then re-checks
+    # the post after publishing instead of trusting the upload-accept.
+    verifies_publish_async = False
+
+    def verify_publish(self, access_token: str, platform_post_id: str) -> dict | None:
+        """Check a published post's asynchronous processing outcome.
+
+        Returns ``{"state": "complete"|"processing"|"failed", "reason": str}``
+        or ``None`` when the platform has no async processing step.
+        """
+        return None
+
     # ------------------------------------------------------------------
     # Analytics (optional - override per provider)
     # ------------------------------------------------------------------

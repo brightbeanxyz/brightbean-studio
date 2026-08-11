@@ -610,3 +610,28 @@ class TestPublishPost:
 
         assert excinfo.value.retryable is False
         mock_request.assert_not_called()
+
+
+class TestVerifyPublish:
+    """TikTok validates files AFTER accepting the upload; verify_publish maps
+    /post/publish/status/fetch/ onto the engine's async-verification contract."""
+
+    def _provider(self, payload):
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        provider._request = MagicMock(return_value=_make_response({"data": payload}))
+        return provider
+
+    def test_declares_async_verification(self):
+        assert TikTokProvider({"client_key": "k", "client_secret": "s"}).verifies_publish_async is True
+
+    def test_publish_complete_maps_to_complete(self):
+        verdict = self._provider({"status": "PUBLISH_COMPLETE"}).verify_publish("t", "v_pub~1")
+        assert verdict == {"state": "complete", "reason": ""}
+
+    def test_failed_maps_to_failed_with_reason(self):
+        verdict = self._provider({"status": "FAILED", "fail_reason": "frame_rate_check_failed"}).verify_publish("t", "v_pub~1")
+        assert verdict == {"state": "failed", "reason": "frame_rate_check_failed"}
+
+    def test_anything_else_maps_to_processing(self):
+        verdict = self._provider({"status": "PROCESSING_UPLOAD"}).verify_publish("t", "v_pub~1")
+        assert verdict == {"state": "processing", "reason": ""}

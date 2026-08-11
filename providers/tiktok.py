@@ -493,6 +493,24 @@ class TikTokProvider(SocialProvider):
     # Analytics
     # ------------------------------------------------------------------
 
+    verifies_publish_async = True
+
+    def verify_publish(self, access_token: str, platform_post_id: str) -> dict:
+        """Map /post/publish/status/fetch/ onto the async-verification contract.
+
+        TikTok validates resolution/frame-rate/duration AFTER the upload is
+        accepted, so a publish that returned a publish_id can still fail —
+        observed in production as picture_size_check_failed and
+        frame_rate_check_failed on posts our DB called published.
+        """
+        data = self._fetch_publish_status(access_token, platform_post_id)
+        status = (data.get("status") or "").upper()
+        if status == "PUBLISH_COMPLETE":
+            return {"state": "complete", "reason": ""}
+        if status == "FAILED":
+            return {"state": "failed", "reason": data.get("fail_reason", "")}
+        return {"state": "processing", "reason": ""}
+
     def _fetch_publish_status(self, access_token: str, publish_id: str) -> dict:
         """Fetch the publish status payload for an in-flight publish job.
 
