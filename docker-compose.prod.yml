@@ -6,7 +6,11 @@ services:
       - .env
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/brightbean
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/brightbean
+      - SECRET_KEY=${SECRET_KEY}
+      - ENCRYPTION_KEY_SALT=${ENCRYPTION_KEY_SALT}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - APP_URL=${APP_URL}
     depends_on:
       postgres:
         condition: service_healthy
@@ -17,6 +21,11 @@ services:
       - media_data:/app/media
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/brightbean
+      - SECRET_KEY=${SECRET_KEY}
+      - ENCRYPTION_KEY_SALT=${ENCRYPTION_KEY_SALT}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - APP_URL=${APP_URL}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -27,12 +36,29 @@ services:
       - media_data:/app/media
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/brightbean
+      - SECRET_KEY=${SECRET_KEY}
+      - ENCRYPTION_KEY_SALT=${ENCRYPTION_KEY_SALT}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - APP_URL=${APP_URL}
     depends_on:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
 
   postgres:
+    image: postgres:16-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: brightbean
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   caddy:
