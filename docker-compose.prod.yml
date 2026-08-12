@@ -2,8 +2,6 @@ services:
   migrate:
     build: .
     command: python manage.py migrate --noinput
-    env_file:
-      - .env
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
       - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/brightbean
