@@ -14,6 +14,7 @@ services:
         condition: service_healthy
 
   app:
+    build: .
     command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2
     volumes:
       - media_data:/app/media
@@ -30,6 +31,7 @@ services:
     restart: unless-stopped
 
   worker:
+    build: .
     volumes:
       - media_data:/app/media
     environment:
@@ -57,19 +59,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
-
-  caddy:
-    image: caddy:2-alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - app
     restart: unless-stopped
 
 volumes:
