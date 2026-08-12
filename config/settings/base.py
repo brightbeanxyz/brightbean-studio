@@ -21,7 +21,6 @@ SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
 ALLOWED_HOSTS = env("ALLOWED_HOSTS")
 APP_URL = env("APP_URL")
-ACCOUNT_ALLOW_REGISTRATIONS = env.bool("ACCOUNT_ALLOW_REGISTRATIONS", default=True)
 
 # Application definition
 
@@ -224,6 +223,27 @@ ACCOUNT_EMAIL_SUBJECT_PREFIX = ""
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 LOGIN_REDIRECT_URL = "/"
 ACCOUNT_LOGOUT_REDIRECT_URL = "/accounts/login/"
+ACCOUNT_ADAPTER = "apps.accounts.adapters.AccountAdapter"
+
+# Who may create an account. Applies to both the email form and social
+# logins; signing in with an existing account is never affected.
+#
+#   open    anyone can sign up (default — unchanged behaviour)
+#   invite  only visitors who followed a valid invitation link
+#   closed  nobody; accounts are created in the Django admin
+#
+# A deployment reachable from the internet — which it has to be, so the
+# platforms can deliver OAuth callbacks and webhooks — is open to the world
+# on "open". Self-hosters usually want "invite".
+SIGNUP_MODE = env("SIGNUP_MODE", default="open").strip().lower()
+if SIGNUP_MODE not in {"open", "invite", "closed"}:
+    from django.core.exceptions import ImproperlyConfigured
+
+    raise ImproperlyConfigured(
+        f"SIGNUP_MODE must be one of open, invite, closed — got {SIGNUP_MODE!r}. "
+        "Refusing to guess, because falling back to a default would silently "
+        "leave signup open."
+    )
 
 AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",
