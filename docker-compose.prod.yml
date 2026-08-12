@@ -62,5 +62,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  caddy_data:
-  caddy_config:
+  media_data:
