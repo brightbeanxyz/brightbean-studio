@@ -21,6 +21,7 @@ SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
 ALLOWED_HOSTS = env("ALLOWED_HOSTS")
 APP_URL = env("APP_URL")
+ACCOUNT_ALLOW_REGISTRATIONS = env.bool("ACCOUNT_ALLOW_REGISTRATIONS", default=True)
 
 # Application definition
 
