@@ -9,6 +9,7 @@ services:
       - ENCRYPTION_KEY_SALT=${ENCRYPTION_KEY_SALT}
       - ALLOWED_HOSTS=${ALLOWED_HOSTS}
       - APP_URL=${APP_URL}
+      - ACCOUNT_ALLOW_REGISTRATIONS=${ACCOUNT_ALLOW_REGISTRATIONS}
     depends_on:
       postgres:
         condition: service_healthy
@@ -25,6 +26,7 @@ services:
       - ENCRYPTION_KEY_SALT=${ENCRYPTION_KEY_SALT}
       - ALLOWED_HOSTS=${ALLOWED_HOSTS}
       - APP_URL=${APP_URL}
+      - ACCOUNT_ALLOW_REGISTRATIONS=${ACCOUNT_ALLOW_REGISTRATIONS}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -41,6 +43,7 @@ services:
       - ENCRYPTION_KEY_SALT=${ENCRYPTION_KEY_SALT}
       - ALLOWED_HOSTS=${ALLOWED_HOSTS}
       - APP_URL=${APP_URL}
+      - ACCOUNT_ALLOW_REGISTRATIONS=${ACCOUNT_ALLOW_REGISTRATIONS}
     depends_on:
       migrate:
         condition: service_completed_successfully
