@@ -126,21 +126,22 @@ class InstagramLoginProvider(SocialProvider):
 
     @property
     def required_scopes(self) -> list[str]:
-        scopes = [
+        return [
             "instagram_business_basic",
             "instagram_business_content_publish",
             "instagram_business_manage_comments",
             "instagram_business_manage_messages",
+            # Required for the `/insights` endpoints, and requested
+            # unconditionally rather than through ``analytics_only_scopes``.
+            # An OAuth grant is frozen at connect time while the
+            # AnalyticsPlatformConfig toggle it was gated on can flip
+            # afterwards, so gating it minted tokens that could never read
+            # insights once analytics was switched on — the account had to be
+            # reconnected, with nothing but an empty page to say so. Mirrors
+            # providers/instagram.py, which has always asked for
+            # instagram_manage_insights on the Facebook-Page path.
+            "instagram_business_manage_insights",
         ]
-        if self.include_analytics_scopes:
-            scopes.extend(self.analytics_only_scopes)
-        return scopes
-
-    @property
-    def analytics_only_scopes(self) -> list[str]:
-        # Required for `/insights` endpoints on the IG-Login OAuth path.
-        # Only requested when analytics is enabled in AnalyticsPlatformConfig.
-        return ["instagram_business_manage_insights"]
 
     @property
     def rate_limits(self) -> RateLimitConfig:

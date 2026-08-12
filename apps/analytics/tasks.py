@@ -381,13 +381,23 @@ def _needs_empty_follower_count_refresh(account) -> bool:
     return account.follower_count <= 0 and account.platform in _FOLLOWER_TOTAL_REFRESH_PLATFORMS
 
 
-def _sync_account_metrics(account, on_date: dt_date) -> None:
+def _sync_account_metrics(account, on_date: dt_date, *, force_today: bool = False) -> None:
     """Fetch account-level metrics for ``on_date`` and any recent missing days.
 
     Walks ``on_date`` and the prior ``_ACCOUNT_METRICS_RECENT_DAYS - 1`` days,
     skipping days that already have an :class:`AccountInsightsSnapshot`. For
     providers without lag (Instagram, Facebook) this is a no-op past
     ``on_date`` because the existing rows short-circuit the iteration.
+
+    ``force_today`` re-fetches ``on_date`` even when its rows already exist.
+    One-shot backfills pass it because they run at the moments the token's
+    reach may have *changed* — a connect, a reconnect, or an admin switching
+    the platform on — and the fetch is the only thing that surfaces an
+    insufficient-scope error and sets ``analytics_needs_reconnect``. Without
+    it, a same-day re-run finds today's rows present, skips every offset,
+    never calls the provider, and reports success for a token that cannot
+    read insights. The hourly cron does not pass it: there, existing rows
+    genuinely mean the work is done.
 
     For YouTube, also fetches per-video Analytics-API metrics (watch_time,
     avg_view_pct, shares) that the Data API can't provide per-post — see
@@ -416,8 +426,8 @@ def _sync_account_metrics(account, on_date: dt_date) -> None:
     for offset in range(recent_days):
         target = on_date - timedelta(days=offset)
         has_rows_for_day = AccountInsightsSnapshot.objects.filter(social_account=account, date=target).exists()
-        needs_current_follower_refresh = target == on_date and _needs_empty_follower_count_refresh(account)
-        if has_rows_for_day and not needs_current_follower_refresh:
+        needs_current_day_refetch = target == on_date and (force_today or _needs_empty_follower_count_refresh(account))
+        if has_rows_for_day and not needs_current_day_refetch:
             continue
         start = datetime.combine(target, time.min, tzinfo=tz)
         end = datetime.combine(target, time.max, tzinfo=tz)
@@ -652,7 +662,7 @@ def backfill_account_analytics(account_id: str, days: int | None = None) -> None
     today = timezone.now().date()
     cutoff = timezone.now() - timedelta(days=days)
 
-    _sync_account_metrics(account, today)
+    _sync_account_metrics(account, today, force_today=True)
 
     posts = PlatformPost.objects.filter(
         social_account=account,

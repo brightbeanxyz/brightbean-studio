@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, call
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -210,6 +211,30 @@ def test_instagram_media_metrics_use_current_metrics_and_field_fallbacks():
     assert metrics.saves == 5
     assert metrics.shares == 2
     assert metrics.extra["total_interactions"] == 22
+
+
+def test_instagram_login_always_requests_the_insights_scope():
+    """The insights scope is not gated on ``include_analytics_scopes``.
+
+    An OAuth grant is frozen at connect time, but the AnalyticsPlatformConfig
+    toggle the flag is derived from can flip afterwards — so a token minted while
+    analytics was off could never read ``/insights`` once it was switched back on,
+    however the Meta app's own permissions were configured.
+    """
+    provider = InstagramLoginProvider({"client_id": "id", "client_secret": "secret"})
+    provider.include_analytics_scopes = False
+
+    assert "instagram_business_manage_insights" in provider.required_scopes
+
+
+def test_instagram_login_auth_url_carries_the_insights_scope():
+    provider = InstagramLoginProvider({"client_id": "id", "client_secret": "secret"})
+    provider.include_analytics_scopes = False
+
+    url = provider.get_auth_url("https://studio.example/callback", "state-1")
+
+    scope = parse_qs(urlparse(url).query)["scope"][0]
+    assert "instagram_business_manage_insights" in scope.split(",")
 
 
 def test_instagram_login_account_metrics_use_current_insights_metrics():

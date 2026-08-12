@@ -16,16 +16,21 @@
         {% comment %}
         Admin-disabled, not an API limitation — so unlike the LinkedIn Personal
         / Bluesky / Mastodon copy above, there is something to do about it.
-        The reconnect matters: the insights scope is requested at connect time
-        based on this same toggle, so a token granted while it was off can't
-        read insights even once it's back on. ({# #} is single-line only in
-        Django — a multi-line one renders as visible page text.)
+        "May need reconnecting" rather than a promise that this page will offer
+        the button: whether the stored token can read insights depends on the
+        platform (Instagram Direct now always asks for the scope; Facebook /
+        TikTok / YouTube still gate theirs on this toggle), and the re-check
+        that surfaces the Reconnect banner is a background task — it doesn't
+        run if the worker is down, and a bulk queryset.update() of the toggle
+        fires no signal at all. Advice that holds in every one of those cases
+        beats advice that is usually superseded. The id is what the view test
+        anchors on, so this copy can be reworded freely. ({# #} is single-line
+        only in Django — a multi-line one renders as visible page text.)
         {% endcomment %}
-        <p style="font-size: 0.875rem; color: var(--text-tertiary); line-height: 1.6; margin-top: 12px;">
+        <p id="analytics-disabled-admin-note" style="font-size: 0.875rem; color: var(--text-tertiary); line-height: 1.6; margin-top: 12px;">
             An administrator can switch it on under <strong>Analytics platforms</strong> in the
-            Django admin. Reconnect this account afterwards — the analytics permission is
-            requested when the account connects, so the current connection can't read insights
-            until it's granted.
+            Django admin. If this account connected while it was off, it may also need
+            reconnecting before insights can be read.
         </p>
         {% endif %}
         <div style="margin-top: 28px; display: flex; gap: 10px; justify-content: center;">
