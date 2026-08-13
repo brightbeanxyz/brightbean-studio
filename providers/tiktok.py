@@ -56,10 +56,13 @@ PERMANENT_PUBLISH_ERROR_CODES = frozenset(
 )
 
 UNAUDITED_CLIENT_HINT = (
-    "The TikTok app has not passed TikTok's content-posting audit yet. "
-    "Until TikTok approves the audit (developer portal → Content Posting API "
-    "→ apply for an audit), videos can only be published as private "
-    "(SELF_ONLY). Set this post's TikTok privacy to 'Only you' to publish now."
+    "The TikTok app has not passed TikTok's content-posting audit yet. Until "
+    "then TikTok only accepts posts to a private account: switch the TikTok "
+    "account itself to Private (TikTok app → Settings and privacy → Privacy → "
+    "Private account) and keep this post's TikTok privacy on 'Only you', then "
+    "retry. Post-level privacy alone is not enough — TikTok rejects SELF_ONLY "
+    "posts to public accounts. The restriction lifts once the audit "
+    "(developer portal → Content Posting API → apply for an audit) is approved."
 )
 
 # Optional post_info fields the composer may set via platform_extra.

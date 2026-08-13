@@ -610,3 +610,20 @@ class TestPublishPost:
 
         assert excinfo.value.retryable is False
         mock_request.assert_not_called()
+
+
+class TestUnauditedClientErrorCopy:
+    def test_unaudited_error_directs_user_to_account_privacy(self):
+        """TikTok's unaudited gate is about the ACCOUNT being private — a
+        SELF_ONLY post on a public account is still rejected (verified in
+        production), so the hint must direct users to the account toggle."""
+        provider = TikTokProvider({"client_key": "k", "client_secret": "s"})
+        exc = APIError(
+            "TikTok API error 400",
+            raw_response={"error": {"code": "unaudited_client_can_only_post_to_private_accounts"}},
+        )
+        with pytest.raises(PublishError) as excinfo:
+            provider._raise_classified_publish_error(exc)
+        message = str(excinfo.value).lower()
+        assert "private account" in message
+        assert excinfo.value.retryable is False
