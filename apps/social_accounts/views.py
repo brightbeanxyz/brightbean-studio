@@ -54,8 +54,12 @@ def _apply_analytics_scope_flag(provider, platform):
     ``yt-analytics.readonly``) to the OAuth scope list only when this flag is
     True. If the platform is disabled in ``AnalyticsPlatformConfig`` (analytics
     not yet rolled out for it), we omit those scopes so a self-hoster whose
-    Meta / TikTok / Google app hasn't been approved for them can still connect
-    accounts for publishing.
+    Facebook / TikTok / Google app hasn't been approved for them can still
+    connect accounts for publishing.
+
+    A no-op for ``instagram`` and ``instagram_login``, which both request their
+    insights scope unconditionally — see ``SocialProvider.analytics_only_scopes``
+    for why deferring it there did more harm than good.
     """
     from apps.social_accounts.models import AnalyticsPlatformConfig
 
