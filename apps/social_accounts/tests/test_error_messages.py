@@ -174,3 +174,34 @@ def test_a_publish_error_quoting_a_dict_repr_is_not_passed_through():
 def test_an_overlong_publish_error_is_not_passed_through():
     assert friendly_publish_error(PublishError("x" * 301)) == PUBLISH_GENERIC_MESSAGE
     assert friendly_publish_error(PublishError("x" * 300)) == "x" * 300
+
+
+def test_capability_gated_api_error_maps_to_capability_copy():
+    """Meta's (#3) "Application does not have the capability" is an app-access-
+    tier gate on subscribed_apps: a reconnect issues a same-tier token and a
+    retry replays the same call, so neither may be offered as the remedy
+    (verified in production — a fresh token changed nothing). It must not fall
+    into the generic REJECTED bucket, whose card offers "Try again"."""
+    from apps.social_accounts.error_messages import (
+        WEBHOOK_CAPABILITY_MESSAGE,
+        WEBHOOK_REJECTED_MESSAGE,
+        classify_webhook_failure,
+    )
+
+    exc = APIError(
+        "Instagram API error 400",
+        status_code=400,
+        raw_response={
+            "error": {
+                "message": "(#3) Application does not have the capability to make this API call.",
+                "type": "OAuthException",
+                "code": 3,
+            }
+        },
+    )
+
+    failure = classify_webhook_failure(exc)
+
+    assert failure.needs_reconnect is False
+    assert failure.message == WEBHOOK_CAPABILITY_MESSAGE
+    assert failure.message != WEBHOOK_REJECTED_MESSAGE
