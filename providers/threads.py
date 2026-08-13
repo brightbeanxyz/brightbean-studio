@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime
 from urllib.parse import urlencode
 
 from .base import SocialProvider
 from .exceptions import OAuthError, PublishError
+from .meta_insights import parse_insights_response
 from .types import (
+    AccountMetrics,
     AccountProfile,
     AuthType,
     CommentResult,
@@ -506,4 +509,34 @@ class ThreadsProvider(SocialProvider):
                 "quotes": metrics.get("quotes", 0),
                 "raw": data,
             },
+        )
+
+    def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
+        """Account-level insights from ``me/threads_insights``.
+
+        ``views`` is a daily time-series metric — Threads returns it under
+        ``values[]``, one entry per day the window covers — while
+        ``followers_count`` is a lifetime total, returned under
+        ``total_value.value`` and unaffected by ``since``/``until``.
+        :func:`parse_insights_response`, shared with the other Meta-backed
+        providers, already distinguishes the two shapes.
+
+        The sync layer always calls this with a single-day ``date_range``, so
+        ``views`` resolves to that one day's count; a day with no activity
+        simply omits the ``views`` entry rather than returning a zero.
+        """
+        resp = self._request(
+            "GET",
+            f"{API_BASE}/me/threads_insights",
+            access_token=access_token,
+            params={
+                "metric": "views,followers_count",
+                "since": int(date_range[0].timestamp()),
+                "until": int(date_range[1].timestamp()),
+            },
+        )
+        values = parse_insights_response(resp.json())
+        return AccountMetrics(
+            followers=values.get("followers_count"),
+            extra={"views": values.get("views", 0), "raw_insights": values},
         )
