@@ -78,10 +78,9 @@ def test_instagram_direct_account_is_listed_and_available(owner_client, workspac
 def test_disabled_platform_account_stays_listed_with_a_reason(owner_client, workspace):
     """The reported bug: the account vanished from the switcher entirely.
 
-    It must still be listed, and selecting it must explain both that analytics
-    is off for the platform and that reconnecting is needed once it's back on —
-    the insights scope is requested at connect time, so flipping the admin
-    toggle alone leaves the stored token unable to read insights.
+    It must still be listed, and selecting it must carry the admin note saying
+    where the platform is switched on. Anchored on the note's id rather than its
+    prose so the copy can be reworded without touching this test.
     """
     account = _account(workspace, "instagram_login", "Direct IG")
     _disable_analytics("instagram_login")
@@ -94,7 +93,7 @@ def test_disabled_platform_account_stays_listed_with_a_reason(owner_client, work
     assert response.context["analytics_disabled_by_admin"] is True
     assert response.context["accounts"][0].analytics_unavailable_reason
     body = response.content.decode()
-    assert "Reconnect this account" in body
+    assert 'id="analytics-disabled-admin-note"' in body
     # The switcher marks it rather than listing it indistinguishably.
     assert "No data" in body
 

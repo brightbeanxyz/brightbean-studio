@@ -201,6 +201,75 @@ def test_sync_account_metrics_refreshes_empty_follower_count_when_today_rows_exi
 
 
 @pytest.mark.django_db
+def test_sync_account_metrics_refetches_today_when_forced(workspace):
+    """A one-shot backfill must call the provider even when today's rows exist.
+
+    The fetch is the only thing that surfaces an insufficient-scope error and
+    sets ``analytics_needs_reconnect``. Without ``force_today``, re-enabling a
+    platform on the same day it last synced finds today's rows present, skips
+    every offset, never calls the provider, and reports success for a token
+    that cannot read insights.
+    """
+    from datetime import date, timedelta
+    from unittest.mock import MagicMock, patch
+
+    from apps.analytics.models import AccountInsightsSnapshot
+    from apps.analytics.tasks import _sync_account_metrics
+    from providers.types import AccountMetrics
+
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform="instagram_login",
+        account_platform_id="ig-direct-1",
+        account_name="Direct IG",
+        follower_count=500,  # non-zero, so the follower-refresh override can't be what re-fetches
+        oauth_access_token="token",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    today = date(2026, 6, 24)
+    for offset in range(3):  # every day _sync_account_metrics would walk
+        AccountInsightsSnapshot.objects.create(
+            social_account=account,
+            date=today - timedelta(days=offset),
+            metric_key="reach",
+            value=10,
+        )
+    fake_provider = MagicMock()
+    fake_provider.account_metrics_supports_date_range = True
+    fake_provider.get_account_metrics.return_value = AccountMetrics(reach=42, followers=500)
+
+    with patch("apps.analytics.tasks._resolve_provider", return_value=fake_provider):
+        _sync_account_metrics(account, today)
+        assert fake_provider.get_account_metrics.call_count == 0
+
+        _sync_account_metrics(account, today, force_today=True)
+        assert fake_provider.get_account_metrics.call_count == 1
+
+
+@pytest.mark.django_db
+def test_backfill_forces_todays_refetch(workspace):
+    """``backfill_account_analytics`` is the one-shot path, so it forces."""
+    from unittest.mock import patch
+
+    from apps.analytics.tasks import backfill_account_analytics
+
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform="instagram_login",
+        account_platform_id="ig-direct-2",
+        account_name="Direct IG",
+        oauth_access_token="token",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    AnalyticsPlatformConfig.objects.update_or_create(platform="instagram_login", defaults={"is_enabled": True})
+
+    with patch("apps.analytics.tasks._sync_account_metrics") as sync:
+        backfill_account_analytics.now(str(account.id))
+
+    assert sync.call_args.kwargs["force_today"] is True
+
+
+@pytest.mark.django_db
 def test_resolve_provider_carries_instagram_login_credentials(workspace):
     """``_resolve_provider`` was a hand-copy of the publish engine's resolver and
     had drifted: no ``instagram_login`` branch, so Instagram Direct providers

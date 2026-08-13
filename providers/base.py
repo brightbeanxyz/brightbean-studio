@@ -82,8 +82,19 @@ class SocialProvider(ABC):
 
         These are conditionally excluded from the OAuth init flow when the
         platform's analytics is disabled in ``AnalyticsPlatformConfig`` — so
-        a self-hoster whose Meta / TikTok app hasn't yet been approved for
-        the analytics scope can still connect accounts for publishing.
+        a self-hoster whose Facebook / TikTok / Google app hasn't yet been
+        approved for the analytics scope can still connect accounts for
+        publishing. Honored by ``facebook``, ``tiktok`` and ``youtube``.
+
+        NOT honored by ``instagram_login``, which lists
+        ``instagram_business_manage_insights`` in ``required_scopes``
+        unconditionally (as ``instagram`` has always done with
+        ``instagram_manage_insights``): the grant is frozen at connect time
+        while this toggle can flip afterwards, so deferring the scope minted
+        tokens that could never read insights once analytics was switched on.
+        The cost of that choice is that an Instagram app without the
+        permission added under *Permissions and features* now sees it on the
+        authorize URL — see the Instagram (Direct) setup steps in the README.
 
         Providers without analytics-specific scopes return the default `[]`.
         """
