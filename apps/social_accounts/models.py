@@ -360,6 +360,12 @@ class AnalyticsPlatformConfig(models.Model):
     )
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Not a column: ``apps.analytics.signals.stash_previous_enabled`` writes the
+    # stored ``is_enabled`` here on pre_save so post_save can spot an off → on
+    # flip. Declared so that write type-checks; ``None`` means "not stashed",
+    # which is what the post_save reader already defaults to.
+    _previously_enabled: bool | None = None
+
     class Meta:
         db_table = "social_accounts_analytics_platform_config"
         verbose_name = "Analytics platform"
