@@ -367,6 +367,14 @@ class PublishEngine:
                 # Update rate limit state
                 self._update_rate_limit(account, result)
 
+                # Platforms that validate the file after accepting the upload
+                # (TikTok) get a deferred re-check so an async rejection does
+                # not leave a phantom "published" post.
+                if result.get("needs_verification") and platform_post.platform_post_id:
+                    from apps.publisher.tasks import verify_platform_post_publish
+
+                    verify_platform_post_publish(str(platform_post.id))
+
                 return result
             else:
                 error_msg = result.get("error", "Unknown publish error")
@@ -561,6 +569,7 @@ class PublishEngine:
                 "platform_post_id": result.platform_post_id,
                 "url": result.url,
                 "response": result.extra,
+                "needs_verification": bool(getattr(provider, "verifies_publish_async", False)),
             }
         finally:
             # Clean up temp files regardless of success/failure
