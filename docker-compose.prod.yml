@@ -27,6 +27,9 @@ services:
       - ALLOWED_HOSTS=${ALLOWED_HOSTS}
       - APP_URL=${APP_URL}
       - SIGNUP_MODE=${SIGNUP_MODE}
+      - PLATFORM_INSTAGRAM_APP_ID=${PLATFORM_INSTAGRAM_APP_ID:-}
+      - PLATFORM_INSTAGRAM_APP_SECRET=${PLATFORM_INSTAGRAM_APP_SECRET:-}
+      - INSTAGRAM_LOGIN_WEBHOOK_VERIFY_TOKEN=${INSTAGRAM_LOGIN_WEBHOOK_VERIFY_TOKEN:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
