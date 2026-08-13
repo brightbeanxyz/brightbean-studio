@@ -7,7 +7,7 @@ from datetime import datetime
 from urllib.parse import urlencode
 
 from .base import SocialProvider
-from .exceptions import OAuthError, PublishError
+from .exceptions import APIError, OAuthError, PublishError
 from .types import (
     AccountMetrics,
     AccountProfile,
@@ -487,13 +487,22 @@ class YouTubeProvider(SocialProvider):
         )
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
-        """Channel-level metrics from the YouTube Analytics API.
+        """Channel-level metrics: the real subscriber total plus Analytics extras.
 
-        Fetches the metrics the YouTube Data API can't provide per-video:
-        watch time, average view %, subscribers gained, and shares.
-        Views/likes/comments come from per-post snapshots so the main page
-        stays consistent with the per-post drawer; shares is the exception
-        because ``videos.list?part=statistics`` exposes no shareCount field.
+        ``followers`` comes from ``channels.list?part=statistics`` — a live
+        point-in-time count independent of ``date_range`` — rather than the
+        Analytics API, which typically lags 1–2 days behind real-time and
+        returns no rows at all for a channel with no activity yet today. The
+        statistics fetch happens first and stands on its own: an Analytics
+        failure (or an empty-rows day) must not cost the caller the
+        subscriber total it already has.
+
+        The rest of ``extra`` — watch time, average view %, subscribers
+        gained, and shares — still comes from the Analytics ``/reports``
+        endpoint, unchanged. Views/likes/comments come from per-post
+        snapshots so the main page stays consistent with the per-post
+        drawer; shares is the exception because ``videos.list?part=statistics``
+        exposes no shareCount field.
 
         Per-video equivalents of the channel-level watch-time / avg-view-% /
         shares triple come from :meth:`get_post_analytics`, which calls the
@@ -505,27 +514,41 @@ class YouTubeProvider(SocialProvider):
         it as a single day's snapshot. Larger ranges would silently collapse
         into one cell.
 
-        Requires the ``yt-analytics.readonly`` scope. The YouTube Analytics
-        API typically lags 1–2 days behind real-time.
+        Requires the ``yt-analytics.readonly`` scope for the Analytics half.
+        An auth/scope failure on the ``/reports`` call still propagates —
+        that's the only thing that surfaces to the sync layer's
+        ``_is_insufficient_scope`` check and flags the account for
+        reconnect — but any other Analytics failure is recorded in
+        ``extra["insight_errors"]`` and degrades to followers-only, per the
+        same convention as the other Meta-family providers' insights calls.
         """
+        followers = self._fetch_subscriber_count(access_token)
+
         start_date = date_range[0].date().isoformat()
         end_date = date_range[1].date().isoformat()
-        resp = self._request(
-            "GET",
-            f"{ANALYTICS_BASE}/reports",
-            access_token=access_token,
-            params={
-                "ids": "channel==MINE",
-                "startDate": start_date,
-                "endDate": end_date,
-                "metrics": "estimatedMinutesWatched,averageViewPercentage,subscribersGained,shares",
-            },
-        )
+        try:
+            resp = self._request(
+                "GET",
+                f"{ANALYTICS_BASE}/reports",
+                access_token=access_token,
+                params={
+                    "ids": "channel==MINE",
+                    "startDate": start_date,
+                    "endDate": end_date,
+                    "metrics": "estimatedMinutesWatched,averageViewPercentage,subscribersGained,shares",
+                },
+            )
+        except APIError as exc:
+            if exc.status_code in (401, 403):
+                raise
+            logger.warning("YouTube Analytics /reports failed: %s", exc)
+            return AccountMetrics(followers=followers, extra={"insight_errors": {"reports": str(exc)}})
+
         body = resp.json()
         headers = body.get("columnHeaders", [])
         rows = body.get("rows", [])
         if not rows or not rows[0]:
-            return AccountMetrics()
+            return AccountMetrics(followers=followers)
 
         index = {col.get("name", ""): i for i, col in enumerate(headers)}
         row = rows[0]
@@ -555,7 +578,33 @@ class YouTubeProvider(SocialProvider):
             v = _value_or_none(api_key)
             if v is not None:
                 extra[catalog_key] = v
-        return AccountMetrics(extra=extra)
+        return AccountMetrics(followers=followers, extra=extra)
+
+    def _fetch_subscriber_count(self, access_token: str) -> int | None:
+        """Current subscriber total from ``channels.list``.
+
+        Returns ``None`` (not 0) on failure or an unreadable response, so a
+        transient error doesn't overwrite a known-good total with a
+        fabricated zero — ``_account_metrics_to_dict`` already skips a
+        ``None`` followers value rather than writing a spurious 0 snapshot.
+        """
+        try:
+            resp = self._request(
+                "GET",
+                f"{API_BASE}/channels",
+                access_token=access_token,
+                params={"part": "statistics", "mine": "true"},
+            )
+        except APIError as exc:
+            logger.warning("YouTube channel statistics unavailable: %s", exc)
+            return None
+        items = resp.json().get("items", [])
+        if not items:
+            return None
+        try:
+            return int(items[0].get("statistics", {}).get("subscriberCount", 0))
+        except (TypeError, ValueError):
+            return None
 
     def get_post_analytics(
         self,
