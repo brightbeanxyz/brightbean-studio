@@ -206,9 +206,10 @@ def test_sync_account_metrics_refetches_today_when_forced(workspace):
 
     The fetch is the only thing that surfaces an insufficient-scope error and
     sets ``analytics_needs_reconnect``. Without ``force_today``, re-enabling a
-    platform on the same day it last synced finds today's rows present, skips
-    every offset, never calls the provider, and reports success for a token
-    that cannot read insights.
+    platform on the same day it last synced finds every day already
+    COMPLETE (every metric key instagram_login's account-level sync can
+    produce is present), skips every offset, never calls the provider, and
+    reports success for a token that cannot read insights.
     """
     from datetime import date, timedelta
     from unittest.mock import MagicMock, patch
@@ -227,13 +228,16 @@ def test_sync_account_metrics_refetches_today_when_forced(workspace):
         connection_status=SocialAccount.ConnectionStatus.CONNECTED,
     )
     today = date(2026, 6, 24)
+    # Every metric key instagram_login's account-level writer can produce —
+    # a genuinely complete day, not just "some row exists".
     for offset in range(3):  # every day _sync_account_metrics would walk
-        AccountInsightsSnapshot.objects.create(
-            social_account=account,
-            date=today - timedelta(days=offset),
-            metric_key="reach",
-            value=10,
-        )
+        for metric_key in ("reach", "views", "likes", "comments", "shares"):
+            AccountInsightsSnapshot.objects.create(
+                social_account=account,
+                date=today - timedelta(days=offset),
+                metric_key=metric_key,
+                value=10,
+            )
     fake_provider = MagicMock()
     fake_provider.account_metrics_supports_date_range = True
     fake_provider.get_account_metrics.return_value = AccountMetrics(reach=42, followers=500)
@@ -244,6 +248,131 @@ def test_sync_account_metrics_refetches_today_when_forced(workspace):
 
         _sync_account_metrics(account, today, force_today=True)
         assert fake_provider.get_account_metrics.call_count == 1
+
+
+@pytest.mark.django_db
+def test_sync_account_metrics_gap_fills_a_missing_metric_without_overwriting_existing_rows(workspace):
+    """A day that already has SOME of a platform's metric keys but not all
+    (Instagram writing ``views``/``followers`` while ``reach`` failed to
+    write) must be treated as partial, not complete — the missing key gets
+    backfilled, but a key that's already there keeps its first-captured
+    value untouched (the first capture of a day stays authoritative).
+    """
+    from datetime import date, timedelta
+    from unittest.mock import MagicMock, patch
+
+    from apps.analytics.models import AccountInsightsSnapshot
+    from apps.analytics.tasks import _sync_account_metrics
+    from providers.types import AccountMetrics
+
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform="instagram",
+        account_platform_id="ig-2",
+        account_name="IG Two",
+        oauth_access_token="token",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    today = date(2026, 6, 24)
+    yesterday = today - timedelta(days=1)
+    # Yesterday captured "views" but "reach" never made it in — a partial day.
+    AccountInsightsSnapshot.objects.create(
+        social_account=account,
+        date=yesterday,
+        metric_key="views",
+        value=999,
+    )
+    fake_provider = MagicMock()
+    fake_provider.account_metrics_supports_date_range = True
+    fake_provider.get_account_metrics.return_value = AccountMetrics(
+        reach=5, extra={"views": 7, "likes": 2, "comments": 1, "shares": 1}
+    )
+
+    with patch("apps.analytics.tasks._resolve_provider", return_value=fake_provider):
+        _sync_account_metrics(account, today)
+
+    # The missing key was backfilled...
+    assert AccountInsightsSnapshot.objects.get(social_account=account, date=yesterday, metric_key="reach").value == 5
+    assert AccountInsightsSnapshot.objects.get(social_account=account, date=yesterday, metric_key="comments").value == 1
+    # ...but the pre-existing "views" row was NOT overwritten by the fresh
+    # fetch's value of 7 — the first capture of a day stays authoritative.
+    assert AccountInsightsSnapshot.objects.get(social_account=account, date=yesterday, metric_key="views").value == 999
+
+
+@pytest.mark.django_db
+def test_sync_account_metrics_complete_day_is_not_refetched(workspace):
+    """A day with every expected metric key present costs no API call, even
+    without ``force_today``."""
+    from datetime import date, timedelta
+    from unittest.mock import MagicMock, patch
+
+    from apps.analytics.models import AccountInsightsSnapshot
+    from apps.analytics.tasks import _sync_account_metrics
+
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform="instagram",
+        account_platform_id="ig-3",
+        account_name="IG Three",
+        follower_count=500,
+        oauth_access_token="token",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    today = date(2026, 6, 24)
+    for offset in range(3):  # every day _sync_account_metrics would walk
+        for metric_key in ("reach", "views", "likes", "comments", "shares"):
+            AccountInsightsSnapshot.objects.create(
+                social_account=account,
+                date=today - timedelta(days=offset),
+                metric_key=metric_key,
+                value=10,
+            )
+    fake_provider = MagicMock()
+    fake_provider.account_metrics_supports_date_range = True
+
+    with patch("apps.analytics.tasks._resolve_provider", return_value=fake_provider):
+        _sync_account_metrics(account, today)
+
+    assert fake_provider.get_account_metrics.call_count == 0
+
+
+@pytest.mark.django_db
+def test_sync_all_account_analytics_still_syncs_when_today_has_some_rows(workspace):
+    """Before Fix 4, the caller skipped ``_sync_account_metrics`` entirely
+    once ANY row existed for today, so a day that was merely partial (some
+    metric keys captured, others not) never got a chance to gap-fill —
+    that's the IG "reach" gap. The caller must now defer that decision to
+    ``_sync_account_metrics`` itself, which knows per-metric completeness.
+    """
+    from unittest.mock import patch
+
+    from django.utils import timezone
+
+    from apps.analytics.models import AccountInsightsSnapshot
+    from apps.analytics.tasks import sync_all_account_analytics
+
+    AnalyticsPlatformConfig.objects.update_or_create(platform="instagram", defaults={"is_enabled": True})
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform="instagram",
+        account_platform_id="ig-4",
+        account_name="IG Four",
+        oauth_access_token="token",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    today = timezone.now().date()
+    AccountInsightsSnapshot.objects.create(
+        social_account=account,
+        date=today,
+        metric_key="views",
+        value=10,
+    )
+
+    with patch("apps.analytics.tasks._sync_account_metrics") as mock_sync:
+        sync_all_account_analytics.now()
+
+    synced_ids = {call.args[0].id for call in mock_sync.call_args_list}
+    assert account.id in synced_ids
 
 
 @pytest.mark.django_db
