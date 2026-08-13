@@ -376,18 +376,61 @@ _POST_NON_CADENCE_METRICS_BY_PLATFORM: dict[str, frozenset[str]] = {
 
 _FOLLOWER_TOTAL_REFRESH_PLATFORMS: frozenset[str] = frozenset({"facebook", "instagram", "instagram_login"})
 
+# Metric keys ``_account_metrics_to_dict`` is actually capable of writing —
+# the ``AccountMetrics`` dataclass fields it reads plus the generic ``extra``
+# keys it recognizes. Intersected with a platform's ``PLATFORM_METRICS``
+# catalog (which also lists post-only keys the account-level writer never
+# touches, e.g. Instagram's ``saves``) this gives the set of keys a
+# COMPLETE day's fetch would have written — see ``_account_day_is_complete``.
+# ``followers`` is deliberately excluded: it's a live point-in-time total
+# written to ``on_date`` only, after this loop, by a dedicated mechanism
+# (``_needs_empty_follower_count_refresh``) — folding it in here would make
+# any day whose profile fetch keeps failing look permanently incomplete.
+_ACCOUNT_METRICS_WRITER_KEYS: frozenset[str] = frozenset(
+    {"impressions", "reach", "follows"}
+    | {"views", "watch_time", "avg_view_pct", "subscribers", "likes", "comments", "shares"}
+)
+
 
 def _needs_empty_follower_count_refresh(account) -> bool:
     return account.follower_count <= 0 and account.platform in _FOLLOWER_TOTAL_REFRESH_PLATFORMS
 
 
+def _account_day_is_complete(account, target: dt_date, *, existing_keys: set[str]) -> bool:
+    """Whether ``target`` already has every metric key this platform's
+    account-level sync can produce (see ``_ACCOUNT_METRICS_WRITER_KEYS``).
+
+    A platform whose catalog carries none of those keys (or a provider that
+    never returns anything the writer recognizes) reports complete by
+    default — there's nothing for this sync to ever add.
+    """
+    from .metrics import PLATFORM_METRICS
+
+    expected = frozenset(PLATFORM_METRICS.get(account.platform, [])) & _ACCOUNT_METRICS_WRITER_KEYS
+    if not expected:
+        return True
+    return expected <= existing_keys
+
+
 def _sync_account_metrics(account, on_date: dt_date, *, force_today: bool = False) -> None:
-    """Fetch account-level metrics for ``on_date`` and any recent missing days.
+    """Fetch account-level metrics for ``on_date`` and any recent incomplete days.
 
     Walks ``on_date`` and the prior ``_ACCOUNT_METRICS_RECENT_DAYS - 1`` days,
-    skipping days that already have an :class:`AccountInsightsSnapshot`. For
-    providers without lag (Instagram, Facebook) this is a no-op past
-    ``on_date`` because the existing rows short-circuit the iteration.
+    skipping a day only once it has EVERY metric key this platform's
+    account-level sync can produce (:func:`_account_day_is_complete`) — not
+    just "some row exists for it". A day missing one of those keys (e.g.
+    Instagram writing ``views``/``followers`` for a day while ``reach``
+    failed to write) gets gap-filled: only the missing keys are written, so
+    the first capture of an already-present key stays authoritative. For
+    providers without lag (Instagram, Facebook) a genuinely complete day is a
+    no-op past ``on_date`` because the completeness check short-circuits the
+    iteration.
+
+    ``on_date`` itself keeps the pre-existing "multiple ticks overwrite
+    today" behavior instead of gap-filling: a live day's numbers can
+    legitimately change between re-runs, so a refetch (``force_today``, or an
+    hourly re-run finding it incomplete) writes every key the fetch returns,
+    not just the missing ones.
 
     ``force_today`` re-fetches ``on_date`` even when its rows already exist.
     One-shot backfills pass it because they run at the moments the token's
@@ -396,8 +439,8 @@ def _sync_account_metrics(account, on_date: dt_date, *, force_today: bool = Fals
     insufficient-scope error and sets ``analytics_needs_reconnect``. Without
     it, a same-day re-run finds today's rows present, skips every offset,
     never calls the provider, and reports success for a token that cannot
-    read insights. The hourly cron does not pass it: there, existing rows
-    genuinely mean the work is done.
+    read insights. The hourly cron does not pass it: there, a complete day
+    genuinely means the work is done.
 
     For YouTube, also fetches per-video Analytics-API metrics (watch_time,
     avg_view_pct, shares) that the Data API can't provide per-post — see
@@ -425,9 +468,14 @@ def _sync_account_metrics(account, on_date: dt_date, *, force_today: bool = Fals
     current_followers = None
     for offset in range(recent_days):
         target = on_date - timedelta(days=offset)
-        has_rows_for_day = AccountInsightsSnapshot.objects.filter(social_account=account, date=target).exists()
-        needs_current_day_refetch = target == on_date and (force_today or _needs_empty_follower_count_refresh(account))
-        if has_rows_for_day and not needs_current_day_refetch:
+        is_today = target == on_date
+        existing_keys = set(
+            AccountInsightsSnapshot.objects.filter(social_account=account, date=target).values_list(
+                "metric_key", flat=True
+            )
+        )
+        needs_current_day_refetch = is_today and (force_today or _needs_empty_follower_count_refresh(account))
+        if _account_day_is_complete(account, target, existing_keys=existing_keys) and not needs_current_day_refetch:
             continue
         start = datetime.combine(target, time.min, tzinfo=tz)
         end = datetime.combine(target, time.max, tzinfo=tz)
@@ -449,6 +497,11 @@ def _sync_account_metrics(account, on_date: dt_date, *, force_today: bool = Fals
         # The live followers total is written to on_date after the loop; keep it
         # out of every dated/backfilled snapshot written here.
         metric_values.pop("followers", None)
+        if not is_today:
+            # A past/backfilled day only gap-fills what's missing — the
+            # first capture of a day stays authoritative. ``on_date`` keeps
+            # the full-overwrite behavior documented above.
+            metric_values = {key: value for key, value in metric_values.items() if key not in existing_keys}
         _write_account_snapshot(
             account,
             metric_values,
@@ -687,8 +740,8 @@ def sync_all_account_analytics() -> None:
     # ...) is "enabled" as far as AnalyticsPlatformConfig is concerned, and the
     # ``cap_days == 0`` guard below only skips the per-post loop — so without
     # this those accounts reached _sync_account_metrics every single hour, built
-    # a provider, and failed. They never write a snapshot row, so ``has_today_rows``
-    # never became True and the waste repeated forever.
+    # a provider, and failed. They never write a snapshot row, so a day never
+    # becomes complete and the waste repeats forever.
     enabled = AnalyticsPlatformConfig.enabled_platforms()
     syncable = [p for p in enabled if services.analytics_availability(p, enabled) is None]
     if not syncable:
@@ -699,21 +752,20 @@ def sync_all_account_analytics() -> None:
         connection_status=SocialAccount.ConnectionStatus.CONNECTED,
         platform__in=syncable,
     ).select_related("workspace")
-    from .models import AccountInsightsSnapshot
 
     for account in accounts:
-        # Account-level: at most once per day per account. Skip if today's
-        # row already exists so an hourly cron doesn't turn into 24 API calls.
-        # Also skip accounts already flagged for analytics reconnect — their
-        # token can't read the Analytics API, so retrying only re-fails and
-        # re-logs every hour. Reconnecting clears the flag and runs a one-shot
-        # backfill (see backfill_account_analytics), so the cron resumes on its
-        # own. The per-post Data-API loop below still runs (it uses the
-        # publish/read scopes the account already has).
-        has_today_rows = AccountInsightsSnapshot.objects.filter(social_account=account, date=today).exists()
-        if not account.analytics_needs_reconnect and (
-            not has_today_rows or _needs_empty_follower_count_refresh(account)
-        ):
+        # Account-level: skip accounts already flagged for analytics
+        # reconnect — their token can't read the Analytics API, so retrying
+        # only re-fails and re-logs every hour. Reconnecting clears the flag
+        # and runs a one-shot backfill (see backfill_account_analytics), so
+        # the cron resumes on its own. Otherwise always defer to
+        # _sync_account_metrics: it walks the last _ACCOUNT_METRICS_RECENT_DAYS
+        # days and only calls the provider for a day that isn't yet COMPLETE
+        # (see _account_day_is_complete) — a day with every expected metric
+        # key already present costs no extra API call, but a merely partial
+        # one (some keys present, others missing) now gets gap-filled instead
+        # of being skipped outright just because SOME row exists for it.
+        if not account.analytics_needs_reconnect:
             _sync_account_metrics(account, today)
 
         # Per-post: only those whose cadence window has elapsed
