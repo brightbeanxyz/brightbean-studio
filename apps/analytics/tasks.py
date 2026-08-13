@@ -276,12 +276,39 @@ def _resolve_provider(account):
     return get_provider(account.platform, _resolve_publish_credentials(account))
 
 
+def _is_deleted_remote_object(exc: Exception) -> bool:
+    """True for Meta's "the remote object no longer exists" error.
+
+    ``code=100, error_subcode=33`` fires when the post/media a metrics call
+    targets has been deleted on the platform. Detected from the structured
+    ``raw_response`` fields (an ``APIError``'s parsed JSON body) rather than
+    message text: Meta's own copy for this error reads "does not exist,
+    cannot be loaded due to **missing permissions**", which would otherwise
+    false-positive :func:`_is_insufficient_scope`'s marker check — exactly
+    what tripped ``analytics_needs_reconnect`` on a Threads account for a
+    single deleted post.
+    """
+    raw_response = getattr(exc, "raw_response", None)
+    if not isinstance(raw_response, dict):
+        return False
+    error = raw_response.get("error")
+    if not isinstance(error, dict):
+        return False
+    return error.get("code") == 100 and error.get("error_subcode") == 33
+
+
 def _is_insufficient_scope(exc: Exception) -> bool:
     """Best-effort recognition of "you don't have the right scope" errors.
 
     Each provider raises slightly different exceptions; rather than wire
-    them all up here, sniff the message for the common signals.
+    them all up here, sniff the message for the common signals. Excludes
+    :func:`_is_deleted_remote_object` first — that error's own message
+    contains "missing permissions" and would otherwise match the
+    ``"permission"`` marker below, misclassifying a deleted post as a scope
+    problem.
     """
+    if _is_deleted_remote_object(exc):
+        return False
     msg = str(exc).lower()
     return any(
         marker in msg
@@ -549,6 +576,9 @@ def _sync_post_metrics(post, on_date: dt_date) -> None:
     except NotImplementedError:
         return
     except Exception as exc:
+        if _is_deleted_remote_object(exc):
+            _mark_metrics_gone(post)
+            return
         if _is_insufficient_scope(exc):
             _mark_needs_reconnect(account)
         logger.warning("get_post_metrics failed for post %s (%s): %s", post.id, account.platform, exc)
@@ -593,6 +623,21 @@ def _mark_needs_reconnect(account):
         return
     account.analytics_needs_reconnect = True
     account.save(update_fields=["analytics_needs_reconnect", "updated_at"])
+
+
+def _mark_metrics_gone(post) -> None:
+    """Record that ``post``'s remote object no longer exists.
+
+    Excludes it from future metric syncs (see the ``metrics_gone_at__isnull``
+    filters in :func:`sync_all_account_analytics` and
+    :func:`backfill_account_analytics`) — otherwise a deleted post 400s on
+    every sync attempt forever.
+    """
+    if post.metrics_gone_at:
+        return
+    post.metrics_gone_at = timezone.now()
+    post.save(update_fields=["metrics_gone_at"])
+    logger.info("PlatformPost %s marked metrics-gone (remote object no longer exists).", post.id)
 
 
 def _post_cadence_due(post, now=None, *, platform: str | None = None) -> bool:
@@ -664,11 +709,15 @@ def backfill_account_analytics(account_id: str, days: int | None = None) -> None
 
     _sync_account_metrics(account, today, force_today=True)
 
-    posts = PlatformPost.objects.filter(
-        social_account=account,
-        status=PlatformPost.Status.PUBLISHED,
-        published_at__gte=cutoff,
-    ).exclude(platform_post_id="")
+    posts = (
+        PlatformPost.objects.filter(
+            social_account=account,
+            status=PlatformPost.Status.PUBLISHED,
+            published_at__gte=cutoff,
+        )
+        .exclude(platform_post_id="")
+        .filter(metrics_gone_at__isnull=True)
+    )
     for post in posts:
         with transaction.atomic():
             _sync_post_metrics(post, today)
@@ -721,11 +770,15 @@ def sync_all_account_analytics() -> None:
         if cap_days == 0:
             continue
         cutoff = timezone.now() - timedelta(days=cap_days)
-        posts = PlatformPost.objects.filter(
-            social_account=account,
-            status=PlatformPost.Status.PUBLISHED,
-            published_at__gte=cutoff,
-        ).exclude(platform_post_id="")
+        posts = (
+            PlatformPost.objects.filter(
+                social_account=account,
+                status=PlatformPost.Status.PUBLISHED,
+                published_at__gte=cutoff,
+            )
+            .exclude(platform_post_id="")
+            .filter(metrics_gone_at__isnull=True)
+        )
         for post in posts:
             if _post_cadence_due(post, platform=account.platform):
                 _sync_post_metrics(post, today)

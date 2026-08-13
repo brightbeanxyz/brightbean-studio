@@ -482,6 +482,17 @@ class PlatformPost(models.Model):
     retry_count = models.PositiveIntegerField(default=0)
     next_retry_at = models.DateTimeField(blank=True, null=True)
 
+    # Set once the analytics sync learns the remote object no longer exists
+    # (a deleted post, a removed video, ...) so it stops retrying every hour
+    # forever. Distinct from ``status``: this post is still genuinely
+    # published, its metrics endpoint just 404s/410s now.
+    metrics_gone_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="When analytics sync learned this post's remote object no longer exists. "
+        "Excluded from future metric syncs once set.",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

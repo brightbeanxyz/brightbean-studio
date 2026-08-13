@@ -28,6 +28,44 @@ def _youtube_account(workspace, *, platform_id, needs_reconnect):
     )
 
 
+def _published_platform_post(account, *, platform_post_id="post-1"):
+    """A fresh PUBLISHED PlatformPost, due for its first metrics sync."""
+    from django.utils import timezone
+
+    from apps.composer.models import PlatformPost, Post
+
+    post = Post.objects.create(workspace=account.workspace, caption="hello")
+    return PlatformPost.objects.create(
+        post=post,
+        social_account=account,
+        status=PlatformPost.Status.PUBLISHED,
+        published_at=timezone.now(),
+        platform_post_id=platform_post_id,
+    )
+
+
+def _deleted_object_error():
+    """Meta's "the remote object no longer exists" error (code 100 / subcode
+    33) — its own message text says "missing permissions", which is exactly
+    what makes it look like a scope problem if you only read the text.
+    """
+    from providers.exceptions import APIError
+
+    return APIError(
+        "Threads API error 400: (#100) Object does not exist, cannot be loaded due to missing permissions",
+        status_code=400,
+        platform="Threads",
+        raw_response={
+            "error": {
+                "message": "Object does not exist, cannot be loaded due to missing permissions",
+                "type": "OAuthException",
+                "code": 100,
+                "error_subcode": 33,
+            }
+        },
+    )
+
+
 @pytest.mark.django_db
 class TestSyncAllAccountAnalytics:
     @patch("apps.analytics.tasks._sync_account_metrics")
@@ -291,6 +329,156 @@ def test_resolve_provider_carries_instagram_login_credentials(workspace):
 
     assert provider.credentials["ig_user_id"] == "ig-direct-1"
     assert provider.credentials["account_handle"] == "direct.ig"
+
+
+class TestIsInsufficientScope:
+    def test_deleted_remote_object_is_not_a_scope_error(self):
+        """The subcode-33 "object does not exist" error must NOT classify as
+        insufficient scope even though its own message contains "missing
+        permissions" — that's exactly the false positive that tripped
+        ``analytics_needs_reconnect`` on a Threads account in production.
+        """
+        from apps.analytics.tasks import _is_insufficient_scope
+
+        assert _is_insufficient_scope(_deleted_object_error()) is False
+
+    def test_genuine_scope_error_is_still_recognized(self):
+        from apps.analytics.tasks import _is_insufficient_scope
+
+        assert _is_insufficient_scope(Exception("insufficient permission (#10)")) is True
+
+
+@pytest.mark.django_db
+def test_sync_post_metrics_marks_deleted_post_gone_without_flagging_reconnect(workspace):
+    """A post whose remote object is gone (code 100 / subcode 33) must be
+    marked so future syncs skip it, and must NOT set
+    ``analytics_needs_reconnect`` — the token is fine, the post just isn't
+    there anymore.
+    """
+    from datetime import date
+    from unittest.mock import MagicMock, patch
+
+    from apps.analytics.tasks import _sync_post_metrics
+
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform="threads",
+        account_platform_id="th-1",
+        account_name="Threads One",
+        oauth_access_token="token",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    post = _published_platform_post(account)
+    fake_provider = MagicMock()
+    fake_provider.get_post_metrics.side_effect = _deleted_object_error()
+
+    with patch("apps.analytics.tasks._resolve_provider", return_value=fake_provider):
+        _sync_post_metrics(post, date(2026, 6, 24))
+
+    post.refresh_from_db()
+    account.refresh_from_db()
+    assert post.metrics_gone_at is not None
+    assert account.analytics_needs_reconnect is False
+
+
+@pytest.mark.django_db
+def test_sync_post_metrics_deleted_object_is_idempotent(workspace):
+    """A second sync attempt on an already-marked post must not error or
+    bump the timestamp again — it's just skipped upstream by the queryset
+    filter, but the marking helper itself should also be a safe no-op.
+    """
+    from datetime import date
+    from unittest.mock import MagicMock, patch
+
+    from apps.analytics.tasks import _sync_post_metrics
+
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform="threads",
+        account_platform_id="th-1b",
+        account_name="Threads One B",
+        oauth_access_token="token",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    post = _published_platform_post(account)
+    fake_provider = MagicMock()
+    fake_provider.get_post_metrics.side_effect = _deleted_object_error()
+
+    with patch("apps.analytics.tasks._resolve_provider", return_value=fake_provider):
+        _sync_post_metrics(post, date(2026, 6, 24))
+        post.refresh_from_db()
+        first_marked_at = post.metrics_gone_at
+
+        _sync_post_metrics(post, date(2026, 6, 25))
+        post.refresh_from_db()
+
+    assert post.metrics_gone_at == first_marked_at
+
+
+@pytest.mark.django_db
+def test_sync_all_account_analytics_skips_posts_marked_metrics_gone(workspace):
+    from unittest.mock import patch
+
+    from django.utils import timezone
+
+    from apps.analytics.tasks import sync_all_account_analytics
+
+    AnalyticsPlatformConfig.objects.update_or_create(platform="threads", defaults={"is_enabled": True})
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform="threads",
+        account_platform_id="th-2",
+        account_name="Threads Two",
+        oauth_access_token="token",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    gone_post = _published_platform_post(account, platform_post_id="gone-1")
+    gone_post.metrics_gone_at = timezone.now()
+    gone_post.save(update_fields=["metrics_gone_at"])
+    live_post = _published_platform_post(account, platform_post_id="live-1")
+
+    with (
+        patch("apps.analytics.tasks._sync_account_metrics"),
+        patch("apps.analytics.tasks._sync_post_metrics") as mock_sync_post,
+    ):
+        sync_all_account_analytics.now()
+
+    synced_post_ids = {call.args[0].id for call in mock_sync_post.call_args_list}
+    assert live_post.id in synced_post_ids
+    assert gone_post.id not in synced_post_ids
+
+
+@pytest.mark.django_db
+def test_backfill_skips_posts_marked_metrics_gone(workspace):
+    from unittest.mock import patch
+
+    from django.utils import timezone
+
+    from apps.analytics.tasks import backfill_account_analytics
+
+    AnalyticsPlatformConfig.objects.update_or_create(platform="threads", defaults={"is_enabled": True})
+    account = SocialAccount.objects.create(
+        workspace=workspace,
+        platform="threads",
+        account_platform_id="th-3",
+        account_name="Threads Three",
+        oauth_access_token="token",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    gone_post = _published_platform_post(account, platform_post_id="gone-2")
+    gone_post.metrics_gone_at = timezone.now()
+    gone_post.save(update_fields=["metrics_gone_at"])
+    live_post = _published_platform_post(account, platform_post_id="live-2")
+
+    with (
+        patch("apps.analytics.tasks._sync_account_metrics"),
+        patch("apps.analytics.tasks._sync_post_metrics") as mock_sync_post,
+    ):
+        backfill_account_analytics.now(str(account.id))
+
+    synced_post_ids = {call.args[0].id for call in mock_sync_post.call_args_list}
+    assert live_post.id in synced_post_ids
+    assert gone_post.id not in synced_post_ids
 
 
 def test_no_analytics_platforms_all_have_a_zero_backfill_window():
