@@ -13,6 +13,20 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_REDIRECT_EXEMPT = [r"^health/$"]
 
+# Allow Fly.io internal health checks (internal IPs in 172.19.x.x range)
+import re
+FLY_INTERNAL_IP_PATTERN = re.compile(r"^172\.19\.\d+\.\d+$")
+
+# Add Fly health check middleware BEFORE CommonMiddleware to allow internal IPs
+# for health checks before host validation runs
+MIDDLEWARE = [
+    "apps.common.middleware.FlyHealthCheckMiddleware",
+    "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+] + MIDDLEWARE[5:]
+
 # Logging
 LOGGING = {
     "version": 1,
