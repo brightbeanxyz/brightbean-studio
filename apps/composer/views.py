@@ -48,8 +48,11 @@ from .models import (
     PostVersion,
     Tag,
 )
+from .status import derive_post_status
 
 MAX_CSV_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB cap on CSV planner imports
+
+READONLY_POST_STATUSES = ("publishing", "partially_published", "published")
 
 # Shown when every posting slot within the lookahead horizon is already taken.
 _QUEUE_FULL_MSG = "No open posting slot within the scheduling horizon — add posting slots or free one up."
@@ -511,6 +514,9 @@ def compose(request, workspace_id, post_id=None):
         post.scheduled_at is not None
         or any(pp.status in ("scheduled", "publishing", "published") for pp in platform_post_list)
     )
+    post_is_readonly = (
+        post is not None and derive_post_status([pp.status for pp in platform_post_list]) in READONLY_POST_STATUSES
+    )
 
     # Approval history and comments for existing posts
     approval_history = []
@@ -613,6 +619,7 @@ def compose(request, workspace_id, post_id=None):
         "is_edit": post is not None,
         "schedule_prefill_is_proposed": schedule_prefill_is_proposed,
         "post_is_scheduled": post_is_scheduled,
+        "post_is_readonly": post_is_readonly,
         "categories": categories,
         "queues": queues,
         "template_data_json": json.dumps(template_data) if template_data else "null",

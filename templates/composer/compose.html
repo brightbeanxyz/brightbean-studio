@@ -402,11 +402,10 @@
                     <svg class="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
                     <p class="text-xs text-amber-700">This post is <span class="font-semibold">scheduled</span>. Saving changes will affect the scheduled post.</p>
                 </div>
-                {% elif post and post.status == 'published' or post and post.status == 'partially_published' or post and post.status == 'publishing' %}
+                {% elif post_is_readonly %}
                 <!-- Published / publishing: read-only; Clone to repost an editable copy -->
                 <div class="border border-stone-200 bg-stone-50 rounded-xl p-3 flex items-start justify-between gap-3">
-                    <div class="flex items-start gap-2">
-                        <svg class="w-4 h-4 text-stone-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg>
+                    <div class="flex items-start gap-2">                        <svg class="w-4 h-4 text-stone-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg>
                         <p class="text-xs text-stone-600">This post is <span class="font-semibold">{{ post.get_status_display|default:post.status }}</span> and read-only. Use <span class="font-semibold">Clone</span> to repost an editable copy.</p>
                     </div>
                     <button type="button"
@@ -1370,10 +1369,10 @@
                 </button>
                 {% endif %}
 
+                {% if not post_is_readonly %}
                 <!-- Publish split-button -->
                 <div class="relative inline-flex flex-shrink-0" id="publish-anchor">
-                    <!-- Mode selector (left) -->
-                    <button type="button" id="publish-mode-btn"
+                    <!-- Mode selector (left) -->                    <button type="button" id="publish-mode-btn"
                             :disabled="selectedAccounts.length === 0"
                             :class="selectedAccounts.length === 0 && 'opacity-50 cursor-not-allowed'"
                             class="inline-flex items-center gap-1.5 pl-2 sm:pl-3 pr-1.5 sm:pr-2 py-2 text-sm font-semibold text-orange-700 bg-orange-100 rounded-l-lg hover:bg-orange-200 border border-orange-200 border-r-0 transition-all duration-150 cursor-pointer">
@@ -1489,9 +1488,9 @@
                 <!-- Hidden fields for queue actions -->
                 <input type="hidden" name="queue_id" value="">
                 <input type="hidden" name="queue_priority" value="">
+                {% endif %}
             </div>
         </form>
-
         {% if post and approval_history %}
         <!-- Approval History & Comments -->
         <div class="mt-4 border-t border-stone-200 pt-4">
