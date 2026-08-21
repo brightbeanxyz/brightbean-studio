@@ -22,6 +22,8 @@ CSP_REPORT_ONLY = True
 # Use local storage in tests
 STORAGE_BACKEND = "local"
 MEDIA_ROOT = BASE_DIR / "test_media"  # noqa: F405
+MEDIA_URL = "/media/"
+SERVE_MEDIA = True
 
 # Use simple static files storage in tests (no manifest/collectstatic needed)
 STORAGES["staticfiles"] = {  # noqa: F405
