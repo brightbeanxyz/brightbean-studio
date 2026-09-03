@@ -27,7 +27,10 @@
                 </div>
                 {% endif %}
             </div>
-            {% if can_manage_brands %}<a href="{% url 'brands:edit' workspace_id=workspace.id brand_id=brand.id %}" class="text-sm font-medium" style="color: var(--primary);">Edit</a>{% endif %}
+            <div class="flex gap-4">
+                <a href="{% url 'content_intelligence:strategy' workspace_id=workspace.id brand_id=brand.id %}" class="text-sm font-medium" style="color: var(--primary);">Strategy &amp; plans</a>
+                {% if can_manage_brands %}<a href="{% url 'brands:edit' workspace_id=workspace.id brand_id=brand.id %}" class="text-sm font-medium" style="color: var(--primary);">Edit</a>{% endif %}
+            </div>
         </div>
         {% empty %}
         <div class="rounded-xl p-10 text-center" style="border: 1px dashed var(--border);">

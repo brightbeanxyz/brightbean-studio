@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import BrandProfile
+from .models import BrandProfile, EditorialStrategy
 
 
 class LineListField(forms.CharField):
@@ -91,3 +91,24 @@ class BrandProfileForm(forms.ModelForm):
             brand.full_clean()
             brand.save()
         return brand
+
+
+class EditorialStrategyForm(forms.ModelForm):
+    class Meta:
+        model = EditorialStrategy
+        fields = ["reach_percentage", "authority_percentage", "conversion_percentage"]
+        labels = {
+            "reach_percentage": "Reach (%)",
+            "authority_percentage": "Authority (%)",
+            "conversion_percentage": "Conversion (%)",
+        }
+        widgets = {
+            field: forms.NumberInput(attrs={"class": "form-input w-full", "min": 0, "max": 100}) for field in fields
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        values = [cleaned.get(name) for name in self.Meta.fields]
+        if all(value is not None for value in values) and sum(values) != 100:
+            raise forms.ValidationError("Reach, Authority and Conversion must total 100%.")
+        return cleaned
