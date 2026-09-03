@@ -19,6 +19,7 @@ urlpatterns = [
     path("organizations/api-keys/", include("apps.api_keys.urls")),
     path("workspaces/", include("apps.workspaces.urls")),
     path("members/", include("apps.members.urls")),
+    path("workspace/<uuid:workspace_id>/brands/", include("apps.brands.urls")),
     path("settings/", include("apps.settings_manager.urls")),
     path("social-accounts/", include("apps.social_accounts.urls")),
     # Content Pipeline (Stream A)

@@ -54,6 +54,7 @@ LOCAL_APPS = [
     "apps.organizations",
     "apps.workspaces",
     "apps.members",
+    "apps.brands",
     "apps.settings_manager",
     "apps.credentials",
     "apps.social_accounts",
