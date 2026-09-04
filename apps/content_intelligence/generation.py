@@ -1,6 +1,8 @@
 from django.db import transaction
 from django.utils import timezone
+
 from apps.brands.services import ensure_strategy_version
+
 from .models import GeneratedContent, GenerationRequest
 from .providers import ProviderError, generate_text
 
@@ -14,7 +16,6 @@ def _context(brand, version):
     )
 
 
-@transaction.atomic
 def request_generation(
     *,
     brand,
@@ -62,16 +63,38 @@ def request_generation(
         request.completed_at = timezone.now()
         request.save(update_fields=["status", "error_message", "completed_at"])
         raise
-    output = GeneratedContent.objects.create(
-        request=request,
-        workspace=brand.workspace,
-        brand=brand,
-        platform=platform,
-        content_type=content_type,
-        body=body,
-        metadata={"strategy_version": version.version, "provider": provider, "model": model},
-    )
-    request.status = GenerationRequest.Status.COMPLETED
-    request.completed_at = timezone.now()
-    request.save(update_fields=["status", "completed_at"])
+    with transaction.atomic():
+        output = GeneratedContent.objects.create(
+            request=request,
+            workspace=brand.workspace,
+            brand=brand,
+            platform=platform,
+            content_type=content_type,
+            body=body,
+            metadata={"strategy_version": version.version, "provider": provider, "model": model},
+        )
+        request.status = GenerationRequest.Status.COMPLETED
+        request.completed_at = timezone.now()
+        request.save(update_fields=["status", "completed_at"])
     return request, output
+
+
+@transaction.atomic
+def create_composer_draft(*, output, user):
+    """Create one editable Composer post from a generated output, idempotently."""
+    from apps.composer.models import Post
+
+    locked_output = GeneratedContent.objects.select_for_update().select_related("brand").get(pk=output.pk)
+    if locked_output.composer_post_id:
+        return locked_output.composer_post, False
+    post = Post.objects.create(
+        workspace=locked_output.workspace,
+        author=user,
+        title=locked_output.title or f"AI draft - {locked_output.brand.name}",
+        caption=locked_output.body,
+        internal_notes=f"Generated with {locked_output.request.provider} via Social Content AI.",
+    )
+    locked_output.composer_post = post
+    locked_output.save(update_fields=["composer_post"])
+    output.composer_post = post
+    return post, True

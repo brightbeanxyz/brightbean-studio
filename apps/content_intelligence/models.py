@@ -136,6 +136,13 @@ class GeneratedContent(models.Model):
     request = models.ForeignKey(GenerationRequest, on_delete=models.CASCADE, related_name="outputs")
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="generated_content")
     brand = models.ForeignKey("brands.BrandProfile", on_delete=models.CASCADE, related_name="generated_content")
+    composer_post = models.OneToOneField(
+        "composer.Post",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="generated_source",
+    )
     platform = models.CharField(max_length=20)
     content_type = models.CharField(max_length=50)
     variant = models.PositiveSmallIntegerField(default=1)

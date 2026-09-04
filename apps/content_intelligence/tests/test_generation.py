@@ -9,7 +9,7 @@ from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.workspaces.models import Workspace
 
-from ..generation import request_generation
+from ..generation import create_composer_draft, request_generation
 from ..models import GeneratedContent, GenerationRequest
 from ..providers import ProviderError
 
@@ -59,3 +59,16 @@ class GenerationTests(TestCase):
         request = GenerationRequest.objects.get(brand=self.brand)
         self.assertEqual(request.status, GenerationRequest.Status.FAILED)
         self.assertFalse(GeneratedContent.objects.exists())
+
+    @patch("apps.content_intelligence.generation.generate_text", return_value="Draft caption")
+    def test_generated_content_creates_one_composer_draft(self, _generate_text):
+        _, output = request_generation(
+            brand=self.brand, provider="openai", platform="linkedin", content_type="post", user=self.user
+        )
+        post, created = create_composer_draft(output=output, user=self.user)
+        same_post, created_again = create_composer_draft(output=output, user=self.user)
+        self.assertTrue(created)
+        self.assertFalse(created_again)
+        self.assertEqual(same_post, post)
+        self.assertEqual(post.caption, "Draft caption")
+        self.assertEqual(post.workspace, self.workspace)

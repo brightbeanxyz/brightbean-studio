@@ -3,18 +3,18 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.http import Http404
 from django.shortcuts import redirect, render
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_http_methods, require_POST
 
 from apps.brands.forms import EditorialStrategyForm
 from apps.brands.models import BrandProfile, EditorialStrategy
 from apps.brands.services import save_editorial_strategy
 
-from .forms import ContentPlanForm
-from .models import ContentPlan
-from .services import create_content_plan
+from .forms import ContentPlanForm, GenerationForm
+from .generation import create_composer_draft as create_composer_draft_service
 from .generation import request_generation
-from .models import GeneratedContent, GenerationRequest
+from .models import ContentPlan, GeneratedContent
 from .providers import ProviderError
+from .services import create_content_plan
 
 
 def _can_manage(request):
@@ -108,17 +108,18 @@ def generate(request, workspace_id, brand_id):
     if not request.workspace_membership.effective_permissions.get("create_posts", False):
         raise PermissionDenied("Permission denied: create_posts")
     brand = _get_brand(request, brand_id)
-    if request.method == "POST":
+    form = GenerationForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
         try:
             _, output = request_generation(
                 brand=brand,
-                provider=request.POST.get("provider", "").strip().lower(),
-                platform=request.POST.get("platform", "linkedin"),
-                content_type=request.POST.get("content_type", "post"),
+                provider=form.cleaned_data["provider"],
+                platform=form.cleaned_data["platform"],
+                content_type=form.cleaned_data["content_type"],
                 user=request.user,
-                model=request.POST.get("model", "").strip(),
-                audience=request.POST.get("audience", ""),
-                instruction=request.POST.get("instruction", ""),
+                model=form.cleaned_data["model"].strip(),
+                audience=form.cleaned_data["audience"].strip(),
+                instruction=form.cleaned_data["instruction"].strip(),
             )
         except (ProviderError, ValueError) as exc:
             messages.error(request, str(exc))
@@ -136,7 +137,7 @@ def generate(request, workspace_id, brand_id):
         {
             "workspace": request.workspace,
             "brand": brand,
-            "providers": GenerationRequest.Provider.choices,
+            "form": form,
             "settings_active": "brands",
         },
     )
@@ -156,3 +157,19 @@ def generated_detail(request, workspace_id, brand_id, content_id):
         "content_intelligence/generated_detail.html",
         {"workspace": request.workspace, "brand": brand, "output": output, "settings_active": "brands"},
     )
+
+
+@login_required
+@require_POST
+def create_composer_draft(request, workspace_id, brand_id, content_id):
+    if not request.workspace_membership.effective_permissions.get("create_posts", False):
+        raise PermissionDenied("Permission denied: create_posts")
+    brand = _get_brand(request, brand_id)
+    try:
+        output = GeneratedContent.objects.get(id=content_id, workspace=request.workspace, brand=brand)
+    except GeneratedContent.DoesNotExist:
+        raise Http404 from None
+    post, created = create_composer_draft_service(output=output, user=request.user)
+    if created:
+        messages.success(request, "AI draft moved to Composer for review.")
+    return redirect("composer:compose_edit", workspace_id=request.workspace.id, post_id=post.id)
