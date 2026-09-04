@@ -3,14 +3,15 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
-from apps.brands.models import BrandProfile
+from apps.brands.models import BrandProfile, EditorialStrategy, EditorialStrategyVersion
 from apps.composer.models import Post
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.workspaces.models import Workspace
 
 from ..forms import CampaignForm
-from ..models import Campaign, GeneratedContent, GenerationRequest
+from ..generation import create_composer_draft_from_plan_item
+from ..models import Campaign, ContentPlan, ContentPlanItem, GeneratedContent, GenerationRequest
 
 
 class ContentLibraryTests(TestCase):
@@ -100,3 +101,30 @@ class ContentLibraryTests(TestCase):
             url, {"selected": [f"post:{post.id}"], "action": "assign_campaign", "campaign": foreign_campaign.id}
         )
         self.assertEqual(forbidden.status_code, 404)
+
+    def test_plan_item_materializes_idempotent_composer_draft(self):
+        strategy = EditorialStrategy.objects.create(brand=self.brand)
+        version = EditorialStrategyVersion.objects.create(
+            strategy=strategy, version=1, reach_percentage=35, authority_percentage=50,
+            conversion_percentage=15, created_by=self.user,
+        )
+        plan = ContentPlan.objects.create(
+            workspace=self.workspace, brand=self.brand, cadence="weekly",
+            start_date="2026-09-01", end_date="2026-09-30",
+            strategy_version=version,
+            created_by=self.user,
+        )
+        # Keep this test independent of strategy fixtures by using a generated plan item
+        item = ContentPlanItem.objects.create(
+            plan=plan, position=1, planned_for="2026-09-10", objective="reach", topic="Launch topic",
+            hook="Start here", cta="Learn more", hashtags=["#launch"], keywords=["launch"],
+            recommended_format="text", recommended_platform="linkedin",
+        )
+        post, created = create_composer_draft_from_plan_item(item_id=item.id, workspace=self.workspace, user=self.user)
+        self.assertTrue(created)
+        self.assertEqual(post.origin, Post.Origin.PLAN)
+        item.refresh_from_db()
+        self.assertEqual(item.composer_post_id, post.id)
+        same, created_again = create_composer_draft_from_plan_item(item_id=item.id, workspace=self.workspace, user=self.user)
+        self.assertFalse(created_again)
+        self.assertEqual(same.id, post.id)

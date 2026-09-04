@@ -231,6 +231,7 @@ class Post(models.Model):
         AI = "ai", "AI generated"
         IMPORT = "import", "Imported"
         TEMPLATE = "template", "Template"
+        PLAN = "plan", "Editorial plan"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace = models.ForeignKey(

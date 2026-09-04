@@ -15,9 +15,23 @@ from apps.brands.models import BrandProfile, EditorialStrategy
 from apps.brands.services import save_editorial_strategy
 
 from .forms import AIProviderConfigurationForm, CampaignForm, ContentPlanForm, GenerationForm, VisualBriefForm
-from .generation import configured_providers, queue_generation
-from .generation import create_composer_draft as create_composer_draft_service
-from .models import AIProviderConfiguration, Campaign, ContentPlan, GeneratedContent, GenerationRequest, VisualBrief
+from .generation import (
+    configured_providers,
+    create_composer_draft_from_plan_item,
+    queue_generation,
+)
+from .generation import (
+    create_composer_draft as create_composer_draft_service,
+)
+from .models import (
+    AIProviderConfiguration,
+    Campaign,
+    ContentPlan,
+    ContentPlanItem,
+    GeneratedContent,
+    GenerationRequest,
+    VisualBrief,
+)
 from .providers import ProviderError
 from .services import create_content_plan
 from .visuals import image_provider_configurations, queue_visual_brief
@@ -166,6 +180,25 @@ def generated_detail(request, workspace_id, brand_id, content_id):
         "content_intelligence/generated_detail.html",
         {"workspace": request.workspace, "brand": brand, "output": output, "settings_active": "brands"},
     )
+
+
+@login_required
+@require_POST
+def create_plan_item_draft(request, workspace_id, brand_id, plan_id, item_id):
+    if not request.workspace_membership.effective_permissions.get("create_posts", False):
+        raise PermissionDenied("Permission denied: create_posts")
+    brand = _get_brand(request, brand_id)
+    try:
+        item = ContentPlanItem.objects.select_related("plan").get(
+            id=item_id, plan_id=plan_id, plan__workspace=request.workspace, plan__brand=brand
+        )
+    except ContentPlanItem.DoesNotExist:
+        raise Http404 from None
+    post, created = create_composer_draft_from_plan_item(
+        item_id=item.id, workspace=request.workspace, user=request.user
+    )
+    messages.success(request, "Editorial plan item moved to Composer." if created else "Draft already exists in Composer.")
+    return redirect("composer:compose_edit", workspace_id=request.workspace.id, post_id=post.id)
 
 
 @login_required

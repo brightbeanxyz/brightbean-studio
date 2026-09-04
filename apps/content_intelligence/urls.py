@@ -12,6 +12,11 @@ urlpatterns = [
     path("<uuid:brand_id>/strategy/", views.strategy, name="strategy"),
     path("<uuid:brand_id>/plans/new/", views.plan_create, name="plan_create"),
     path("<uuid:brand_id>/plans/<uuid:plan_id>/", views.plan_detail, name="plan_detail"),
+    path(
+        "<uuid:brand_id>/plans/<uuid:plan_id>/items/<uuid:item_id>/draft/",
+        views.create_plan_item_draft,
+        name="create_plan_item_draft",
+    ),
     path("<uuid:brand_id>/generate/", views.generate, name="generate"),
     path("<uuid:brand_id>/generations/", views.generation_history, name="generation_history"),
     path("<uuid:brand_id>/generations/<uuid:request_id>/", views.generation_request_detail, name="generation_request_detail"),

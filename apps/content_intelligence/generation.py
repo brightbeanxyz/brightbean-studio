@@ -219,3 +219,47 @@ def create_composer_draft(*, output, user):
     locked_output.save(update_fields=["composer_post"])
     output.composer_post = post
     return post, True
+
+
+@transaction.atomic
+def create_composer_draft_from_plan_item(*, item_id, workspace, user):
+    """Materialize one editorial plan item as an idempotent Composer draft."""
+    from datetime import datetime, time
+    from zoneinfo import ZoneInfo
+
+    from apps.composer.models import Post
+
+    from .models import ContentPlanItem
+
+    item = (
+        ContentPlanItem.objects.select_for_update()
+        .select_related("plan__brand", "plan__campaign", "composer_post")
+        .get(id=item_id, plan__workspace=workspace)
+    )
+    if item.composer_post_id:
+        return item.composer_post, False
+    hashtags = " ".join(str(value) for value in (item.hashtags or []))
+    sections = [part for part in (item.hook, item.topic, item.cta, hashtags) if part]
+    try:
+        tz = ZoneInfo(workspace.effective_timezone or "UTC")
+    except (KeyError, ValueError):
+        tz = ZoneInfo("UTC")
+    proposed = timezone.make_aware(datetime.combine(item.planned_for, time(9)), timezone=tz)
+    post = Post.objects.create(
+        workspace=workspace,
+        author=user,
+        origin=Post.Origin.PLAN,
+        brand=item.plan.brand,
+        campaign=item.plan.campaign,
+        title=item.topic,
+        caption="\n\n".join(sections),
+        tags=list(item.keywords or []),
+        proposed_publish_at=proposed,
+        internal_notes=(
+            f"Created from editorial plan item {item.id}. Recommended format: {item.recommended_format}; "
+            f"platform: {item.recommended_platform}."
+        ),
+    )
+    item.composer_post = post
+    item.save(update_fields=["composer_post"])
+    return post, True

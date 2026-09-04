@@ -68,6 +68,9 @@ class ContentPlanItem(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     plan = models.ForeignKey(ContentPlan, on_delete=models.CASCADE, related_name="items")
+    composer_post = models.OneToOneField(
+        "composer.Post", on_delete=models.SET_NULL, null=True, blank=True, related_name="content_plan_item"
+    )
     position = models.PositiveIntegerField()
     planned_for = models.DateField()
     objective = models.CharField(max_length=12, choices=Objective.choices)
