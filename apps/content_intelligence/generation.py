@@ -3,7 +3,7 @@ from django.utils import timezone
 
 from apps.brands.services import ensure_strategy_version
 
-from .models import GeneratedContent, GenerationRequest
+from .models import AIProviderConfiguration, GeneratedContent, GenerationRequest
 from .providers import ProviderError, generate_text
 
 
@@ -28,6 +28,7 @@ def request_generation(
     instruction="",
     previous_content=None,
     analytics=None,
+    configuration=None,
 ):
     if provider not in GenerationRequest.Provider.values:
         raise ValueError("Unsupported AI provider.")
@@ -56,7 +57,15 @@ def request_generation(
         f"Analytics: {analytics or 'None'}. Include a clear hook and CTA. Return plain text for human review."
     )
     try:
-        body = generate_text(provider=provider, model=model, system=_context(brand, version), prompt=prompt)
+        options = {}
+        if configuration:
+            options = {
+                "api_key": configuration.api_key,
+                "base_url": configuration.base_url,
+                "timeout": configuration.timeout_seconds,
+            }
+            model = model or configuration.default_model
+        body = generate_text(provider=provider, model=model, system=_context(brand, version), prompt=prompt, **options)
     except (ProviderError, ValueError) as exc:
         request.status = GenerationRequest.Status.FAILED
         request.error_message = str(exc)
@@ -74,9 +83,118 @@ def request_generation(
             metadata={"strategy_version": version.version, "provider": provider, "model": model},
         )
         request.status = GenerationRequest.Status.COMPLETED
+        request.attempt_count += 1
+        request.input_tokens = max(1, (len(prompt) + len(_context(brand, version))) // 4)
+        request.output_tokens = max(1, len(body) // 4)
+        request.estimated_cost_usd = _estimate_cost(provider, request.input_tokens, request.output_tokens)
         request.completed_at = timezone.now()
-        request.save(update_fields=["status", "completed_at"])
+        request.save(
+            update_fields=[
+                "status", "attempt_count", "input_tokens", "output_tokens", "estimated_cost_usd", "completed_at"
+            ]
+        )
     return request, output
+
+
+def _estimate_cost(provider, input_tokens, output_tokens):
+    """Conservative display estimate; billing truth remains the provider invoice."""
+    per_million = {"openai": (0.15, 0.60), "anthropic": (0.80, 4.00), "gemini": (0.10, 0.40)}
+    input_rate, output_rate = per_million.get(provider, (0, 0))
+    return (input_tokens * input_rate + output_tokens * output_rate) / 1_000_000
+
+
+def configured_providers(organization):
+    configurations = AIProviderConfiguration.objects.filter(organization=organization, is_enabled=True)
+    return [configuration for configuration in configurations if configuration.is_configured]
+
+
+def enforce_generation_quota(configuration):
+    today = timezone.localdate()
+    used = GenerationRequest.objects.filter(
+        workspace__organization=configuration.organization,
+        provider=configuration.provider,
+        created_at__date=today,
+    ).count()
+    if used >= configuration.daily_request_limit:
+        raise ValueError("Daily AI generation quota reached for this provider.")
+
+
+def queue_generation(**kwargs):
+    brand = kwargs["brand"]
+    provider = kwargs["provider"]
+    configuration = AIProviderConfiguration.objects.get(
+        organization=brand.workspace.organization, provider=provider, is_enabled=True
+    )
+    if not configuration.is_configured:
+        raise ValueError("AI provider is not configured.")
+    enforce_generation_quota(configuration)
+    _, version = ensure_strategy_version(brand=brand, user=kwargs["user"])
+    request = GenerationRequest.objects.create(
+        workspace=brand.workspace,
+        brand=brand,
+        provider=provider,
+        model=kwargs.get("model", "") or configuration.default_model,
+        platform=kwargs["platform"],
+        content_type=kwargs["content_type"],
+        audience=kwargs.get("audience", ""),
+        context={
+            "instruction": kwargs.get("instruction", ""),
+            "previous_content": kwargs.get("previous_content") or [],
+            "analytics": kwargs.get("analytics") or {},
+            "strategy_version": version.version,
+        },
+        requested_by=kwargs["user"],
+    )
+    from .tasks import run_generation
+
+    run_generation(str(request.id))
+    return request
+
+
+def process_queued_generation(request_id):
+    request = GenerationRequest.objects.select_related("brand", "requested_by", "workspace__organization").get(
+        id=request_id
+    )
+    if request.status == GenerationRequest.Status.COMPLETED:
+        return request.outputs.first()
+    configuration = AIProviderConfiguration.objects.get(
+        organization=request.workspace.organization, provider=request.provider, is_enabled=True
+    )
+    request.status = GenerationRequest.Status.PROCESSING
+    request.attempt_count += 1
+    request.save(update_fields=["status", "attempt_count"])
+    context = request.context or {}
+    _, version = ensure_strategy_version(brand=request.brand, user=request.requested_by)
+    prompt = (
+        f"Create one {request.content_type} for {request.platform}. Audience: {request.audience or 'the brand audience'}. "
+        f"Instruction: {context.get('instruction') or 'Create a useful, specific post.'} "
+        f"Previous content: {context.get('previous_content') or 'None'}. Analytics: {context.get('analytics') or 'None'}. "
+        "Include a clear hook and CTA. Return plain text for human review."
+    )
+    try:
+        body = generate_text(
+            provider=request.provider, model=request.model, system=_context(request.brand, version), prompt=prompt,
+            api_key=configuration.api_key, base_url=configuration.base_url, timeout=configuration.timeout_seconds,
+        )
+    except (ProviderError, ValueError) as exc:
+        request.status = GenerationRequest.Status.FAILED
+        request.error_message = "AI provider request failed. Please retry later."
+        request.completed_at = timezone.now()
+        request.save(update_fields=["status", "error_message", "completed_at"])
+        raise ProviderError(request.error_message) from exc
+    with transaction.atomic():
+        output = GeneratedContent.objects.create(
+            request=request, workspace=request.workspace, brand=request.brand, platform=request.platform,
+            content_type=request.content_type, body=body,
+            metadata={"strategy_version": version.version, "provider": request.provider, "model": request.model},
+        )
+        request.status = GenerationRequest.Status.COMPLETED
+        request.input_tokens = max(1, (len(prompt) + len(_context(request.brand, version))) // 4)
+        request.output_tokens = max(1, len(body) // 4)
+        request.estimated_cost_usd = _estimate_cost(request.provider, request.input_tokens, request.output_tokens)
+        request.completed_at = timezone.now()
+        request.save(update_fields=["status", "input_tokens", "output_tokens", "estimated_cost_usd", "completed_at"])
+    return output
 
 
 @transaction.atomic

@@ -9,8 +9,8 @@ from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.workspaces.models import Workspace
 
-from ..generation import create_composer_draft, request_generation
-from ..models import GeneratedContent, GenerationRequest
+from ..generation import create_composer_draft, process_queued_generation, queue_generation, request_generation
+from ..models import AIProviderConfiguration, GeneratedContent, GenerationRequest
 from ..providers import ProviderError
 
 
@@ -72,3 +72,59 @@ class GenerationTests(TestCase):
         self.assertEqual(same_post, post)
         self.assertEqual(post.caption, "Draft caption")
         self.assertEqual(post.workspace, self.workspace)
+
+    @patch("apps.content_intelligence.tasks.run_generation")
+    def test_generation_is_queued_for_configured_provider(self, run_generation):
+        AIProviderConfiguration.objects.create(
+            organization=self.workspace.organization,
+            provider="agnes",
+            api_key="secret",
+            default_model="agnes-2.5-flash",
+            is_enabled=True,
+        )
+        generation_request = queue_generation(
+            brand=self.brand,
+            provider="agnes",
+            platform="linkedin",
+            content_type="post",
+            user=self.user,
+            instruction="Announce the launch",
+        )
+        self.assertEqual(generation_request.status, GenerationRequest.Status.PENDING)
+        run_generation.assert_called_once_with(str(generation_request.id))
+
+    @patch("apps.content_intelligence.tasks.run_generation")
+    def test_daily_generation_quota_is_enforced(self, _run_generation):
+        AIProviderConfiguration.objects.create(
+            organization=self.workspace.organization,
+            provider="openai",
+            api_key="secret",
+            is_enabled=True,
+            daily_request_limit=1,
+        )
+        queue_generation(
+            brand=self.brand, provider="openai", platform="linkedin", content_type="post", user=self.user
+        )
+        with self.assertRaisesRegex(ValueError, "quota"):
+            queue_generation(
+                brand=self.brand, provider="openai", platform="linkedin", content_type="post", user=self.user
+            )
+
+    @patch("apps.content_intelligence.generation.generate_text", return_value="Queued result")
+    @patch("apps.content_intelligence.tasks.run_generation")
+    def test_worker_completes_generation_and_records_usage(self, _run_generation, _generate_text):
+        AIProviderConfiguration.objects.create(
+            organization=self.workspace.organization,
+            provider="agnes",
+            api_key="secret",
+            is_enabled=True,
+        )
+        generation_request = queue_generation(
+            brand=self.brand, provider="agnes", platform="instagram", content_type="caption", user=self.user
+        )
+        output = process_queued_generation(generation_request.id)
+        generation_request.refresh_from_db()
+        self.assertEqual(output.body, "Queued result")
+        self.assertEqual(generation_request.status, GenerationRequest.Status.COMPLETED)
+        self.assertGreater(generation_request.input_tokens, 0)
+        self.assertGreater(generation_request.output_tokens, 0)

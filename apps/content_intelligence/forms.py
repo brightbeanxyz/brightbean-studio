@@ -1,7 +1,9 @@
+from urllib.parse import urlsplit
+
 from django import forms
 from django.utils import timezone
 
-from .models import ContentPlan, GenerationRequest
+from .models import AIProviderConfiguration, ContentPlan, GenerationRequest
 
 
 class ContentPlanForm(forms.Form):
@@ -41,7 +43,39 @@ class GenerationForm(forms.Form):
         help_text="Describe the topic, goal, offer, or constraints for this draft.",
     )
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, provider_choices=None, **kwargs):
         super().__init__(*args, **kwargs)
+        if provider_choices is not None:
+            self.fields["provider"].choices = provider_choices
         for field in self.fields.values():
             field.widget.attrs["class"] = "form-input w-full"
+
+
+class AIProviderConfigurationForm(forms.ModelForm):
+    class Meta:
+        model = AIProviderConfiguration
+        fields = ["api_key", "default_model", "base_url", "is_enabled", "daily_request_limit", "timeout_seconds", "max_retries"]
+        widgets = {"api_key": forms.PasswordInput(render_value=False)}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["api_key"].required = False
+        for field in self.fields.values():
+            if not isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs["class"] = "form-input w-full"
+
+    def clean_base_url(self):
+        base_url = self.cleaned_data.get("base_url", "").strip()
+        if not base_url:
+            return ""
+        host = (urlsplit(base_url).hostname or "").lower()
+        allowed_hosts = {
+            GenerationRequest.Provider.OPENAI: {"api.openai.com"},
+            GenerationRequest.Provider.OPENROUTER: {"openrouter.ai"},
+            GenerationRequest.Provider.AGNES: {"apihub.agnes-ai.com"},
+            GenerationRequest.Provider.OLLAMA: {"localhost", "127.0.0.1", "::1"},
+        }
+        provider_hosts = allowed_hosts.get(self.instance.provider, set())
+        if host not in provider_hosts:
+            raise forms.ValidationError("This provider URL is not in the security allowlist.")
+        return base_url.rstrip("/")

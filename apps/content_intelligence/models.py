@@ -3,6 +3,7 @@ import uuid
 from django.conf import settings
 from django.db import models
 
+from apps.common.encryption import EncryptedTextField
 from apps.common.managers import WorkspaceScopedManager
 
 
@@ -99,6 +100,7 @@ class GenerationRequest(models.Model):
         GEMINI = "gemini", "Gemini"
         OPENROUTER = "openrouter", "OpenRouter"
         OLLAMA = "ollama", "Ollama"
+        AGNES = "agnes", "Agnes AI"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="generation_requests")
@@ -120,6 +122,10 @@ class GenerationRequest(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    input_tokens = models.PositiveIntegerField(default=0)
+    output_tokens = models.PositiveIntegerField(default=0)
+    estimated_cost_usd = models.DecimalField(max_digits=10, decimal_places=6, default=0)
     objects = WorkspaceScopedManager()
 
     class Meta:
@@ -157,3 +163,30 @@ class GeneratedContent(models.Model):
         db_table = "content_intelligence_generated_content"
         ordering = ["-created_at", "variant"]
         constraints = [models.UniqueConstraint(fields=["request", "variant"], name="unique_generation_output_variant")]
+
+
+class AIProviderConfiguration(models.Model):
+    organization = models.ForeignKey(
+        "organizations.Organization", on_delete=models.CASCADE, related_name="ai_provider_configurations"
+    )
+    provider = models.CharField(max_length=20, choices=GenerationRequest.Provider.choices)
+    api_key = EncryptedTextField(blank=True, default="")
+    default_model = models.CharField(max_length=120, blank=True, default="")
+    base_url = models.URLField(blank=True, default="")
+    is_enabled = models.BooleanField(default=False)
+    daily_request_limit = models.PositiveIntegerField(default=100)
+    timeout_seconds = models.PositiveSmallIntegerField(default=60)
+    max_retries = models.PositiveSmallIntegerField(default=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "content_intelligence_ai_provider_configuration"
+        constraints = [
+            models.UniqueConstraint(fields=["organization", "provider"], name="unique_ai_provider_per_org")
+        ]
+        ordering = ["provider"]
+
+    @property
+    def is_configured(self):
+        return self.is_enabled and (bool(self.api_key) or self.provider == GenerationRequest.Provider.OLLAMA)

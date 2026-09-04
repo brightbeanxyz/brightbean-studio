@@ -9,10 +9,10 @@ from apps.brands.forms import EditorialStrategyForm
 from apps.brands.models import BrandProfile, EditorialStrategy
 from apps.brands.services import save_editorial_strategy
 
-from .forms import ContentPlanForm, GenerationForm
+from .forms import AIProviderConfigurationForm, ContentPlanForm, GenerationForm
+from .generation import configured_providers, queue_generation
 from .generation import create_composer_draft as create_composer_draft_service
-from .generation import request_generation
-from .models import ContentPlan, GeneratedContent
+from .models import AIProviderConfiguration, ContentPlan, GeneratedContent, GenerationRequest
 from .providers import ProviderError
 from .services import create_content_plan
 
@@ -108,10 +108,12 @@ def generate(request, workspace_id, brand_id):
     if not request.workspace_membership.effective_permissions.get("create_posts", False):
         raise PermissionDenied("Permission denied: create_posts")
     brand = _get_brand(request, brand_id)
-    form = GenerationForm(request.POST or None)
+    configurations = list(configured_providers(request.workspace.organization))
+    provider_choices = [(item.provider, item.get_provider_display()) for item in configurations]
+    form = GenerationForm(request.POST or None, provider_choices=provider_choices)
     if request.method == "POST" and form.is_valid():
         try:
-            _, output = request_generation(
+            generation_request = queue_generation(
                 brand=brand,
                 provider=form.cleaned_data["provider"],
                 platform=form.cleaned_data["platform"],
@@ -124,12 +126,12 @@ def generate(request, workspace_id, brand_id):
         except (ProviderError, ValueError) as exc:
             messages.error(request, str(exc))
         else:
-            messages.success(request, "Generated content saved as draft for review.")
+            messages.success(request, "Generation queued. This page updates when the draft is ready.")
             return redirect(
-                "content_intelligence:generated_detail",
+                "content_intelligence:generation_request_detail",
                 workspace_id=request.workspace.id,
                 brand_id=brand.id,
-                content_id=output.id,
+                request_id=generation_request.id,
             )
     return render(
         request,
@@ -138,6 +140,7 @@ def generate(request, workspace_id, brand_id):
             "workspace": request.workspace,
             "brand": brand,
             "form": form,
+            "has_configured_providers": bool(configurations),
             "settings_active": "brands",
         },
     )
@@ -157,6 +160,84 @@ def generated_detail(request, workspace_id, brand_id, content_id):
         "content_intelligence/generated_detail.html",
         {"workspace": request.workspace, "brand": brand, "output": output, "settings_active": "brands"},
     )
+
+
+@login_required
+def generation_history(request, workspace_id, brand_id):
+    brand = _get_brand(request, brand_id)
+    requests = GenerationRequest.objects.filter(workspace=request.workspace, brand=brand).prefetch_related("outputs")[:100]
+    return render(request, "content_intelligence/generation_history.html", {"workspace": request.workspace, "brand": brand, "generation_requests": requests, "settings_active": "brands"})
+
+
+@login_required
+def generation_request_detail(request, workspace_id, brand_id, request_id):
+    brand = _get_brand(request, brand_id)
+    try:
+        generation_request = GenerationRequest.objects.prefetch_related("outputs").get(
+            id=request_id, workspace=request.workspace, brand=brand
+        )
+    except GenerationRequest.DoesNotExist:
+        raise Http404 from None
+    output = generation_request.outputs.first()
+    if output:
+        return redirect("content_intelligence:generated_detail", workspace_id=request.workspace.id, brand_id=brand.id, content_id=output.id)
+    return render(request, "content_intelligence/generation_request_detail.html", {"workspace": request.workspace, "brand": brand, "generation_request": generation_request, "settings_active": "brands"})
+
+
+@login_required
+@require_POST
+def retry_generation(request, workspace_id, brand_id, request_id):
+    if not request.workspace_membership.effective_permissions.get("create_posts", False):
+        raise PermissionDenied("Permission denied: create_posts")
+    brand = _get_brand(request, brand_id)
+    try:
+        previous = GenerationRequest.objects.get(id=request_id, workspace=request.workspace, brand=brand)
+    except GenerationRequest.DoesNotExist:
+        raise Http404 from None
+    context = previous.context or {}
+    retried = queue_generation(
+        brand=brand,
+        provider=previous.provider,
+        platform=previous.platform,
+        content_type=previous.content_type,
+        user=request.user,
+        model=previous.model,
+        audience=previous.audience,
+        instruction=context.get("instruction", ""),
+        previous_content=context.get("previous_content", []),
+        analytics=context.get("analytics", {}),
+    )
+    messages.success(request, "Generation queued again.")
+    return redirect(
+        "content_intelligence:generation_request_detail",
+        workspace_id=request.workspace.id,
+        brand_id=brand.id,
+        request_id=retried.id,
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def provider_settings(request, workspace_id):
+    if not request.workspace_membership.effective_permissions.get("manage_workspace_settings", False):
+        raise PermissionDenied("Permission denied: manage_workspace_settings")
+    provider = request.POST.get("provider") if request.method == "POST" else request.GET.get("provider", "openai")
+    if provider not in GenerationRequest.Provider.values:
+        raise Http404
+    configuration, _ = AIProviderConfiguration.objects.get_or_create(
+        organization=request.workspace.organization, provider=provider
+    )
+    old_key = configuration.api_key
+    form = AIProviderConfigurationForm(request.POST or None, instance=configuration)
+    if request.method == "POST" and form.is_valid():
+        saved = form.save(commit=False)
+        if not form.cleaned_data["api_key"]:
+            saved.api_key = old_key
+        if not form.errors:
+            saved.save()
+            messages.success(request, f"{configuration.get_provider_display()} settings saved.")
+            return redirect(f"{request.path}?provider={provider}")
+    return render(request, "content_intelligence/provider_settings.html", {"workspace": request.workspace, "configuration": configuration, "form": form, "providers": GenerationRequest.Provider.choices, "settings_active": "brands"})
 
 
 @login_required
