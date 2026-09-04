@@ -470,6 +470,8 @@ function calendarApp() {
         activeView: '{{ view_type }}',
         draggedPlatformPostId: null,
         calendarFilters: {
+            brand: '{{ active_filters.brand|default:"" }}',
+            campaign: '{{ active_filters.campaign|default:"" }}',
             status: '{{ active_filters.statuses.0|default:"" }}',
             channels: [],
             tag: '{{ active_filters.tags.0|default:"" }}',
@@ -485,6 +487,8 @@ function calendarApp() {
             params.set('mode', 'calendar');
             params.set('view', this.activeView);
             params.set('date', '{{ target_date|date:"Y-m-d" }}');
+            if (this.calendarFilters.brand) params.set('brand', this.calendarFilters.brand);
+            if (this.calendarFilters.campaign) params.set('campaign', this.calendarFilters.campaign);
             if (this.calendarFilters.status) params.set('status', this.calendarFilters.status);
             this.calendarFilters.channels.forEach(c => params.append('channel', c));
             if (this.calendarFilters.tag) params.set('tag', this.calendarFilters.tag);
@@ -616,6 +620,8 @@ function calendarApp() {
 function publishList() {
     return {
         activeTab: '{{ active_tab|default:"queue" }}',
+        activeBrand: '{{ active_filters.brand|default:"" }}',
+        activeCampaign: '{{ active_filters.campaign|default:"" }}',
         selectedChannels: [],
         activeTag: '',
         displayTimezone: '{{ display_timezone|default:"UTC" }}',
@@ -643,6 +649,8 @@ function publishList() {
             // user can no longer see.
             Alpine.store('sel').clear();
             const params = new URLSearchParams();
+            if (this.activeBrand) params.set('brand', this.activeBrand);
+            if (this.activeCampaign) params.set('campaign', this.activeCampaign);
             this.selectedChannels.forEach(c => params.append('channel', c));
             if (this.activeTag) params.set('tag', this.activeTag);
             if (this.displayTimezone) params.set('tz', this.displayTimezone);

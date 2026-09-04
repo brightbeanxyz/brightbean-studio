@@ -29,6 +29,10 @@ Tab switching is HTMX partial swaps only - no full page reload.
 
         <!-- Right: filter dropdowns -->
         <div class="flex items-center gap-2 pb-2 overflow-x-auto flex-shrink-0">
+            {% ui_select model="activeBrand" options=brands onchange="reloadTab()" placeholder="All Brands" %}
+
+            {% ui_select model="activeCampaign" options=campaigns onchange="reloadTab()" placeholder="All Campaigns" %}
+
             <!-- Channels filter (multi-select) -->
             {% ui_select model="selectedChannels" options=channels_with_posts multiple=True onchange="reloadTab()" placeholder="Channels" icon="channel" label_field="display_label" icon_field="platform" %}
 
