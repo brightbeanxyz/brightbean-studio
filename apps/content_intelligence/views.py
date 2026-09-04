@@ -12,6 +12,9 @@ from apps.brands.services import save_editorial_strategy
 from .forms import ContentPlanForm
 from .models import ContentPlan
 from .services import create_content_plan
+from .generation import request_generation
+from .models import GeneratedContent, GenerationRequest
+from .providers import ProviderError
 
 
 def _can_manage(request):
@@ -96,4 +99,60 @@ def plan_detail(request, workspace_id, brand_id, plan_id):
         request,
         "content_intelligence/plan_detail.html",
         {"workspace": request.workspace, "brand": brand, "plan": plan, "settings_active": "brands"},
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def generate(request, workspace_id, brand_id):
+    if not request.workspace_membership.effective_permissions.get("create_posts", False):
+        raise PermissionDenied("Permission denied: create_posts")
+    brand = _get_brand(request, brand_id)
+    if request.method == "POST":
+        try:
+            _, output = request_generation(
+                brand=brand,
+                provider=request.POST.get("provider", "").strip().lower(),
+                platform=request.POST.get("platform", "linkedin"),
+                content_type=request.POST.get("content_type", "post"),
+                user=request.user,
+                model=request.POST.get("model", "").strip(),
+                audience=request.POST.get("audience", ""),
+                instruction=request.POST.get("instruction", ""),
+            )
+        except (ProviderError, ValueError) as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, "Generated content saved as draft for review.")
+            return redirect(
+                "content_intelligence:generated_detail",
+                workspace_id=request.workspace.id,
+                brand_id=brand.id,
+                content_id=output.id,
+            )
+    return render(
+        request,
+        "content_intelligence/generate.html",
+        {
+            "workspace": request.workspace,
+            "brand": brand,
+            "providers": GenerationRequest.Provider.choices,
+            "settings_active": "brands",
+        },
+    )
+
+
+@login_required
+def generated_detail(request, workspace_id, brand_id, content_id):
+    brand = _get_brand(request, brand_id)
+    try:
+        output = GeneratedContent.objects.select_related("request").get(
+            id=content_id, workspace=request.workspace, brand=brand
+        )
+    except GeneratedContent.DoesNotExist:
+        raise Http404 from None
+    return render(
+        request,
+        "content_intelligence/generated_detail.html",
+        {"workspace": request.workspace, "brand": brand, "output": output, "settings_active": "brands"},
     )

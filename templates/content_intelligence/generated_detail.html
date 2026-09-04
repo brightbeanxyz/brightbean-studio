@@ -1,0 +1,3 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Generated draft - {{ brand.name }}{% endblock %}
+{% block content %}<div class="max-w-3xl"><h2 class="text-xl font-semibold mb-6">Generated draft</h2><p class="text-sm">{{ output.platform }} · {{ output.content_type }} · {{ output.status }}</p><article class="rounded-xl p-6 whitespace-pre-wrap" style="border:1px solid var(--border);background:var(--surface-0);">{{ output.body }}</article><p class="text-sm mt-4">This remains a draft until existing approval and scheduling flows accept it.</p></div>{% endblock %}

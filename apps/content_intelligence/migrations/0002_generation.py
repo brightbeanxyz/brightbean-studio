@@ -1,0 +1,14 @@
+import uuid
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+class Migration(migrations.Migration):
+    dependencies = [("content_intelligence", "0001_initial"), migrations.swappable_dependency(settings.AUTH_USER_MODEL)]
+    operations = [
+        migrations.CreateModel(name="GenerationRequest", fields=[
+            ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)), ("provider", models.CharField(max_length=20)), ("model", models.CharField(blank=True, default="", max_length=120)), ("platform", models.CharField(max_length=20)), ("content_type", models.CharField(max_length=50)), ("audience", models.TextField(blank=True, default="")), ("context", models.JSONField(blank=True, default=dict)), ("status", models.CharField(default="pending", max_length=12)), ("error_message", models.TextField(blank=True, default="")), ("created_at", models.DateTimeField(auto_now_add=True)), ("completed_at", models.DateTimeField(blank=True, null=True)), ("brand", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="generation_requests", to="brands.brandprofile")), ("requested_by", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="content_generation_requests", to=settings.AUTH_USER_MODEL)), ("workspace", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="generation_requests", to="workspaces.workspace"))], options={"db_table": "content_intelligence_generation_request", "ordering": ["-created_at"]}),
+        migrations.CreateModel(name="GeneratedContent", fields=[
+            ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)), ("platform", models.CharField(max_length=20)), ("content_type", models.CharField(max_length=50)), ("variant", models.PositiveSmallIntegerField(default=1)), ("title", models.CharField(blank=True, default="", max_length=255)), ("body", models.TextField()), ("status", models.CharField(default="draft", max_length=10)), ("metadata", models.JSONField(blank=True, default=dict)), ("created_at", models.DateTimeField(auto_now_add=True)), ("brand", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="generated_content", to="brands.brandprofile")), ("request", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="outputs", to="content_intelligence.generationrequest")), ("workspace", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="generated_content", to="workspaces.workspace"))], options={"db_table": "content_intelligence_generated_content", "ordering": ["-created_at", "variant"]}),
+        migrations.AddConstraint(model_name="generatedcontent", constraint=models.UniqueConstraint(fields=("request", "variant"), name="unique_generation_output_variant")),
+    ]
