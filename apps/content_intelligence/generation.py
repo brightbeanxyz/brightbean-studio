@@ -263,3 +263,51 @@ def create_composer_draft_from_plan_item(*, item_id, workspace, user):
     item.composer_post = post
     item.save(update_fields=["composer_post"])
     return post, True
+
+
+@transaction.atomic
+def schedule_plan_item_draft(*, item_id, workspace, user, social_account_id=""):
+    """Schedule a plan draft on one connected compatible social account."""
+    from apps.composer.models import PlatformPost
+    from apps.social_accounts.models import SocialAccount
+
+    from .models import ContentPlanItem
+
+    item = (
+        ContentPlanItem.objects.select_for_update()
+        .select_related("plan__brand", "plan__campaign", "composer_post")
+        .get(id=item_id, plan__workspace=workspace)
+    )
+    if not item.composer_post_id:
+        post, _ = create_composer_draft_from_plan_item(item_id=item.id, workspace=workspace, user=user)
+        item.refresh_from_db()
+    else:
+        post = item.composer_post
+    platform = item.recommended_platform
+    accounts = SocialAccount.objects.filter(
+        workspace=workspace, connection_status=SocialAccount.ConnectionStatus.CONNECTED
+    )
+    if social_account_id:
+        accounts = accounts.filter(id=social_account_id)
+    candidates = [account for account in accounts.order_by("platform", "account_name")
+                  if account.platform == platform or account.platform.startswith(f"{platform}_")]
+    if not candidates:
+        raise ValueError(f"No connected {platform} account is available for scheduling.")
+    account = candidates[0]
+    scheduled_at = post.proposed_publish_at
+    if not scheduled_at:
+        raise ValueError("The draft has no proposed publication date.")
+    pp, created = PlatformPost.objects.get_or_create(
+        post=post, social_account=account,
+        defaults={"status": PlatformPost.Status.SCHEDULED, "scheduled_at": scheduled_at},
+    )
+    if not created and pp.status != PlatformPost.Status.SCHEDULED:
+        if not pp.can_transition_to(PlatformPost.Status.SCHEDULED):
+            raise ValueError("This platform post cannot be scheduled in its current status.")
+        pp.transition_to(PlatformPost.Status.SCHEDULED)
+        pp.scheduled_at = scheduled_at
+        pp.save(update_fields=["status", "scheduled_at", "updated_at"])
+    from apps.composer.services import sync_post_scheduled_at
+
+    sync_post_scheduled_at(post)
+    return post, pp, created

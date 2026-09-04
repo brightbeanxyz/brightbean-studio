@@ -17,6 +17,11 @@ urlpatterns = [
         views.create_plan_item_draft,
         name="create_plan_item_draft",
     ),
+    path(
+        "<uuid:brand_id>/plans/<uuid:plan_id>/items/<uuid:item_id>/schedule/",
+        views.schedule_plan_item,
+        name="schedule_plan_item",
+    ),
     path("<uuid:brand_id>/generate/", views.generate, name="generate"),
     path("<uuid:brand_id>/generations/", views.generation_history, name="generation_history"),
     path("<uuid:brand_id>/generations/<uuid:request_id>/", views.generation_request_detail, name="generation_request_detail"),

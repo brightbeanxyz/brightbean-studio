@@ -19,6 +19,7 @@ from .generation import (
     configured_providers,
     create_composer_draft_from_plan_item,
     queue_generation,
+    schedule_plan_item_draft,
 )
 from .generation import (
     create_composer_draft as create_composer_draft_service,
@@ -198,6 +199,36 @@ def create_plan_item_draft(request, workspace_id, brand_id, plan_id, item_id):
         item_id=item.id, workspace=request.workspace, user=request.user
     )
     messages.success(request, "Editorial plan item moved to Composer." if created else "Draft already exists in Composer.")
+    return redirect("composer:compose_edit", workspace_id=request.workspace.id, post_id=post.id)
+
+
+@login_required
+@require_POST
+def schedule_plan_item(request, workspace_id, brand_id, plan_id, item_id):
+    if not request.workspace_membership.effective_permissions.get("publish_directly", False):
+        raise PermissionDenied("Permission denied: publish_directly")
+    brand = _get_brand(request, brand_id)
+    try:
+        item = ContentPlanItem.objects.get(
+            id=item_id, plan_id=plan_id, plan__workspace=request.workspace, plan__brand=brand
+        )
+        post, _, created = schedule_plan_item_draft(
+            item_id=item.id,
+            workspace=request.workspace,
+            user=request.user,
+            social_account_id=request.POST.get("social_account_id", ""),
+        )
+    except ContentPlanItem.DoesNotExist:
+        raise Http404 from None
+    except ValueError as exc:
+        messages.error(request, str(exc))
+        return redirect(
+            "content_intelligence:plan_detail",
+            workspace_id=request.workspace.id,
+            brand_id=brand.id,
+            plan_id=plan_id,
+        )
+    messages.success(request, "Draft scheduled in the editorial calendar." if created else "Draft already scheduled.")
     return redirect("composer:compose_edit", workspace_id=request.workspace.id, post_id=post.id)
 
 
