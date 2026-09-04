@@ -3,7 +3,7 @@ from urllib.parse import urlsplit
 from django import forms
 from django.utils import timezone
 
-from .models import AIProviderConfiguration, ContentPlan, GenerationRequest
+from .models import AIProviderConfiguration, ContentPlan, GenerationRequest, VisualBrief
 
 
 class ContentPlanForm(forms.Form):
@@ -79,3 +79,30 @@ class AIProviderConfigurationForm(forms.ModelForm):
         if host not in provider_hosts:
             raise forms.ValidationError("This provider URL is not in the security allowlist.")
         return base_url.rstrip("/")
+
+
+class VisualBriefForm(forms.ModelForm):
+    colors_text = forms.CharField(required=False, label="Colors", help_text="Comma-separated brand colors.")
+
+    class Meta:
+        model = VisualBrief
+        fields = ["provider", "model", "objective", "style", "format", "constraints"]
+        widgets = {
+            "objective": forms.Textarea(attrs={"rows": 4}),
+            "constraints": forms.Textarea(attrs={"rows": 3}),
+            "format": forms.Select(choices=[("square", "Square"), ("portrait", "Portrait"), ("landscape", "Landscape")]),
+        }
+
+    def __init__(self, *args, provider_choices=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if provider_choices is not None:
+            self.fields["provider"].choices = provider_choices
+        for field in self.fields.values():
+            field.widget.attrs["class"] = "form-input w-full"
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        instance.colors = [value.strip() for value in self.cleaned_data.get("colors_text", "").split(",") if value.strip()]
+        if commit:
+            instance.save()
+        return instance

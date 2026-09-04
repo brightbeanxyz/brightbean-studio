@@ -190,3 +190,50 @@ class AIProviderConfiguration(models.Model):
     @property
     def is_configured(self):
         return self.is_enabled and (bool(self.api_key) or self.provider == GenerationRequest.Provider.OLLAMA)
+
+
+class VisualBrief(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    class Provider(models.TextChoices):
+        OPENAI = "openai", "OpenAI"
+        AGNES = "agnes", "Agnes AI"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="visual_briefs")
+    brand = models.ForeignKey("brands.BrandProfile", on_delete=models.CASCADE, related_name="visual_briefs")
+    generation_request = models.ForeignKey(
+        GenerationRequest, on_delete=models.SET_NULL, null=True, blank=True, related_name="visual_briefs"
+    )
+    generated_content = models.ForeignKey(
+        GeneratedContent, on_delete=models.SET_NULL, null=True, blank=True, related_name="visual_briefs"
+    )
+    post = models.ForeignKey("composer.Post", on_delete=models.SET_NULL, null=True, blank=True, related_name="visual_briefs")
+    media_asset = models.ForeignKey(
+        "media_library.MediaAsset", on_delete=models.SET_NULL, null=True, blank=True, related_name="visual_briefs"
+    )
+    provider = models.CharField(max_length=20, choices=Provider.choices)
+    model = models.CharField(max_length=120, blank=True, default="")
+    objective = models.TextField()
+    style = models.CharField(max_length=120, blank=True, default="")
+    format = models.CharField(max_length=40, default="square")
+    colors = models.JSONField(default=list, blank=True)
+    constraints = models.TextField(blank=True, default="")
+    prompt = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING, db_index=True)
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    error_message = models.TextField(blank=True, default="")
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="visual_briefs"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    objects = WorkspaceScopedManager()
+
+    class Meta:
+        db_table = "content_intelligence_visual_brief"
+        ordering = ["-created_at"]

@@ -9,12 +9,13 @@ from apps.brands.forms import EditorialStrategyForm
 from apps.brands.models import BrandProfile, EditorialStrategy
 from apps.brands.services import save_editorial_strategy
 
-from .forms import AIProviderConfigurationForm, ContentPlanForm, GenerationForm
+from .forms import AIProviderConfigurationForm, ContentPlanForm, GenerationForm, VisualBriefForm
 from .generation import configured_providers, queue_generation
 from .generation import create_composer_draft as create_composer_draft_service
-from .models import AIProviderConfiguration, ContentPlan, GeneratedContent, GenerationRequest
+from .models import AIProviderConfiguration, ContentPlan, GeneratedContent, GenerationRequest, VisualBrief
 from .providers import ProviderError
 from .services import create_content_plan
+from .visuals import image_provider_configurations, queue_visual_brief
 
 
 def _can_manage(request):
@@ -254,3 +255,90 @@ def create_composer_draft(request, workspace_id, brand_id, content_id):
     if created:
         messages.success(request, "AI draft moved to Composer for review.")
     return redirect("composer:compose_edit", workspace_id=request.workspace.id, post_id=post.id)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def visual_brief_create(request, workspace_id, brand_id):
+    if not request.workspace_membership.effective_permissions.get("create_posts", False):
+        raise PermissionDenied("Permission denied: create_posts")
+    brand = _get_brand(request, brand_id)
+    configurations = image_provider_configurations(request.workspace.organization)
+    provider_choices = [(item.provider, item.get_provider_display()) for item in configurations]
+    output = None
+    output_id = request.POST.get("generated_content") or request.GET.get("generated_content")
+    if output_id:
+        try:
+            output = GeneratedContent.objects.select_related("composer_post").get(
+                id=output_id, workspace=request.workspace, brand=brand
+            )
+        except (GeneratedContent.DoesNotExist, ValueError):
+            raise Http404 from None
+    form = VisualBriefForm(request.POST or None, provider_choices=provider_choices)
+    if request.method == "POST" and form.is_valid():
+        brief = form.save(commit=False)
+        brief.workspace = request.workspace
+        brief.brand = brand
+        brief.generated_content = output
+        brief.generation_request = output.request if output else None
+        brief.post = output.composer_post if output else None
+        brief.requested_by = request.user
+        brief.save()
+        try:
+            queue_visual_brief(brief=brief)
+        except (AIProviderConfiguration.DoesNotExist, ValueError) as exc:
+            brief.delete()
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, "Visual generation queued for human review.")
+            return redirect(
+                "content_intelligence:visual_brief_detail",
+                workspace_id=request.workspace.id,
+                brand_id=brand.id,
+                brief_id=brief.id,
+            )
+    return render(request, "content_intelligence/visual_brief_form.html", {"workspace": request.workspace, "brand": brand, "form": form, "output": output, "has_configured_providers": bool(configurations), "settings_active": "brands"})
+
+
+@login_required
+def visual_brief_detail(request, workspace_id, brand_id, brief_id):
+    brand = _get_brand(request, brand_id)
+    try:
+        brief = VisualBrief.objects.select_related("media_asset", "post").get(
+            id=brief_id, workspace=request.workspace, brand=brand
+        )
+    except VisualBrief.DoesNotExist:
+        raise Http404 from None
+    return render(request, "content_intelligence/visual_brief_detail.html", {"workspace": request.workspace, "brand": brand, "brief": brief, "settings_active": "brands"})
+
+
+@login_required
+def visual_brief_history(request, workspace_id, brand_id):
+    brand = _get_brand(request, brand_id)
+    briefs = VisualBrief.objects.filter(workspace=request.workspace, brand=brand).select_related("media_asset")[:100]
+    return render(request, "content_intelligence/visual_brief_history.html", {"workspace": request.workspace, "brand": brand, "briefs": briefs, "settings_active": "brands"})
+
+
+@login_required
+@require_POST
+def visual_brief_retry(request, workspace_id, brand_id, brief_id):
+    if not request.workspace_membership.effective_permissions.get("create_posts", False):
+        raise PermissionDenied("Permission denied: create_posts")
+    brand = _get_brand(request, brand_id)
+    try:
+        previous = VisualBrief.objects.get(id=brief_id, workspace=request.workspace, brand=brand)
+    except VisualBrief.DoesNotExist:
+        raise Http404 from None
+    brief = VisualBrief.objects.create(
+        workspace=request.workspace, brand=brand, generation_request=previous.generation_request,
+        generated_content=previous.generated_content, post=previous.post, provider=previous.provider,
+        model=previous.model, objective=previous.objective, style=previous.style, format=previous.format,
+        colors=previous.colors, constraints=previous.constraints, requested_by=request.user,
+    )
+    try:
+        queue_visual_brief(brief=brief)
+    except (AIProviderConfiguration.DoesNotExist, ValueError) as exc:
+        brief.delete()
+        messages.error(request, str(exc))
+        return redirect("content_intelligence:visual_brief_detail", workspace_id=request.workspace.id, brand_id=brand.id, brief_id=previous.id)
+    return redirect("content_intelligence:visual_brief_detail", workspace_id=request.workspace.id, brand_id=brand.id, brief_id=brief.id)

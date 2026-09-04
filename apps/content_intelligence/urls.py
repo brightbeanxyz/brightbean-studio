@@ -13,6 +13,10 @@ urlpatterns = [
     path("<uuid:brand_id>/generations/<uuid:request_id>/", views.generation_request_detail, name="generation_request_detail"),
     path("<uuid:brand_id>/generations/<uuid:request_id>/retry/", views.retry_generation, name="retry_generation"),
     path("<uuid:brand_id>/generated/<uuid:content_id>/", views.generated_detail, name="generated_detail"),
+    path("<uuid:brand_id>/visuals/new/", views.visual_brief_create, name="visual_brief_create"),
+    path("<uuid:brand_id>/visuals/", views.visual_brief_history, name="visual_brief_history"),
+    path("<uuid:brand_id>/visuals/<uuid:brief_id>/", views.visual_brief_detail, name="visual_brief_detail"),
+    path("<uuid:brand_id>/visuals/<uuid:brief_id>/retry/", views.visual_brief_retry, name="visual_brief_retry"),
     path(
         "<uuid:brand_id>/generated/<uuid:content_id>/composer/",
         views.create_composer_draft,
