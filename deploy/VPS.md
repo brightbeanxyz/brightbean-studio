@@ -28,3 +28,13 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec postgres pg
 ```
 
 O PostgreSQL não é exposto publicamente no perfil de produção. O Caddy termina TLS automaticamente para `APP_DOMAIN`; atualize o domínio no `.env` antes do primeiro deploy.
+
+## Uso interno sem domínio
+
+O perfil de produção vincula app e Caddy apenas a `127.0.0.1`. Acesse a VPS por túnel SSH:
+
+```bash
+ssh -N -L 8443:127.0.0.1:443 root@SEU_IP
+```
+
+Depois abra `https://localhost:8443`. O navegador poderá pedir confirmação do certificado interno do Caddy; isso é esperado em uma instalação sem domínio público.

@@ -15,6 +15,8 @@ services:
     command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2
     volumes:
       - media_data:/app/media
+    ports:
+      - "127.0.0.1:8000:8000"
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
     depends_on:
@@ -45,8 +47,8 @@ services:
   caddy:
     image: caddy:2-alpine
     ports:
-      - "80:80"
-      - "443:443"
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
