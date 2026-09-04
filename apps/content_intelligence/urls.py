@@ -5,6 +5,10 @@ from . import views
 app_name = "content_intelligence"
 urlpatterns = [
     path("ai-settings/", views.provider_settings, name="provider_settings"),
+    path("library/", views.content_library, name="content_library"),
+    path("library/action/", views.content_library_action, name="content_library_action"),
+    path("library/bulk/", views.content_library_bulk, name="content_library_bulk"),
+    path("campaigns/new/", views.campaign_create, name="campaign_create"),
     path("<uuid:brand_id>/strategy/", views.strategy, name="strategy"),
     path("<uuid:brand_id>/plans/new/", views.plan_create, name="plan_create"),
     path("<uuid:brand_id>/plans/<uuid:plan_id>/", views.plan_detail, name="plan_detail"),

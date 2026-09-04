@@ -19,6 +19,9 @@ class ContentPlan(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="content_plans")
     brand = models.ForeignKey("brands.BrandProfile", on_delete=models.CASCADE, related_name="content_plans")
+    campaign = models.ForeignKey(
+        "Campaign", on_delete=models.SET_NULL, null=True, blank=True, related_name="content_plans"
+    )
     strategy_version = models.ForeignKey(
         "brands.EditorialStrategyVersion", on_delete=models.PROTECT, related_name="content_plans"
     )
@@ -142,6 +145,9 @@ class GeneratedContent(models.Model):
     request = models.ForeignKey(GenerationRequest, on_delete=models.CASCADE, related_name="outputs")
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="generated_content")
     brand = models.ForeignKey("brands.BrandProfile", on_delete=models.CASCADE, related_name="generated_content")
+    campaign = models.ForeignKey(
+        "Campaign", on_delete=models.SET_NULL, null=True, blank=True, related_name="generated_content"
+    )
     composer_post = models.OneToOneField(
         "composer.Post",
         on_delete=models.SET_NULL,
@@ -157,12 +163,39 @@ class GeneratedContent(models.Model):
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT, db_index=True)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    archived_at = models.DateTimeField(null=True, blank=True, db_index=True)
     objects = WorkspaceScopedManager()
 
     class Meta:
         db_table = "content_intelligence_generated_content"
         ordering = ["-created_at", "variant"]
         constraints = [models.UniqueConstraint(fields=["request", "variant"], name="unique_generation_output_variant")]
+
+
+class Campaign(models.Model):
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        COMPLETED = "completed", "Completed"
+        ARCHIVED = "archived", "Archived"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="campaigns")
+    brand = models.ForeignKey(
+        "brands.BrandProfile", on_delete=models.SET_NULL, null=True, blank=True, related_name="campaigns"
+    )
+    name = models.CharField(max_length=160)
+    description = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.ACTIVE, db_index=True)
+    starts_at = models.DateField(null=True, blank=True)
+    ends_at = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    objects = WorkspaceScopedManager()
+
+    class Meta:
+        db_table = "content_intelligence_campaign"
+        ordering = ["name"]
+        constraints = [models.UniqueConstraint(fields=["workspace", "name"], name="unique_campaign_name_workspace")]
+        indexes = [models.Index(fields=["workspace", "status"], name="content_campaign_ws_status")]
 
 
 class AIProviderConfiguration(models.Model):

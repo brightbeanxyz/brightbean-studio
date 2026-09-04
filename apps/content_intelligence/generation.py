@@ -208,6 +208,9 @@ def create_composer_draft(*, output, user):
     post = Post.objects.create(
         workspace=locked_output.workspace,
         author=user,
+        origin=Post.Origin.AI,
+        brand=locked_output.brand,
+        campaign=locked_output.campaign,
         title=locked_output.title or f"AI draft - {locked_output.brand.name}",
         caption=locked_output.body,
         internal_notes=f"Generated with {locked_output.request.provider} via Social Content AI.",

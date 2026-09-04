@@ -616,6 +616,7 @@ def compose(request, workspace_id, post_id=None):
         "categories": categories,
         "queues": queues,
         "template_data_json": json.dumps(template_data) if template_data else "null",
+        "initial_origin": Post.Origin.TEMPLATE if template_data and not post else "",
         "workflow_mode": workflow_mode,
         "show_submit_button": show_submit_button,
         "show_resubmit_button": show_resubmit_button,
@@ -777,6 +778,8 @@ def save_post(request, workspace_id, post_id=None):
     post.workspace = workspace
     if not post_id:
         post.author = request.user
+        if request.POST.get("origin") == Post.Origin.TEMPLATE:
+            post.origin = Post.Origin.TEMPLATE
 
     pinterest_board_error = _validate_pinterest_board_selection(request, post, workspace)
     if pinterest_board_error is not None:
@@ -3282,6 +3285,7 @@ def csv_confirm_import(request, workspace_id):
             post = Post(
                 workspace=workspace,
                 author=request.user,
+                origin=Post.Origin.IMPORT,
                 caption=caption,
             )
             initial_pp_status = "draft"

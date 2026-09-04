@@ -3,7 +3,7 @@ from urllib.parse import urlsplit
 from django import forms
 from django.utils import timezone
 
-from .models import AIProviderConfiguration, ContentPlan, GenerationRequest, VisualBrief
+from .models import AIProviderConfiguration, Campaign, ContentPlan, GenerationRequest, VisualBrief
 
 
 class ContentPlanForm(forms.Form):
@@ -106,3 +106,26 @@ class VisualBriefForm(forms.ModelForm):
         if commit:
             instance.save()
         return instance
+
+
+class CampaignForm(forms.ModelForm):
+    class Meta:
+        model = Campaign
+        fields = ["name", "brand", "description", "status", "starts_at", "ends_at"]
+        widgets = {
+            "description": forms.Textarea(attrs={"rows": 3}),
+            "starts_at": forms.DateInput(attrs={"type": "date"}),
+            "ends_at": forms.DateInput(attrs={"type": "date"}),
+        }
+
+    def __init__(self, *args, workspace, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["brand"].queryset = self.fields["brand"].queryset.filter(workspace=workspace)
+        for field in self.fields.values():
+            field.widget.attrs["class"] = "form-input w-full"
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("starts_at") and cleaned.get("ends_at") and cleaned["ends_at"] < cleaned["starts_at"]:
+            raise forms.ValidationError("Campaign end date cannot precede its start date.")
+        return cleaned

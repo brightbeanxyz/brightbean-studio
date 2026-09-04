@@ -1,18 +1,23 @@
+import uuid
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from django.core.paginator import Paginator
 from django.http import Http404
 from django.shortcuts import redirect, render
+from django.utils import timezone
+from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_http_methods, require_POST
 
 from apps.brands.forms import EditorialStrategyForm
 from apps.brands.models import BrandProfile, EditorialStrategy
 from apps.brands.services import save_editorial_strategy
 
-from .forms import AIProviderConfigurationForm, ContentPlanForm, GenerationForm, VisualBriefForm
+from .forms import AIProviderConfigurationForm, CampaignForm, ContentPlanForm, GenerationForm, VisualBriefForm
 from .generation import configured_providers, queue_generation
 from .generation import create_composer_draft as create_composer_draft_service
-from .models import AIProviderConfiguration, ContentPlan, GeneratedContent, GenerationRequest, VisualBrief
+from .models import AIProviderConfiguration, Campaign, ContentPlan, GeneratedContent, GenerationRequest, VisualBrief
 from .providers import ProviderError
 from .services import create_content_plan
 from .visuals import image_provider_configurations, queue_visual_brief
@@ -342,3 +347,188 @@ def visual_brief_retry(request, workspace_id, brand_id, brief_id):
         messages.error(request, str(exc))
         return redirect("content_intelligence:visual_brief_detail", workspace_id=request.workspace.id, brand_id=brand.id, brief_id=previous.id)
     return redirect("content_intelligence:visual_brief_detail", workspace_id=request.workspace.id, brand_id=brand.id, brief_id=brief.id)
+
+
+def _library_filters(request, posts, generated):
+    brand = request.GET.get("brand", "")
+    campaign = request.GET.get("campaign", "")
+    platform = request.GET.get("platform", "")
+    origin = request.GET.get("origin", "")
+    status = request.GET.get("status", "")
+    archived = request.GET.get("archived", "active")
+    date_from = request.GET.get("from", "")
+    date_to = request.GET.get("to", "")
+    if brand and _is_uuid(brand):
+        posts, generated = posts.filter(brand_id=brand), generated.filter(brand_id=brand)
+    elif brand:
+        posts, generated = posts.none(), generated.none()
+    if campaign and _is_uuid(campaign):
+        posts, generated = posts.filter(campaign_id=campaign), generated.filter(campaign_id=campaign)
+    elif campaign:
+        posts, generated = posts.none(), generated.none()
+    if platform:
+        posts = posts.filter(platform_posts__social_account__platform=platform).distinct()
+        generated = generated.filter(platform=platform)
+    if origin:
+        posts = posts.filter(origin=origin)
+        if origin != "ai":
+            generated = generated.none()
+    if status:
+        posts = posts.filter(platform_posts__status=status).distinct()
+        generated = generated.filter(status=status)
+    if archived == "archived":
+        posts, generated = posts.filter(archived_at__isnull=False), generated.filter(archived_at__isnull=False)
+    elif archived == "all":
+        pass
+    else:
+        posts, generated = posts.filter(archived_at__isnull=True), generated.filter(archived_at__isnull=True)
+    if parse_date(date_from):
+        posts, generated = posts.filter(created_at__date__gte=date_from), generated.filter(created_at__date__gte=date_from)
+    if parse_date(date_to):
+        posts, generated = posts.filter(created_at__date__lte=date_to), generated.filter(created_at__date__lte=date_to)
+    return posts, generated
+
+
+def _is_uuid(value):
+    try:
+        uuid.UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        return False
+    return True
+
+
+@login_required
+def content_library(request, workspace_id):
+    from apps.brands.models import BrandProfile
+    from apps.composer.models import Post
+
+    posts = Post.objects.filter(workspace=request.workspace).select_related(
+        "brand", "campaign", "generated_source"
+    ).prefetch_related(
+        "media_attachments__media_asset", "platform_posts__social_account"
+    )
+    generated = GeneratedContent.objects.filter(workspace=request.workspace).select_related(
+        "brand", "campaign", "composer_post", "request"
+    ).prefetch_related("visual_briefs__media_asset")
+    posts, generated = _library_filters(request, posts, generated)
+    items = []
+    for post in posts:
+        media = next(iter(post.media_attachments.all()), None)
+        items.append({"kind": "post", "object": post, "created_at": post.created_at, "title": post.title,
+                      "body": post.caption, "origin": post.get_origin_display(), "media": media.media_asset if media else None,
+                      "tags": post.tags or [], "source": getattr(post, "generated_source", None)})
+    for output in generated:
+        visual = next((brief for brief in output.visual_briefs.all() if brief.media_asset_id), None)
+        items.append({"kind": "generated", "object": output, "created_at": output.created_at, "title": output.title,
+                      "body": output.body, "origin": "AI generated", "media": visual.media_asset if visual else None,
+                      "tags": (output.metadata or {}).get("tags", []), "source": output})
+    query = request.GET.get("q", "").strip().casefold()
+    if query:
+        items = [item for item in items if query in " ".join([
+            item["title"] or "", item["body"] or "", *[str(tag) for tag in item["tags"]]
+        ]).casefold()]
+    items.sort(key=lambda item: item["created_at"], reverse=True)
+    page = Paginator(items, 24).get_page(request.GET.get("page"))
+    return render(request, "content_intelligence/library.html", {
+        "workspace": request.workspace, "page": page,
+        "brands": BrandProfile.objects.filter(workspace=request.workspace),
+        "campaigns": Campaign.objects.filter(workspace=request.workspace),
+        "filters": request.GET, "settings_active": "content_library",
+    })
+
+
+@login_required
+@require_POST
+def content_library_action(request, workspace_id):
+    from apps.composer.models import Post
+    from apps.composer.services import clone_post
+
+    if not request.workspace_membership.effective_permissions.get("create_posts", False):
+        raise PermissionDenied("Permission denied: create_posts")
+    kind, object_id, action = request.POST.get("kind"), request.POST.get("id"), request.POST.get("action")
+    if kind == "post":
+        try:
+            item = Post.objects.get(id=object_id, workspace=request.workspace)
+        except (Post.DoesNotExist, ValueError):
+            raise Http404 from None
+        if action == "duplicate":
+            copy = clone_post(item, author=request.user)
+            return redirect("composer:compose_edit", workspace_id=request.workspace.id, post_id=copy.id)
+    elif kind == "generated":
+        try:
+            item = GeneratedContent.objects.select_related("request", "brand").get(id=object_id, workspace=request.workspace)
+        except (GeneratedContent.DoesNotExist, ValueError):
+            raise Http404 from None
+        if action == "reuse":
+            post, _ = create_composer_draft_service(output=item, user=request.user)
+            return redirect("composer:compose_edit", workspace_id=request.workspace.id, post_id=post.id)
+        if action == "regenerate":
+            old = item.request
+            context = old.context or {}
+            queued = queue_generation(brand=item.brand, provider=old.provider, platform=old.platform,
+                                      content_type=old.content_type, user=request.user, model=old.model,
+                                      audience=old.audience, instruction=context.get("instruction", ""))
+            return redirect("content_intelligence:generation_request_detail", workspace_id=request.workspace.id,
+                            brand_id=item.brand_id, request_id=queued.id)
+    else:
+        raise Http404
+    if action == "archive":
+        item.archived_at = timezone.now()
+        if kind == "generated":
+            item.status = GeneratedContent.Status.ARCHIVED
+            item.save(update_fields=["archived_at", "status"])
+        else:
+            item.save(update_fields=["archived_at"])
+    elif action == "restore":
+        item.archived_at = None
+        if kind == "generated":
+            item.status = GeneratedContent.Status.DRAFT
+            item.save(update_fields=["archived_at", "status"])
+        else:
+            item.save(update_fields=["archived_at"])
+    return redirect("content_intelligence:content_library", workspace_id=request.workspace.id)
+
+
+@login_required
+@require_POST
+def content_library_bulk(request, workspace_id):
+    from apps.composer.models import Post
+
+    if not request.workspace_membership.effective_permissions.get("create_posts", False):
+        raise PermissionDenied("Permission denied: create_posts")
+    post_ids, generated_ids = [], []
+    for value in request.POST.getlist("selected"):
+        kind, _, object_id = value.partition(":")
+        if _is_uuid(object_id):
+            (post_ids if kind == "post" else generated_ids if kind == "generated" else []).append(object_id)
+    if request.POST.get("action") == "assign_campaign":
+        try:
+            campaign = Campaign.objects.get(id=request.POST.get("campaign"), workspace=request.workspace)
+        except (Campaign.DoesNotExist, ValueError):
+            raise Http404 from None
+        Post.objects.filter(workspace=request.workspace, id__in=post_ids).update(campaign=campaign)
+        GeneratedContent.objects.filter(workspace=request.workspace, id__in=generated_ids).update(campaign=campaign)
+        messages.success(request, "Campaign assigned to selected items.")
+    else:
+        now = timezone.now()
+        Post.objects.filter(workspace=request.workspace, id__in=post_ids).update(archived_at=now)
+        GeneratedContent.objects.filter(workspace=request.workspace, id__in=generated_ids).update(
+            archived_at=now, status=GeneratedContent.Status.ARCHIVED
+        )
+        messages.success(request, "Selected library items archived.")
+    return redirect("content_intelligence:content_library", workspace_id=request.workspace.id)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def campaign_create(request, workspace_id):
+    if not request.workspace_membership.effective_permissions.get("create_posts", False):
+        raise PermissionDenied("Permission denied: create_posts")
+    form = CampaignForm(request.POST or None, workspace=request.workspace)
+    if request.method == "POST" and form.is_valid():
+        campaign = form.save(commit=False)
+        campaign.workspace = request.workspace
+        campaign.save()
+        messages.success(request, "Campaign created.")
+        return redirect("content_intelligence:content_library", workspace_id=request.workspace.id)
+    return render(request, "content_intelligence/campaign_form.html", {"workspace": request.workspace, "form": form, "settings_active": "brands"})
