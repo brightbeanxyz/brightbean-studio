@@ -232,7 +232,7 @@ def create_composer_draft_from_plan_item(*, item_id, workspace, user):
     from .models import ContentPlanItem
 
     item = (
-        ContentPlanItem.objects.select_for_update()
+        ContentPlanItem.objects.select_for_update(of=("self",))
         .select_related("plan__brand", "plan__campaign", "composer_post")
         .get(id=item_id, plan__workspace=workspace)
     )
@@ -269,15 +269,19 @@ def create_composer_draft_from_plan_item(*, item_id, workspace, user):
 def schedule_plan_item_draft(*, item_id, workspace, user, social_account_id=""):
     """Schedule a plan draft on one connected compatible social account."""
     from apps.composer.models import PlatformPost
+    from apps.composer.services import _require_approval_gate_passes
     from apps.social_accounts.models import SocialAccount
 
     from .models import ContentPlanItem
 
     item = (
-        ContentPlanItem.objects.select_for_update()
+        ContentPlanItem.objects.select_for_update(of=("self",))
         .select_related("plan__brand", "plan__campaign", "composer_post")
         .get(id=item_id, plan__workspace=workspace)
     )
+    # Use the same direct-scheduling gate as the Composer before creating
+    # drafts or changing any publication state.
+    _require_approval_gate_passes(workspace)
     if not item.composer_post_id:
         post, _ = create_composer_draft_from_plan_item(item_id=item.id, workspace=workspace, user=user)
         item.refresh_from_db()

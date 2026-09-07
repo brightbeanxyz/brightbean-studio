@@ -1,5 +1,8 @@
 # Social Content AI — auditoria arquitetural
 
+> Estado atual e validações: [acompanhamento da implementação](IMPLEMENTATION_STATUS.md).
+> A auditoria abaixo é um registro histórico da Fase 1.
+
 > Fase 1, revisão auditada `d85fce1`. Este documento registra a implementação
 > existente e o plano. Nenhuma feature das fases seguintes foi implementada.
 
