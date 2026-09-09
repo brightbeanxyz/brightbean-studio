@@ -1,18 +1,25 @@
+# Production override. Use with the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Adds Caddy (auto-HTTPS) in front, and closes the two host ports the dev
+# base file publishes — Gunicorn and Postgres must not be reachable from
+# the internet directly. APP_DOMAIN and POSTGRES_PASSWORD come from .env.
+
 services:
   migrate:
-    build: .
+    image: brightbean-studio:latest
     command: python manage.py migrate --noinput
-    env_file:
-      - .env
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/brightbean
     depends_on:
       postgres:
         condition: service_healthy
 
   app:
-    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2
+    # 1 vCPU box — 2 workers x 2 threads. Raise with the core count.
+    image: brightbean-studio:latest
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --threads 2
+    ports: !override []
     volumes:
       - media_data:/app/media
     environment:
@@ -23,6 +30,7 @@ services:
     restart: unless-stopped
 
   worker:
+    image: brightbean-studio:latest
     volumes:
       - media_data:/app/media
     environment:
@@ -33,6 +41,9 @@ services:
     restart: unless-stopped
 
   postgres:
+    ports: !override []
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     restart: unless-stopped
 
   caddy:
@@ -40,6 +51,8 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      - APP_DOMAIN=${APP_DOMAIN:?set APP_DOMAIN in .env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
