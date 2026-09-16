@@ -13,6 +13,7 @@ env = environ.Env(
     EMAIL_BACKEND_TYPE=(str, "smtp"),
     SENTRY_DSN=(str, ""),
     REDIS_URL=(str, ""),
+    METODO3R_IMPORT_ROOT=(str, ""),
 )
 
 environ.Env.read_env(BASE_DIR / ".env", overwrite=False)
@@ -21,6 +22,7 @@ SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
 ALLOWED_HOSTS = env("ALLOWED_HOSTS")
 APP_URL = env("APP_URL")
+METODO3R_IMPORT_ROOT = env("METODO3R_IMPORT_ROOT")
 
 # Application definition
 
