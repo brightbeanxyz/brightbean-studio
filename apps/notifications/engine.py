@@ -20,8 +20,12 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
+from django.db.models import Count, F, Min, Q
 from django.template.loader import render_to_string
 from django.utils import timezone
+
+from apps.common.mail import EmailNotSentError, send_or_raise
+from apps.settings_manager.defaults import APP_DEFAULTS
 
 from .models import (
     Channel,
@@ -31,6 +35,7 @@ from .models import (
     NotificationDelivery,
     NotificationPreference,
 )
+from .unsubscribe import list_unsubscribe_headers
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +45,55 @@ RETRY_BACKOFF_MINUTES = [1, 5, 30]
 # that accumulated before the periodic retry was scheduled drains gradually
 # across runs instead of bursting all at once.
 RETRY_BATCH_LIMIT = 200
+
+# Wait this long after the first failure before mailing, so the rest of a burst
+# lands in the same email. Read from ``org.email_batching_delay_minutes``, which
+# has described this behaviour in settings_manager since the beginning and
+# configured nothing until now — taking the value from there rather than
+# repeating it keeps the documented default and the real one from drifting.
+# ``.get`` rather than a subscript: that key had no readers before this module,
+# so a later cleanup could plausibly drop it, and a KeyError here would break
+# importing the app rather than just the digest.
+#
+# That key is org-scoped and a digest spans every workspace a user can see, so
+# this uses the application default rather than a per-org override; honouring
+# one needs a rule for which of a user's orgs wins, which is a separate
+# decision.
+BATCH_WINDOW_MINUTES = APP_DEFAULTS.get("org.email_batching_delay_minutes", 5)
+# ...unless this many are already waiting, which is a storm, not a trickle:
+# send immediately rather than letting the user watch it build.
+BATCH_SIZE_TRIGGER = 10
+# Never itemise more than this in one email; the rest become "and N more".
+BATCH_MAX_ITEMS = 20
+# Cap the work per run for the same reason RETRY_BATCH_LIMIT exists: a backlog
+# should drain across runs rather than become a storm of its own.
+BATCH_GROUP_LIMIT = 50
+# A claim older than this belonged to a run that died holding it. Same reasoning
+# as the publisher's stale-``publishing`` timeout: the row has to be reclaimable
+# or it is stranded for good.
+BATCH_CLAIM_TIMEOUT = timedelta(minutes=10)
+
+# Events whose email is collapsed into one message per user instead of one per
+# notification, and the heading each one gets. A broken integration fails every
+# scheduled post at once — one ``PlatformPost`` at a time, so a single revoked
+# token used to mean one email per post — and nobody needs to be told two
+# hundred times.
+#
+# The in-app notification is still created per post: the bell and the Publish
+# page are where the detail belongs, and nothing is lost by not mailing it.
+#
+# A batch is always one event type, so the heading is never a compromise
+# between two of them. Singular and plural are both spelled out because
+# "1 posts failed" is the kind of detail that makes an alert look automated and
+# ignorable.
+BATCH_HEADINGS: dict[str, tuple[str, str]] = {
+    EventType.POST_FAILED: ("{n} post failed to publish", "{n} posts failed to publish"),
+}
+
+# Derived, never maintained by hand: an event that is batched but has no
+# heading would silently mail "12 new notifications" instead of saying what
+# happened.
+BATCHED_EMAIL_EVENTS = frozenset(BATCH_HEADINGS)
 
 # Default channel enablement per event type.
 # Key: event_type, Value: dict of channel → default enabled.
@@ -112,11 +166,19 @@ def notify(
         channels_to_dispatch = [c for c in channels_to_dispatch if c == Channel.IN_APP]
 
     for channel in channels_to_dispatch:
+        batched = channel == Channel.EMAIL and event_type in BATCHED_EMAIL_EVENTS
         delivery = NotificationDelivery.objects.create(
             notification=notification,
             channel=channel,
             status=DeliveryStatus.PENDING,
+            batch_queued_at=timezone.now() if batched else None,
         )
+        if batched:
+            # Handed to send_batched_email_digests() instead of dispatched.
+            # batch_queued_at is what marks it as queued — not the absence of a
+            # next_retry_at, which would also describe a row whose inline
+            # dispatch was cut short by a deploy or an OOM kill.
+            continue
         _dispatch(delivery)
 
     return notification
@@ -218,6 +280,16 @@ def _dispatch(delivery: NotificationDelivery) -> None:
         delivery.delivered_at = timezone.now()
         delivery.save(update_fields=["status", "delivered_at"])
 
+    except EmailNotSentError as exc:
+        # The outbound budget declined this one. Retrying would just spend the
+        # sweep on a message the budget will decline again, so record it and
+        # stop — and above all do not mark it delivered, which is what made the
+        # delivery table lie about mail that never left.
+        logger.info("Delivery %s not sent: %s", delivery.id, exc)
+        delivery.status = DeliveryStatus.FAILED
+        delivery.error_message = str(exc)[:500]
+        delivery.save(update_fields=["status", "error_message"])
+
     except Exception as exc:
         logger.exception("Delivery failed: %s", delivery.id)
         delivery.error_message = str(exc)[:500]
@@ -258,9 +330,10 @@ def _dispatch_email(delivery: NotificationDelivery) -> None:
         body=text_content,
         from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@localhost"),
         to=[user.email],
+        headers=list_unsubscribe_headers(user.pk, notification.event_type),
     )
     msg.attach_alternative(html_content, "text/html")
-    msg.send(fail_silently=False)
+    send_or_raise(msg)
 
 
 def _dispatch_webhook(delivery: NotificationDelivery) -> None:
@@ -349,3 +422,212 @@ def retry_failed_deliveries() -> int:
         count += 1
 
     return count
+
+
+def _batchable_deliveries():
+    """Every delivery waiting to go out in a digest.
+
+    Keyed on ``batch_queued_at``, which ``notify()`` sets when it deliberately
+    queues a row. Identifying them by what *didn't* happen instead — PENDING
+    with no next_retry_at — would also match a row whose inline dispatch was
+    interrupted, and sweeping one of those into a digest would mark an invite
+    delivered that was never sent.
+    """
+    return NotificationDelivery.objects.filter(
+        channel=Channel.EMAIL,
+        status=DeliveryStatus.PENDING,
+        batch_queued_at__isnull=False,
+        attempts__lt=MAX_RETRY_ATTEMPTS,
+    )
+
+
+def _digest_heading(event_type: str, count: int) -> str:
+    """The subject line. Every batched event has one — see BATCHED_EMAIL_EVENTS."""
+    singular, plural = BATCH_HEADINGS[event_type]
+    return (singular if count == 1 else plural).format(n=count)
+
+
+def send_batched_email_digests() -> int:
+    """Collapse each user's waiting notifications into one email per event type.
+
+    Called by a background task on a periodic schedule. Returns the number of
+    digests sent.
+    """
+    now = timezone.now()
+    window_start = now - timedelta(minutes=BATCH_WINDOW_MINUTES)
+    stale_claim = now - BATCH_CLAIM_TIMEOUT
+    unclaimed = Q(batch_claimed_at__isnull=True) | Q(batch_claimed_at__lt=stale_claim)
+
+    _reap_exhausted_batches()
+
+    # Grouped with values().annotate() rather than values_list().distinct() so
+    # the result can be ordered by the aggregate. An unordered LIMIT lets
+    # Postgres return any matching rows it likes — and return the same ones
+    # every run — so a backlog wider than BATCH_GROUP_LIMIT could starve some
+    # users indefinitely. Oldest first is what actually drains it.
+    #
+    # The send/wait decision is a HAVING clause here rather than a check in
+    # _send_one_digest: it belongs with the grouping it describes, and it keeps
+    # the sweep from waking a group only to decide it is not due yet.
+    groups = list(
+        _batchable_deliveries()
+        .filter(unclaimed)
+        .values("notification__user_id", "notification__event_type")
+        .annotate(oldest=Min("batch_queued_at"), waiting=Count("pk"))
+        .filter(Q(oldest__lte=window_start) | Q(waiting__gte=BATCH_SIZE_TRIGGER))
+        .order_by("oldest")[:BATCH_GROUP_LIMIT]
+    )
+
+    sent = 0
+    for group in groups:
+        user_id = group["notification__user_id"]
+        event_type = group["notification__event_type"]
+        try:
+            if _send_one_digest(user_id, event_type, now=now, unclaimed=unclaimed):
+                sent += 1
+        except Exception:
+            # One user's bad address must not stop everyone else's digest.
+            logger.exception("Digest failed for user %s (%s)", user_id, event_type)
+    return sent
+
+
+def _reap_exhausted_batches() -> int:
+    """Retire queued rows that have used up their attempts.
+
+    A run can die between sending the email and recording it — a deploy or an
+    OOM kill, both of which this codebase has seen. The claim is then reclaimed
+    after BATCH_CLAIM_TIMEOUT and the digest goes out again. Charging the
+    attempt at claim time (see _send_one_digest) bounds that at
+    MAX_RETRY_ATTEMPTS duplicates instead of forever, and this is what takes the
+    spent rows out of the queue afterwards — otherwise they sit PENDING for good,
+    invisible to every sweep.
+    """
+    return NotificationDelivery.objects.filter(
+        channel=Channel.EMAIL,
+        status=DeliveryStatus.PENDING,
+        batch_queued_at__isnull=False,
+        attempts__gte=MAX_RETRY_ATTEMPTS,
+    ).update(
+        status=DeliveryStatus.FAILED,
+        batch_claimed_at=None,
+        error_message="Gave up after repeated digest delivery failures.",
+    )
+
+
+def _send_one_digest(user_id, event_type: str, *, now, unclaimed) -> bool:
+    """Claim, send and settle one user's digest. Returns True when mail went out."""
+    wanted = list(
+        _batchable_deliveries()
+        .filter(notification__user_id=user_id, notification__event_type=event_type)
+        .filter(unclaimed)
+        .values_list("pk", flat=True)
+    )
+    if not wanted:
+        return False
+
+    # Claim by conditional UPDATE rather than SELECT FOR UPDATE. Under READ
+    # COMMITTED, Postgres re-checks the WHERE against the row version it blocks
+    # on, so a competing sweep's rows simply fall out of our result — and no
+    # lock or transaction is left open across the SMTP conversation that
+    # follows, which the connection budget in apps/common/db.py does not have
+    # room for.
+    #
+    # The attempt is charged HERE, not after a successful send. A worker that
+    # dies between the send and the settle would otherwise leave attempts
+    # untouched, and the reclaim would mail the same digest again every
+    # BATCH_CLAIM_TIMEOUT with nothing counting the repeats.
+    claimed = (
+        NotificationDelivery.objects.filter(pk__in=wanted)
+        .filter(unclaimed)
+        .update(batch_claimed_at=now, attempts=F("attempts") + 1)
+    )
+    if not claimed:
+        return False
+
+    rows = list(
+        NotificationDelivery.objects.filter(pk__in=wanted, batch_claimed_at=now)
+        .select_related("notification", "notification__user")
+        .order_by("created_at")
+    )
+    if not rows:
+        return False
+
+    ids = [r.pk for r in rows]
+    user = rows[0].notification.user
+    notifications = [r.notification for r in rows]
+
+    # Batching puts minutes between the decision to email and the email, and
+    # the user can withdraw consent in that gap — from the unsubscribe link or
+    # the preferences page. The preference is therefore re-read here rather
+    # than trusted from queue time; cancelling on the unsubscribe endpoint
+    # alone would have missed every other way to turn it off.
+    if Channel.EMAIL not in _resolve_channels(user, event_type):
+        logger.info("Cancelling %d queued %s email(s) for user %s: turned off", len(ids), event_type, user_id)
+        NotificationDelivery.objects.filter(pk__in=ids).update(
+            status=DeliveryStatus.FAILED,
+            batch_claimed_at=None,
+            error_message="Cancelled: the recipient turned this email off before it was sent.",
+        )
+        return False
+
+    try:
+        _send_digest_email(user, event_type, notifications)
+    except EmailNotSentError as exc:
+        # The budget declined it, or there is no address to send to. Neither
+        # gets better by trying again, and marking the rows delivered would put
+        # a lie in the delivery table — the same trap the inline path had.
+        logger.info("Digest for user %s (%s) not sent: %s", user_id, event_type, exc)
+        NotificationDelivery.objects.filter(pk__in=ids).update(
+            status=DeliveryStatus.FAILED,
+            batch_claimed_at=None,
+            error_message=str(exc)[:500],
+        )
+        return False
+    except Exception as exc:
+        logger.exception("Could not send the %s digest to %s", event_type, user_id)
+        NotificationDelivery.objects.filter(pk__in=ids).update(
+            batch_claimed_at=None,
+            error_message=str(exc)[:500],
+        )
+        # Rows that have now run out of attempts leave the queue for good,
+        # rather than being retried forever against an address that cannot
+        # receive them.
+        _reap_exhausted_batches()
+        return False
+
+    NotificationDelivery.objects.filter(pk__in=ids).update(
+        status=DeliveryStatus.DELIVERED,
+        delivered_at=timezone.now(),
+    )
+    logger.info("Sent %s digest covering %d notification(s) to user %s", event_type, len(ids), user_id)
+    return True
+
+
+def _send_digest_email(user, event_type: str, notifications: list) -> None:
+    """One email standing in for every notification in the batch."""
+    total = len(notifications)
+    heading = _digest_heading(event_type, total)
+    shown = notifications[:BATCH_MAX_ITEMS]
+
+    context = {
+        "heading": heading,
+        "notifications": shown,
+        "total": total,
+        "overflow": total - len(shown),
+        "user": user,
+        "date": timezone.now(),
+        "app_url": getattr(settings, "APP_URL", "http://localhost:8000"),
+    }
+
+    text_content = render_to_string("notifications/email/digest.txt", context)
+    html_content = render_to_string("notifications/email/digest.html", context)
+
+    msg = EmailMultiAlternatives(
+        subject=heading,
+        body=text_content,
+        from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@localhost"),
+        to=[user.email],
+        headers=list_unsubscribe_headers(user.pk, event_type),
+    )
+    msg.attach_alternative(html_content, "text/html")
+    send_or_raise(msg)

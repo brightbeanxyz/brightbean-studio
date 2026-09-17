@@ -114,6 +114,16 @@ def _resolve_publish_credentials(account):
 
 MAX_RETRIES = 3
 
+# States that legitimately explain a lost race in ``_fail_permanently``: the row
+# was settled by someone else, or put back for another attempt. Anything outside
+# this set means the caller was not mid-attempt, which is a bug worth a warning.
+TERMINAL_OR_REQUEUED_STATUSES = (
+    PlatformPost.Status.FAILED,
+    PlatformPost.Status.PUBLISHED,
+    PlatformPost.Status.SCHEDULED,
+    PlatformPost.Status.ON_HOLD,
+)
+
 # How long a row may sit in ``publishing`` before ``confirm_pending_publishes``
 # calls it. STALE_PUBLISHING covers a row with no platform handle — the worker
 # died between the status flip and the upload, and nothing will ever finish it.
@@ -942,15 +952,73 @@ class PublishEngine:
         provider response body — which is why ``user_message`` has no default:
         every caller has to decide, and a forgotten one is a leak.
         """
-        platform_post.status = PlatformPost.Status.FAILED
-        platform_post.publish_error = (user_message or PUBLISH_GENERIC_MESSAGE)[:2000]
-        platform_post.save()
+        publish_error = (user_message or PUBLISH_GENERIC_MESSAGE)[:2000]
+
+        # A targeted UPDATE guarded on the row still being ``publishing``, not
+        # ``platform_post.save()``. Every one of the seven paths that reaches
+        # here is mid-attempt on a row it claimed into ``publishing``: the
+        # publish and retry paths set it before calling, and the confirmation
+        # sweep only ever selects rows already in it. So ``publishing`` is not a
+        # guess — it is the state this call is entitled to settle, and anything
+        # else means somebody else got there first.
+        #
+        # Narrower than excluding the terminal states, and deliberately so.
+        # ``scheduled`` has to be off limits too: a thread that fails slowly can
+        # finish after ``_schedule_retry`` has already put the row back for
+        # another attempt, and overwriting that would throw away a pending retry
+        # and email the author a failure that had not happened yet. ``published``
+        # matters for the opposite reason — ``VALID_TRANSITIONS`` gives it no
+        # outgoing edges, so a post the platform confirmed is live must never be
+        # walked back to ``failed``, told to the author as a failure, and offered
+        # a retry that double-posts.
+        #
+        # A full save() would push the whole stale object back, and an in-memory
+        # status check would not notice any of this, because the stale object
+        # still says ``publishing``. The row count is the only trustworthy answer
+        # to "did I settle this, or did someone else?", and it is what decides
+        # whether the author is told.
+        #
+        # ``updated_at`` is explicit because .update() bypasses auto_now, and the
+        # confirmation sweep reads it to tell a slow publish from a dead worker.
+        settled_here = PlatformPost.objects.filter(
+            id=platform_post.id,
+            status=PlatformPost.Status.PUBLISHING,
+        ).update(
+            status=PlatformPost.Status.FAILED,
+            publish_error=publish_error,
+            updated_at=timezone.now(),
+        )
+
         logger.warning(
             "PlatformPost %s failed (%s): %s",
             platform_post.id,
             reason,
             error_msg,
         )
+        if not settled_here:
+            # Someone else moved it on. Re-read rather than leaving the caller
+            # holding an object that claims a status and an error the database
+            # rejected.
+            platform_post.refresh_from_db()
+            if platform_post.status in TERMINAL_OR_REQUEUED_STATUSES:
+                logger.info(
+                    "PlatformPost %s is already %s; not notifying the author again",
+                    platform_post.id,
+                    platform_post.status,
+                )
+            else:
+                # Not a race we know about — a caller reached here with a row
+                # that was never claimed into ``publishing``, which would mean
+                # a post silently never failing. Loud on purpose.
+                logger.warning(
+                    "PlatformPost %s could not be failed: expected 'publishing', found %r",
+                    platform_post.id,
+                    platform_post.status,
+                )
+            return
+
+        platform_post.status = PlatformPost.Status.FAILED
+        platform_post.publish_error = publish_error
         self._notify_publish_failed(platform_post)
 
     @staticmethod

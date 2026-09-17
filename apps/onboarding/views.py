@@ -21,7 +21,9 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
+from django_ratelimit.decorators import ratelimit
 
+from apps.common.mail import transactional
 from apps.credentials.models import PlatformCredential
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
@@ -157,6 +159,7 @@ def revoke_link(request, workspace_id, link_id):
 @login_required
 @require_permission("manage_social_accounts")
 @require_POST
+@ratelimit(key="user", rate="10/m", method="POST", block=True)
 def send_link_email(request, workspace_id, link_id):
     """Send the connection link to a client email."""
     link = get_object_or_404(ConnectionLink.objects.for_workspace(workspace_id), id=link_id)
@@ -188,9 +191,19 @@ def send_link_email(request, workspace_id, link_id):
         body=text_content,
         from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@localhost"),
         to=[email],
+        headers=transactional(),
     )
     msg.attach_alternative(html_content, "text/html")
-    msg.send(fail_silently=False)
+    # send() returns the number accepted, and the outbound budget drops a
+    # message by returning 0 rather than raising. Telling someone the link was
+    # sent when it was not is how they end up waiting for an email that is never
+    # coming.
+    if not msg.send(fail_silently=False):
+        messages.error(
+            request,
+            "We could not send that link right now. Please try again shortly.",
+        )
+        return redirect("social_accounts:list", workspace_id=workspace_id)
 
     messages.success(request, f"Connection link sent to {email}.")
     return redirect("social_accounts:list", workspace_id=workspace_id)

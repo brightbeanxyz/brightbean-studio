@@ -195,3 +195,25 @@ def parse_and_truncate_youtube_tag_string(raw: str) -> list[str]:
         out.append(t)
         total += cost
     return out
+
+
+# Anything that renders into an email Subject has to survive the trip. Django
+# already refuses a header containing a newline (BadHeaderError), so this is not
+# about injection — it is about an organization name being attacker-chosen free
+# text that goes out in the Subject of mail sent from our domain, where a
+# hundred characters of someone else's message is a deliverability problem.
+MAX_DISPLAY_NAME_LENGTH = 100
+
+
+def clean_display_name(raw: str, *, max_length: int = MAX_DISPLAY_NAME_LENGTH) -> str:
+    """Normalise a user-supplied name that may end up in an email header.
+
+    Strips control characters (including the newlines and tabs that make a
+    header ambiguous), collapses runs of whitespace, and truncates. Returns the
+    empty string when nothing usable is left, which callers treat as "not
+    provided".
+    """
+    if not raw:
+        return ""
+    cleaned = "".join(ch for ch in str(raw) if ch.isprintable())
+    return " ".join(cleaned.split())[:max_length].strip()

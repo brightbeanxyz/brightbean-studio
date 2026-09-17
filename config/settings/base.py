@@ -285,6 +285,7 @@ SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
 SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
 SOCIALACCOUNT_AUTO_SIGNUP = True
 SOCIALACCOUNT_LOGIN_ON_GET = False
+ACCOUNT_ADAPTER = "apps.accounts.adapters.AccountAdapter"
 SOCIALACCOUNT_ADAPTER = "apps.accounts.adapters.SocialAccountAdapter"
 
 # Sessions
@@ -298,15 +299,39 @@ SESSION_SAVE_EVERY_REQUEST = True  # Sliding window
 EMAIL_BACKEND_TYPE = env("EMAIL_BACKEND_TYPE")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@localhost")
 
+# Everything outbound goes through the budget wrapper, which then hands the
+# message to EMAIL_INNER_BACKEND. There is no send_email() helper in this
+# codebase — six places build EmailMultiAlternatives inline and allauth builds
+# its own — so this is the only point where a runaway loop can be stopped.
+EMAIL_BACKEND = "apps.common.mail.BudgetedEmailBackend"
+
 if EMAIL_BACKEND_TYPE == "smtp":
-    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_INNER_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
     EMAIL_HOST = env("EMAIL_HOST", default="localhost")
     EMAIL_PORT = env.int("EMAIL_PORT", default=587)
     EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
     EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
     EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
 else:
-    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+    EMAIL_INNER_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# Outbound email budget (apps/common/mail.py). A negative limit means unlimited
+# and 0 means send nothing — that way round on purpose, so that an operator
+# typing 0 mid-incident gets what they plainly meant. Counters are kept either
+# way, because the count is what tells us where the limit belongs.
+# EMAIL_SENDING_ENABLED=false is the blunt lever, and needs a config change
+# rather than a deploy.
+EMAIL_SENDING_ENABLED = env.bool("EMAIL_SENDING_ENABLED", default=True)
+EMAIL_DAILY_SEND_LIMIT = env.int("EMAIL_DAILY_SEND_LIMIT", default=2000)
+EMAIL_RECIPIENT_HOURLY_LIMIT = env.int("EMAIL_RECIPIENT_HOURLY_LIMIT", default=6)
+EMAIL_RECIPIENT_DAILY_LIMIT = env.int("EMAIL_RECIPIENT_DAILY_LIMIT", default=20)
+RESEND_WEBHOOK_SECRET = env("RESEND_WEBHOOK_SECRET", default="")
+
+# Invitations. The cooldown and the send cap live on the Invitation row so they
+# survive a cache flush; the per-org daily cap uses the email budget counters.
+INVITE_RESEND_COOLDOWN_SECONDS = env.int("INVITE_RESEND_COOLDOWN_SECONDS", default=300)
+INVITE_MAX_SENDS = env.int("INVITE_MAX_SENDS", default=3)
+INVITE_MAX_PER_ORG_PER_DAY = env.int("INVITE_MAX_PER_ORG_PER_DAY", default=25)
 
 # Tailwind
 TAILWIND_APP_NAME = "theme"

@@ -196,7 +196,7 @@ class DispatchExtraInjectionTest(SimpleTestCase):
         self.assertNotIn("author", content.extra)
 
 
-class ResolvePostTypeTest(SimpleTestCase):
+class ResolvePostTypeFacebookReelTest(SimpleTestCase):
     """The hop that turns a composer choice into a typed PostType.
 
     Both ends of the Facebook Reel path are covered elsewhere — the composer
@@ -562,8 +562,16 @@ class PublishErrorIsNeverRawTest(TestCase):
         )
         from providers.exceptions import APIError
 
+        # Claimed into ``publishing`` first, because that is the only state
+        # _publish_platform_post is ever entered in: both callers
+        # (poll_and_publish's group fan-out and _process_retries) transition the
+        # row before handing it over. _fail_permanently now refuses to settle a
+        # row that is not mid-attempt — a ``scheduled`` row belongs to a pending
+        # retry, and overwriting it would discard that retry and report a
+        # failure that had not happened.
         self.platform_post.retry_count = MAX_RETRIES
-        self.platform_post.save(update_fields=["retry_count"])
+        self.platform_post.status = PlatformPost.Status.PUBLISHING
+        self.platform_post.save(update_fields=["retry_count", "status"])
 
         with patch.object(
             PublishEngine,

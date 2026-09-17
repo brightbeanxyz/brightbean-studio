@@ -5,6 +5,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
+from django_ratelimit.decorators import ratelimit
 
 from apps.members import services as member_services
 from apps.members.decorators import require_workspace_role
@@ -81,6 +82,7 @@ def client_list(request, workspace_id):
 @login_required
 @require_workspace_role("manager")
 @require_POST
+@ratelimit(key="user", rate="10/m", method="POST", block=True)
 def invite_client(request, workspace_id):
     """Invite a new client to this workspace."""
     workspace = request.workspace
@@ -131,6 +133,7 @@ def invite_client(request, workspace_id):
 @login_required
 @require_workspace_role("manager")
 @require_POST
+@ratelimit(key="user", rate="10/m", method="POST", block=True)
 def send_magic_link(request, workspace_id, membership_id):
     """Generate and send a portal magic link to a client."""
     workspace = request.workspace
