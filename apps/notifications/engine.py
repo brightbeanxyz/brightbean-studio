@@ -34,6 +34,7 @@ from .models import (
     Notification,
     NotificationDelivery,
     NotificationPreference,
+    QuietHours,
 )
 from .unsubscribe import list_unsubscribe_headers
 
@@ -59,7 +60,13 @@ RETRY_BATCH_LIMIT = 200
 # this uses the application default rather than a per-org override; honouring
 # one needs a rule for which of a user's orgs wins, which is a separate
 # decision.
-BATCH_WINDOW_MINUTES = APP_DEFAULTS.get("org.email_batching_delay_minutes", 5)
+#
+# Read through isinstance rather than used directly: APP_DEFAULTS holds ints,
+# strings, bools and None, so the value is typed too loosely to hand to
+# timedelta() — and an override that is not a number should fall back here
+# rather than raise from inside the sweep.
+_configured_batch_window = APP_DEFAULTS.get("org.email_batching_delay_minutes", 5)
+BATCH_WINDOW_MINUTES: int = _configured_batch_window if isinstance(_configured_batch_window, int) else 5
 # ...unless this many are already waiting, which is a storm, not a trickle:
 # send immediately rather than letting the user watch it build.
 BATCH_SIZE_TRIGGER = 10
@@ -72,6 +79,13 @@ BATCH_GROUP_LIMIT = 50
 # as the publisher's stale-``publishing`` timeout: the row has to be reclaimable
 # or it is stranded for good.
 BATCH_CLAIM_TIMEOUT = timedelta(minutes=10)
+
+# Local hour at which a ``QuietHours.digest_mode`` user receives their digest,
+# in the timezone on their own QuietHours row. Anchored to the clock rather than
+# measured from the oldest queued row: a rolling 24h window would walk the
+# delivery time forward by however long the user happened to be idle, and a
+# toggle labelled "Daily digest" should arrive at the same time each day.
+DAILY_DIGEST_HOUR = 8
 
 # Events whose email is collapsed into one message per user instead of one per
 # notification, and the heading each one gets. A broken integration fails every
@@ -94,6 +108,9 @@ BATCH_HEADINGS: dict[str, tuple[str, str]] = {
 # heading would silently mail "12 new notifications" instead of saying what
 # happened.
 BATCHED_EMAIL_EVENTS = frozenset(BATCH_HEADINGS)
+
+# The daily digest is not per-event-type, so it has no BATCH_HEADINGS entry.
+DAILY_DIGEST_HEADINGS = ("Your daily digest: {n} notification", "Your daily digest: {n} notifications")
 
 # Default channel enablement per event type.
 # Key: event_type, Value: dict of channel → default enabled.
@@ -160,13 +177,25 @@ def notify(
     )
 
     channels_to_dispatch = _resolve_channels(user, event_type)
+    digest_mode = _is_digest_mode(user)
 
     if _is_in_quiet_hours(user) and event_type in NON_CRITICAL_EVENTS:
         # During quiet hours, only deliver in-app (silent). Skip email/webhook.
-        channels_to_dispatch = [c for c in channels_to_dispatch if c == Channel.IN_APP]
+        #
+        # EMAIL is exempt for digest_mode users, and only for them. Their email
+        # is queued, not sent, so dropping the channel here would LOSE the
+        # notification rather than silence it — it would never appear in any
+        # digest. The digest's own send hour is what keeps them undisturbed. The
+        # webhook stays suppressed either way: it fires immediately, so
+        # exempting it too would defeat quiet hours outright.
+        quiet_channels = {Channel.IN_APP, Channel.EMAIL} if digest_mode else {Channel.IN_APP}
+        channels_to_dispatch = [c for c in channels_to_dispatch if c in quiet_channels]
 
     for channel in channels_to_dispatch:
-        batched = channel == Channel.EMAIL and event_type in BATCHED_EMAIL_EVENTS
+        # digest_mode queues EVERY event type, not just the batched ones: the
+        # queued row IS the delivery, so this replaces the immediate email
+        # rather than adding a digest on top of it.
+        batched = channel == Channel.EMAIL and (digest_mode or event_type in BATCHED_EMAIL_EVENTS)
         delivery = NotificationDelivery.objects.create(
             notification=notification,
             channel=channel,
@@ -213,6 +242,30 @@ def _resolve_channels(user, event_type: str, pref_cache: dict | None = None) -> 
     return channels
 
 
+def _resolve_timezone(tz_name: str):
+    """An IANA timezone, falling back to UTC on anything unusable.
+
+    ``QuietHours.timezone`` is free text from a form, so it can be a name this
+    machine's tzdata does not have.
+    """
+    import zoneinfo
+
+    try:
+        return zoneinfo.ZoneInfo(tz_name)
+    except (KeyError, ValueError, zoneinfo.ZoneInfoNotFoundError):
+        return zoneinfo.ZoneInfo("UTC")
+
+
+def _is_digest_mode(user) -> bool:
+    """Whether this user asked for their notification email as a daily digest."""
+    from django.core.exceptions import ObjectDoesNotExist
+
+    try:
+        return bool(user.quiet_hours.digest_mode)
+    except (AttributeError, ObjectDoesNotExist):
+        return False
+
+
 def _is_in_quiet_hours(user) -> bool:
     """Check if the user is currently in their quiet hours window."""
     from django.core.exceptions import ObjectDoesNotExist
@@ -225,14 +278,7 @@ def _is_in_quiet_hours(user) -> bool:
     if not qh.is_enabled or not qh.start_time or not qh.end_time:
         return False
 
-    import zoneinfo
-
-    try:
-        user_tz = zoneinfo.ZoneInfo(qh.timezone)
-    except (KeyError, zoneinfo.ZoneInfoNotFoundError):
-        user_tz = zoneinfo.ZoneInfo("UTC")
-
-    now_local = timezone.now().astimezone(user_tz).time()
+    now_local = timezone.now().astimezone(_resolve_timezone(qh.timezone)).time()
 
     # Coerce to time objects - fields may be raw strings if the in-memory
     # QuietHours instance was populated from POST data and not yet refreshed.
@@ -441,10 +487,64 @@ def _batchable_deliveries():
     )
 
 
-def _digest_heading(event_type: str, count: int) -> str:
-    """The subject line. Every batched event has one — see BATCHED_EMAIL_EVENTS."""
-    singular, plural = BATCH_HEADINGS[event_type]
+def _digest_heading(event_type: str | None, count: int) -> str:
+    """The subject line. Every batched event has one — see BATCHED_EMAIL_EVENTS.
+
+    ``event_type is None`` is the daily digest, which spans every type and so
+    has no per-event heading to use.
+    """
+    singular, plural = DAILY_DIGEST_HEADINGS if event_type is None else BATCH_HEADINGS[event_type]
     return (singular if count == 1 else plural).format(n=count)
+
+
+def _last_daily_send_boundary(now, tz_name: str):
+    """The most recent moment DAILY_DIGEST_HOUR passed in this timezone.
+
+    A digest is due when something has been waiting since before this instant:
+    that flushes everything queued before today's send hour and leaves anything
+    queued after it for tomorrow, so the send time never drifts.
+    """
+    local = now.astimezone(_resolve_timezone(tz_name))
+    boundary = local.replace(hour=DAILY_DIGEST_HOUR, minute=0, second=0, microsecond=0)
+    if boundary > local:
+        boundary -= timedelta(days=1)
+    return boundary
+
+
+def _due_daily_digest_users(now, unclaimed) -> list:
+    """digest_mode users whose send hour has passed for a queue that predates it.
+
+    Deliberately no size trigger: a busy morning must not ship "today's digest"
+    hours before the day is up, and the rest of the day would then queue behind
+    a second one. The window is the whole point of the toggle.
+
+    The boundary is per timezone, so it cannot be a single comparison. Distinct
+    timezones are few — one OR'd term each keeps this one query rather than one
+    per user, and keeps the due-ness test in the database like the rolling one.
+    """
+    timezones = set(QuietHours.objects.filter(digest_mode=True).values_list("timezone", flat=True))
+    if not timezones:
+        return []
+
+    due = Q()
+    for tz_name in timezones:
+        due |= Q(
+            notification__user__quiet_hours__timezone=tz_name,
+            oldest__lte=_last_daily_send_boundary(now, tz_name),
+        )
+
+    groups = (
+        _batchable_deliveries()
+        .filter(unclaimed)
+        .filter(notification__user__quiet_hours__digest_mode=True)
+        # Timezone is in the grouping so the HAVING above can reference it; it
+        # is one-to-one with the user, so this is still one group per user.
+        .values("notification__user_id", "notification__user__quiet_hours__timezone")
+        .annotate(oldest=Min("batch_queued_at"))
+        .filter(due)
+        .order_by("oldest")[:BATCH_GROUP_LIMIT]
+    )
+    return [g["notification__user_id"] for g in groups]
 
 
 def send_batched_email_digests() -> int:
@@ -472,22 +572,30 @@ def send_batched_email_digests() -> int:
     groups = list(
         _batchable_deliveries()
         .filter(unclaimed)
+        # digest_mode users are swept below on their own daily boundary. They
+        # must also not share this query's budget: their rows sit queued for
+        # hours while these sit for minutes, so on one oldest-first LIMIT every
+        # digest row would sort ahead of every rolling row and starve it.
+        .exclude(notification__user__quiet_hours__digest_mode=True)
         .values("notification__user_id", "notification__event_type")
         .annotate(oldest=Min("batch_queued_at"), waiting=Count("pk"))
         .filter(Q(oldest__lte=window_start) | Q(waiting__gte=BATCH_SIZE_TRIGGER))
         .order_by("oldest")[:BATCH_GROUP_LIMIT]
     )
 
+    # (user_id, event_type); event_type None is one digest_mode user's daily
+    # email, which covers every event type at once.
+    due: list[tuple] = [(g["notification__user_id"], g["notification__event_type"]) for g in groups]
+    due += [(user_id, None) for user_id in _due_daily_digest_users(now, unclaimed)]
+
     sent = 0
-    for group in groups:
-        user_id = group["notification__user_id"]
-        event_type = group["notification__event_type"]
+    for user_id, event_type in due:
         try:
             if _send_one_digest(user_id, event_type, now=now, unclaimed=unclaimed):
                 sent += 1
         except Exception:
             # One user's bad address must not stop everyone else's digest.
-            logger.exception("Digest failed for user %s (%s)", user_id, event_type)
+            logger.exception("Digest failed for user %s (%s)", user_id, event_type or "daily")
     return sent
 
 
@@ -514,14 +622,16 @@ def _reap_exhausted_batches() -> int:
     )
 
 
-def _send_one_digest(user_id, event_type: str, *, now, unclaimed) -> bool:
-    """Claim, send and settle one user's digest. Returns True when mail went out."""
-    wanted = list(
-        _batchable_deliveries()
-        .filter(notification__user_id=user_id, notification__event_type=event_type)
-        .filter(unclaimed)
-        .values_list("pk", flat=True)
-    )
+def _send_one_digest(user_id, event_type: str | None, *, now, unclaimed) -> bool:
+    """Claim, send and settle one user's digest. Returns True when mail went out.
+
+    ``event_type is None`` is a digest_mode user's daily email, which covers
+    every event type they have waiting instead of one.
+    """
+    wanted = _batchable_deliveries().filter(notification__user_id=user_id).filter(unclaimed)
+    if event_type is not None:
+        wanted = wanted.filter(notification__event_type=event_type)
+    wanted = list(wanted.values_list("pk", flat=True))
     if not wanted:
         return False
 
@@ -561,14 +671,28 @@ def _send_one_digest(user_id, event_type: str, *, now, unclaimed) -> bool:
     # the preferences page. The preference is therefore re-read here rather
     # than trusted from queue time; cancelling on the unsubscribe endpoint
     # alone would have missed every other way to turn it off.
-    if Channel.EMAIL not in _resolve_channels(user, event_type):
-        logger.info("Cancelling %d queued %s email(s) for user %s: turned off", len(ids), event_type, user_id)
-        NotificationDelivery.objects.filter(pk__in=ids).update(
+    # A daily digest spans event types, so the check is per row: one type being
+    # switched off cancels its own notifications without taking the rest of the
+    # digest with them.
+    pref_cache: dict = {}
+    keeping = [r for r in rows if Channel.EMAIL in _resolve_channels(user, r.notification.event_type, pref_cache)]
+    keep_ids = {r.pk for r in keeping}
+    cancelled = [r.pk for r in rows if r.pk not in keep_ids]
+
+    if cancelled:
+        logger.info("Cancelling %d queued email(s) for user %s: turned off", len(cancelled), user_id)
+        NotificationDelivery.objects.filter(pk__in=cancelled).update(
             status=DeliveryStatus.FAILED,
             batch_claimed_at=None,
             error_message="Cancelled: the recipient turned this email off before it was sent.",
         )
+
+    if not keeping:
         return False
+
+    rows = keeping
+    ids = [r.pk for r in rows]
+    notifications = [r.notification for r in rows]
 
     try:
         _send_digest_email(user, event_type, notifications)
@@ -599,11 +723,11 @@ def _send_one_digest(user_id, event_type: str, *, now, unclaimed) -> bool:
         status=DeliveryStatus.DELIVERED,
         delivered_at=timezone.now(),
     )
-    logger.info("Sent %s digest covering %d notification(s) to user %s", event_type, len(ids), user_id)
+    logger.info("Sent %s digest covering %d notification(s) to user %s", event_type or "daily", len(ids), user_id)
     return True
 
 
-def _send_digest_email(user, event_type: str, notifications: list) -> None:
+def _send_digest_email(user, event_type: str | None, notifications: list) -> None:
     """One email standing in for every notification in the batch."""
     total = len(notifications)
     heading = _digest_heading(event_type, total)
