@@ -478,12 +478,20 @@ def _batchable_deliveries():
     with no next_retry_at — would also match a row whose inline dispatch was
     interrupted, and sweeping one of those into a digest would mark an invite
     delivered that was never sent.
+
+    Deactivated recipients are excluded. ``notify()`` already refuses to create
+    anything for an inactive user, but batching puts minutes — or, for a daily
+    digest, a day — between queueing and sending, and an account can be closed
+    in that gap. The ``send_daily_digests`` this replaced skipped inactive users
+    for the same reason. Every caller goes through here, so the exclusion covers
+    both choosing the groups and the re-query that claims the rows.
     """
     return NotificationDelivery.objects.filter(
         channel=Channel.EMAIL,
         status=DeliveryStatus.PENDING,
         batch_queued_at__isnull=False,
         attempts__lt=MAX_RETRY_ATTEMPTS,
+        notification__user__is_active=True,
     )
 
 
@@ -559,6 +567,7 @@ def send_batched_email_digests() -> int:
     unclaimed = Q(batch_claimed_at__isnull=True) | Q(batch_claimed_at__lt=stale_claim)
 
     _reap_exhausted_batches()
+    _reap_deactivated_recipients()
 
     # Grouped with values().annotate() rather than values_list().distinct() so
     # the result can be ordered by the aggregate. An unordered LIMIT lets
@@ -597,6 +606,25 @@ def send_batched_email_digests() -> int:
             # One user's bad address must not stop everyone else's digest.
             logger.exception("Digest failed for user %s (%s)", user_id, event_type or "daily")
     return sent
+
+
+def _reap_deactivated_recipients() -> int:
+    """Retire queued email for recipients deactivated after it was queued.
+
+    _batchable_deliveries() stops it being sent; this is what takes it out of
+    the queue afterwards. Without it the rows stay PENDING for good — invisible
+    to every sweep, and counting against nothing that would ever clear them.
+    """
+    return NotificationDelivery.objects.filter(
+        channel=Channel.EMAIL,
+        status=DeliveryStatus.PENDING,
+        batch_queued_at__isnull=False,
+        notification__user__is_active=False,
+    ).update(
+        status=DeliveryStatus.FAILED,
+        batch_claimed_at=None,
+        error_message="Cancelled: the recipient's account was deactivated before the digest was sent.",
+    )
 
 
 def _reap_exhausted_batches() -> int:

@@ -303,6 +303,62 @@ class TestEveryoneElseIsUnaffected:
 
 
 @pytest.mark.django_db
+class TestDeactivatedRecipients:
+    """Batching puts a day between queueing and sending; accounts close in that gap.
+
+    notify() already refuses to create anything for an inactive user, so this is
+    only reachable by deactivating someone whose email is already queued — which
+    is exactly what the deleted send_daily_digests guarded against with its
+    `if not user.is_active: continue`.
+    """
+
+    def test_a_daily_digest_is_not_sent_to_a_deactivated_recipient(self, user, mailoutbox):
+        QuietHours.objects.create(user=user, digest_mode=True)
+        notify(user, IMMEDIATE_EMAIL_EVENT, "Changes requested")
+        queued_at(user, at(6))
+
+        user.is_active = False
+        user.save(update_fields=["is_active"])
+
+        with frozen_now(at(DAILY_DIGEST_HOUR + 1)):
+            assert send_batched_email_digests() == 0
+
+        assert mailoutbox == []
+        delivery = email_deliveries(user).get()
+        assert delivery.status == DeliveryStatus.FAILED
+        assert "deactivated" in delivery.error_message
+        # Retired, not left PENDING: a stranded row is invisible to every later
+        # sweep and nothing would ever clear it.
+        assert delivery.batch_claimed_at is None
+
+    def test_a_rolling_batch_is_not_sent_to_a_deactivated_recipient(self, user, mailoutbox):
+        """Same guard, shared by both sweeps rather than bolted onto the daily one."""
+        notify(user, ROLLING_BATCH_EVENT, "Post failed")
+        email_deliveries(user).update(
+            batch_queued_at=timezone.now() - datetime.timedelta(minutes=BATCH_WINDOW_MINUTES + 1)
+        )
+
+        user.is_active = False
+        user.save(update_fields=["is_active"])
+
+        assert send_batched_email_digests() == 0
+        assert mailoutbox == []
+        assert email_deliveries(user).get().status == DeliveryStatus.FAILED
+
+    def test_reactivating_before_the_send_hour_still_delivers(self, user, mailoutbox):
+        """The guard is a live check, not a one-way door."""
+        QuietHours.objects.create(user=user, digest_mode=True)
+        notify(user, IMMEDIATE_EMAIL_EVENT, "Changes requested")
+        queued_at(user, at(6))
+
+        assert email_deliveries(user).get().status == DeliveryStatus.PENDING
+
+        with frozen_now(at(DAILY_DIGEST_HOUR + 1)):
+            assert send_batched_email_digests() == 1
+        assert len(mailoutbox) == 1
+
+
+@pytest.mark.django_db
 class TestDailyDigestUnsubscribe:
     """A daily digest spans every event type, so its link cannot name one."""
 
