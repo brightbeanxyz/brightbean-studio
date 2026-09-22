@@ -668,6 +668,127 @@ class PostAnalyticsResponse(Schema):
 
 
 # ---------------------------------------------------------------------------
+# /inbox — read + reply drafting
+# ---------------------------------------------------------------------------
+
+
+class InboxReplyResponse(Schema):
+    """One outbound reply to an inbox message.
+
+    A reply is created as ``draft``, then a send step delivers it to the
+    platform and moves it to ``sent`` (or ``failed`` with a human-readable
+    ``send_error`` if the platform refused it). ``sent_at`` /
+    ``platform_reply_id`` are populated only once ``status == "sent"``.
+    """
+
+    id: uuid.UUID
+    inbox_message_id: uuid.UUID
+    status: str
+    body: str
+    author_email: str = ""
+    platform_reply_id: str = ""
+    send_error: str = ""
+    created_at: dt.datetime
+    updated_at: dt.datetime
+    sent_at: dt.datetime | None = None
+
+    @field_serializer("created_at", "updated_at", "sent_at")
+    def _serialize_dt(self, value: dt.datetime | None) -> str | None:
+        return _serialize_utc_z(value)
+
+    @classmethod
+    def from_reply(cls, reply) -> InboxReplyResponse:
+        author = getattr(reply, "author", None)
+        return cls(
+            id=reply.id,
+            inbox_message_id=reply.inbox_message_id,
+            status=reply.status,
+            body=reply.body,
+            author_email=(getattr(author, "email", "") or ""),
+            platform_reply_id=reply.platform_reply_id or "",
+            send_error=reply.send_error or "",
+            created_at=reply.created_at,
+            updated_at=reply.updated_at,
+            sent_at=reply.sent_at,
+        )
+
+
+class InboxMessageResponse(Schema):
+    """An inbound comment / mention / DM / review in the unified inbox."""
+
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    social_account_id: uuid.UUID
+    platform: str
+    message_type: str
+    status: str
+    sentiment: str
+    sender_name: str
+    sender_handle: str = ""
+    body: str
+    related_post_id: uuid.UUID | None = None
+    received_at: dt.datetime
+    created_at: dt.datetime
+    replies: list[InboxReplyResponse] = Field(default_factory=list)
+
+    @field_serializer("received_at", "created_at")
+    def _serialize_dt(self, value: dt.datetime | None) -> str | None:
+        return _serialize_utc_z(value)
+
+    @classmethod
+    def from_message(cls, message, *, include_replies: bool = False) -> InboxMessageResponse:
+        replies: list[InboxReplyResponse] = []
+        if include_replies:
+            if "replies" in getattr(message, "_prefetched_objects_cache", {}):
+                rows = message.replies.all()
+            else:
+                rows = message.replies.select_related("author")
+            replies = [InboxReplyResponse.from_reply(r) for r in rows]
+        return cls(
+            id=message.id,
+            workspace_id=message.workspace_id,
+            social_account_id=message.social_account_id,
+            platform=message.social_account.platform,
+            message_type=message.message_type,
+            status=message.status,
+            sentiment=message.sentiment,
+            sender_name=message.sender_name,
+            sender_handle=message.sender_handle or "",
+            body=message.body or "",
+            related_post_id=message.related_post_id,
+            received_at=message.received_at,
+            created_at=message.created_at,
+            replies=replies,
+        )
+
+
+class InboxMessagesListResponse(Schema):
+    messages: list[InboxMessageResponse]
+    limit: int
+    next_cursor: str | None = None
+
+
+class CreateReplyRequest(Schema):
+    body: str = Field(..., min_length=1, max_length=10_000, description="The reply text.")
+    idempotency_key: str | None = Field(
+        None,
+        max_length=128,
+        description="Optional client-chosen retry key. Same key + same body → replay first response.",
+    )
+    send: bool = Field(
+        False,
+        description=(
+            "When true, immediately deliver the reply to the platform instead of "
+            "leaving it as a draft. Requires the ``reply_from_inbox`` permission."
+        ),
+    )
+
+
+class UpdateReplyRequest(Schema):
+    body: str = Field(..., min_length=1, max_length=10_000, description="Replacement reply text.")
+
+
+# ---------------------------------------------------------------------------
 # Error envelope (used by the exception handler in api.py)
 # ---------------------------------------------------------------------------
 

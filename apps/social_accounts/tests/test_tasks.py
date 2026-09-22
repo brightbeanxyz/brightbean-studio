@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from apps.social_accounts.models import SocialAccount
 from apps.social_accounts.tasks import check_social_account_health
+from providers.exceptions import QuotaExceededError
 from providers.types import AccountProfile, OAuthTokens
 
 
@@ -126,6 +127,90 @@ class TestCheckSocialAccountHealth:
         account = SocialAccount.objects.get(pk=connected_account.pk)
         assert account.connection_status == SocialAccount.ConnectionStatus.ERROR
         assert account.last_error == "Connection check failed. Please try reconnecting."
+
+    @patch("providers.get_provider")
+    def test_quota_failure_keeps_health_check_account_schedulable(self, mock_get_provider, connected_account):
+        mock_provider = MagicMock()
+        mock_provider.get_profile.side_effect = QuotaExceededError("daily quota spent", status_code=403)
+        mock_get_provider.return_value = mock_provider
+
+        check_social_account_health.now(str(connected_account.id))
+
+        account = SocialAccount.objects.get(pk=connected_account.pk)
+        assert account.connection_status == SocialAccount.ConnectionStatus.CONNECTED
+        assert account.last_error == "The platform's daily API limit is used up."
+
+    @patch("providers.get_provider")
+    def test_a_live_quota_block_skips_the_probe_entirely(self, mock_get_provider, connected_account):
+        """A probe that can only fail still costs a unit from the spent budget.
+
+        On YouTube that budget is the same one publishing and reconnecting draw
+        on, so the check competes with the recovery it exists to detect.
+        """
+        from apps.common.quota import credential_key, read_scope, trip_quota_block
+
+        mock_provider = MagicMock()
+        mock_provider.credentials = {"client_id": "shared-client"}
+        mock_get_provider.return_value = mock_provider
+        # Through ``read_scope``, not a literal: this platform meters one pool
+        # and names it "", so a hardcoded "data" would write a row the check
+        # never looks up — which is how the breaker came to be split in two.
+        trip_quota_block(
+            connected_account.platform,
+            credential_key({"client_id": "shared-client"}),
+            read_scope(connected_account.platform),
+            until=timezone.now() + timedelta(hours=4),
+            reason="daily quota exhausted",
+        )
+
+        with patch(
+            "apps.publisher.engine._resolve_publish_credentials",
+            return_value={"client_id": "shared-client"},
+        ):
+            check_social_account_health.now(str(connected_account.id))
+
+        mock_provider.get_profile.assert_not_called()
+        account = SocialAccount.objects.get(pk=connected_account.pk)
+        # The block says nothing about the grant, so the previous verdict stands.
+        assert account.connection_status == SocialAccount.ConnectionStatus.CONNECTED
+        assert account.last_health_check_at is not None
+
+    @patch("providers.get_provider")
+    def test_a_refreshed_token_survives_a_skipped_probe(self, mock_get_provider, connected_account):
+        """Skipping the probe must not cost the rotation that happened first.
+
+        The refresh runs against Google's token endpoint, which is metered
+        separately — so a blocked Data API is no reason to drop its result.
+        """
+        from apps.common.quota import credential_key, read_scope, trip_quota_block
+        from providers.types import OAuthTokens
+
+        connected_account.token_expires_at = timezone.now() + timedelta(minutes=5)
+        connected_account.save(update_fields=["token_expires_at"])
+
+        mock_provider = MagicMock()
+        mock_provider.credentials = {"client_id": "shared-client"}
+        mock_provider.refresh_token.return_value = OAuthTokens(
+            access_token="rotated", refresh_token="rotated_refresh", expires_in=3600
+        )
+        mock_get_provider.return_value = mock_provider
+        trip_quota_block(
+            connected_account.platform,
+            credential_key({"client_id": "shared-client"}),
+            read_scope(connected_account.platform),
+            until=timezone.now() + timedelta(hours=4),
+            reason="daily quota exhausted",
+        )
+
+        with patch(
+            "apps.publisher.engine._resolve_publish_credentials",
+            return_value={"client_id": "shared-client"},
+        ):
+            check_social_account_health.now(str(connected_account.id))
+
+        mock_provider.get_profile.assert_not_called()
+        account = SocialAccount.objects.get(pk=connected_account.pk)
+        assert account.oauth_access_token == "rotated"
 
     @patch("providers.get_provider")
     def test_token_refresh_on_expiring(self, mock_get_provider, connected_account):

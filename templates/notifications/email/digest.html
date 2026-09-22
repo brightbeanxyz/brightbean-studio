@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Daily Notification Digest</title>
+<title>{{ heading }}</title>
 <style>
   body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
   table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
@@ -31,8 +31,8 @@
     <!-- Title -->
     <tr>
       <td style="padding:28px 32px 12px;">
-        <h1 style="margin:0;font-size:20px;font-weight:700;color:#1C1917;">Daily Digest</h1>
-        <p style="margin:8px 0 0;font-size:13px;color:#A8A29E;">{{ date|date:"N j, Y" }} &mdash; {{ notifications|length }} notification{{ notifications|length|pluralize }}</p>
+        <h1 style="margin:0;font-size:20px;font-weight:700;color:#1C1917;">{{ heading }}</h1>
+        <p style="margin:8px 0 0;font-size:13px;color:#A8A29E;">{{ date|date:"N j, Y" }} &mdash; {{ total }} item{{ total|pluralize }}</p>
       </td>
     </tr>
 
@@ -50,6 +50,9 @@
           </tr>
         </table>
         {% endfor %}
+        {% if overflow %}
+        <p style="margin:4px 0 0;font-size:13px;color:#78716C;">&hellip;and {{ overflow }} more.</p>
+        {% endif %}
       </td>
     </tr>
 
@@ -72,7 +75,7 @@
     <tr>
       <td style="padding:20px 32px 28px;border-top:1px solid #F5F5F4;">
         <p style="margin:0;font-size:12px;color:#A8A29E;line-height:1.5;">
-          You're receiving this daily digest.
+          You received this because of your notification settings.
           <a href="{{ app_url }}/notifications/preferences/" style="color:#F97316;text-decoration:underline;">Manage preferences</a>
         </p>
       </td>

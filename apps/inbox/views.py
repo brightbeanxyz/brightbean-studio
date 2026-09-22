@@ -1,14 +1,12 @@
 """Views for the Unified Social Inbox (F-3.1)."""
 
 import logging
-from datetime import timedelta
 
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.members.decorators import require_permission
@@ -17,8 +15,8 @@ from apps.notifications.engine import notify
 from apps.notifications.models import EventType
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
-from providers import get_provider
 
+from . import services as inbox_services
 from .forms import (
     AssignForm,
     BulkActionForm,
@@ -51,8 +49,12 @@ def _detail_context(workspace, message):
     ).select_related("user")
     replies = list(message.replies.select_related("author"))
     notes = list(message.internal_notes.select_related("author"))
+    # Sent replies sit in the chronological thread; drafts (and failed
+    # sends awaiting a retry) are pending work, surfaced by the composer.
+    sent_replies = [r for r in replies if r.status == InboxReply.Status.SENT]
+    draft_replies = [r for r in replies if r.status != InboxReply.Status.SENT]
     thread = sorted(
-        [("reply", r, r.sent_at) for r in replies] + [("note", n, n.created_at) for n in notes],
+        [("reply", r, r.sent_at or r.created_at) for r in sent_replies] + [("note", n, n.created_at) for n in notes],
         key=lambda x: x[2],
     )
     child_messages = InboxMessage.objects.filter(parent_message=message).select_related("social_account")
@@ -60,6 +62,7 @@ def _detail_context(workspace, message):
         "workspace": workspace,
         "message": message,
         "thread": thread,
+        "draft_replies": draft_replies,
         "child_messages": child_messages,
         "sla_config": sla_config,
         "saved_replies": saved_replies,
@@ -208,68 +211,13 @@ def message_detail(request, workspace_id, message_id):
 
 # --- Reply ---
 
-# Message types answered on a comment edge rather than a messaging endpoint.
-_COMMENT_LIKE_TYPES = {
-    InboxMessage.MessageType.COMMENT,
-    InboxMessage.MessageType.MENTION,
-    InboxMessage.MessageType.REVIEW,
-}
 
-# Past this age Meta only accepts a reply tagged as written by a person.
-HUMAN_AGENT_AFTER = timedelta(hours=24)
-
-
-def _reply_failure_reason(exc: Exception) -> str:
-    """A short, actionable reason for the user.
-
-    The platform's own error text carries internal diagnostics (trace IDs, raw
-    API JSON) that mean nothing to a workspace member, so it stays in the log
-    and the UI gets a stable sentence instead.
-    """
-    from providers.exceptions import OAuthError, RateLimitError, TokenExpiredError
-
-    if isinstance(exc, RateLimitError):
-        return "the account has hit its rate limit. Wait a few minutes and try again."
-    if isinstance(exc, TokenExpiredError | OAuthError):
-        return "the connection has expired. Reconnect the account in Workspace Settings."
-    return "the platform rejected it. Try again, or reconnect the account if this keeps happening."
-
-
-def _send_platform_reply(message, body: str) -> str:
-    """Post ``body`` back to the platform and return the platform's reply ID.
-
-    Raises if the platform refuses it, so the caller can avoid recording a
-    reply that was never delivered.
-    """
-    from apps.publisher.engine import _resolve_publish_credentials
-
-    account = message.social_account
-    provider = get_provider(account.platform, _resolve_publish_credentials(account))
-
-    # The messaging endpoints address a person, not a message, so carry the
-    # sender's platform-scoped ID alongside the original payload.
-    extra = dict(message.extra or {})
-    if message.sender_handle:
-        extra.setdefault("recipient_id", message.sender_handle)
-
-    if message.message_type in _COMMENT_LIKE_TYPES:
-        result = provider.reply_to_comment(
-            access_token=account.oauth_access_token,
-            comment_id=message.platform_message_id,
-            text=body,
-            extra=extra,
-        )
-    else:
-        overdue = timezone.now() - message.received_at > HUMAN_AGENT_AFTER
-        result = provider.reply_to_message(
-            access_token=account.oauth_access_token,
-            message_id=message.platform_message_id,
-            text=body,
-            extra=extra,
-            human_agent=overdue,
-        )
-
-    return result.platform_message_id
+def _get_workspace_reply(workspace, reply_id):
+    return get_object_or_404(
+        InboxReply.objects.select_related("inbox_message", "inbox_message__social_account", "author"),
+        id=reply_id,
+        inbox_message__workspace=workspace,
+    )
 
 
 @login_required
@@ -290,13 +238,7 @@ def send_reply(request, workspace_id, message_id):
     # A reply is only recorded if the platform accepted it. Recording it
     # regardless would show the team a sent reply the customer never got.
     try:
-        platform_reply_id = _send_platform_reply(message, body)
-    except NotImplementedError:
-        # The platform has no reply API (or none for this item type). Keep the
-        # reply as a local record so the team still has their answer on file —
-        # this is what the inbox did before replies were sent for real.
-        logger.info("Provider %s cannot send replies; recording locally.", account.platform)
-        platform_reply_id = ""
+        reply = inbox_services.send_reply(message=message, body=body, author=request.user)
     except Exception as exc:
         logger.exception("Failed to send reply for message %s (%s)", message.id, account.platform)
         response = render(
@@ -304,7 +246,7 @@ def send_reply(request, workspace_id, message_id):
             "inbox/partials/_reply_error.html",
             {
                 "platform_label": account.get_platform_display(),
-                "reason": _reply_failure_reason(exc),
+                "reason": inbox_services.reply_failure_reason(exc),
             },
         )
         # htmx does not swap on a 4xx/5xx, so the failure is reported as a
@@ -312,24 +254,78 @@ def send_reply(request, workspace_id, message_id):
         response["HX-Reply-Failed"] = "1"
         return response
 
-    reply = InboxReply.objects.create(
-        inbox_message=message,
-        author=request.user,
-        body=body,
-        platform_reply_id=platform_reply_id,
-    )
-
-    # Auto-resolve on reply if configured
-    sla_config = InboxSLAConfig.objects.filter(workspace=workspace, is_active=True).first()
-    if sla_config and sla_config.auto_resolve_on_reply:
-        message.status = InboxMessage.Status.RESOLVED
-        message.save(update_fields=["status"])
-    elif message.status == InboxMessage.Status.UNREAD:
-        message.status = InboxMessage.Status.OPEN
-        message.save(update_fields=["status"])
-
     context = {"reply": reply, "workspace": workspace, "message": message}
     return render(request, "inbox/partials/_reply_item.html", context)
+
+
+@login_required
+@require_permission("use_inbox")
+@require_POST
+def save_reply_draft(request, workspace_id, message_id):
+    """Save a reply as a draft without sending it."""
+    workspace = _get_workspace(request, workspace_id)
+    message = get_object_or_404(InboxMessage, id=message_id, workspace=workspace)
+
+    form = ReplyForm(request.POST)
+    if not form.is_valid():
+        return HttpResponse("Invalid reply.", status=400)
+
+    try:
+        inbox_services.create_reply_draft(
+            message=message,
+            body=form.cleaned_data["body"],
+            author=request.user,
+        )
+    except ValueError as exc:
+        return HttpResponse(str(exc), status=400)
+
+    message.refresh_from_db()
+    return render(request, "inbox/partials/_message_panel.html", _detail_context(workspace, message))
+
+
+@login_required
+@require_permission("reply_from_inbox")
+@require_POST
+def send_reply_draft(request, workspace_id, reply_id):
+    """Deliver an existing draft reply to the platform."""
+    workspace = _get_workspace(request, workspace_id)
+    reply = _get_workspace_reply(workspace, reply_id)
+    message = reply.inbox_message
+
+    failed = False
+    try:
+        inbox_services.send_reply_now(reply, actor=request.user)
+    except inbox_services.ReplyStateError as exc:
+        return HttpResponse(str(exc), status=409)
+    except Exception:
+        # The draft is kept (now in ``failed`` state) so the team can retry
+        # or discard it; the re-rendered panel shows it with failed styling.
+        logger.exception("Failed to send draft reply %s", reply.id)
+        failed = True
+
+    message.refresh_from_db()
+    panel = render(request, "inbox/partials/_message_panel.html", _detail_context(workspace, message))
+    if failed:
+        panel["HX-Reply-Failed"] = "1"
+    return panel
+
+
+@login_required
+@require_permission("use_inbox")
+@require_POST
+def discard_reply_draft(request, workspace_id, reply_id):
+    """Delete a draft (or failed) reply."""
+    workspace = _get_workspace(request, workspace_id)
+    reply = _get_workspace_reply(workspace, reply_id)
+    message = reply.inbox_message
+
+    try:
+        inbox_services.discard_reply_draft(reply)
+    except inbox_services.ReplyStateError as exc:
+        return HttpResponse(str(exc), status=409)
+
+    message.refresh_from_db()
+    return render(request, "inbox/partials/_message_panel.html", _detail_context(workspace, message))
 
 
 # --- Internal Note ---

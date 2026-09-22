@@ -102,6 +102,17 @@ class NotificationDelivery(models.Model):
     delivered_at = models.DateTimeField(null=True, blank=True)
     attempts = models.PositiveIntegerField(default=0)
     next_retry_at = models.DateTimeField(null=True, blank=True)
+    # Set by notify() when this row is deliberately queued for a digest instead
+    # of dispatched. It has to be a positive marker: "PENDING with no
+    # next_retry_at" also describes a row whose inline dispatch was interrupted
+    # — a deploy SIGTERM or an OOM kill mid-send — and those must not be
+    # silently swept into somebody's digest and marked delivered.
+    batch_queued_at = models.DateTimeField(null=True, blank=True)
+    # Set while a digest run owns this row, so two overlapping runs cannot both
+    # put it in an email. A claim older than BATCH_CLAIM_TIMEOUT is treated as
+    # abandoned and may be re-claimed — the same "a worker died holding this"
+    # reasoning the publisher applies to rows stuck in ``publishing``.
+    batch_claimed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

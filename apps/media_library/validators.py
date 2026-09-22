@@ -1,6 +1,11 @@
 """File validation for media library uploads."""
 
+import contextlib
+from pathlib import Path
+
 from django.conf import settings
+from django.core.exceptions import SuspiciousFileOperation
+from django.utils.text import get_valid_filename
 
 ALLOWED_MIME_TYPES = {
     "image": [
@@ -39,6 +44,26 @@ ALL_ALLOWED_EXTENSIONS = set()
 for exts in ALLOWED_EXTENSIONS.values():
     ALL_ALLOWED_EXTENSIONS.update(exts)
 
+# The one extension each allowed MIME is stored under. Sniffing the magic bytes
+# settles what a file *is*; this settles what it is *named*, which is a separate
+# problem. Both django.views.static.serve and Caddy's file_server derive
+# Content-Type from the suffix, so a PNG/HTML polyglot uploaded as "poc.html"
+# passes the magic-byte check and is then served as text/html from the app's own
+# origin — same-origin script, and on the Caddy path without even a CSP header
+# to stop it. Keep a value here for every member of ALL_ALLOWED_MIMES;
+# tests/../test_upload_filenames.py pins that.
+CANONICAL_EXTENSION = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "video/mp4": "mp4",
+    "video/quicktime": "mov",
+    "video/x-msvideo": "avi",
+    "video/webm": "webm",
+    "application/pdf": "pdf",
+}
+
 MAX_FILE_SIZES = {
     "image": getattr(settings, "MEDIA_LIBRARY_MAX_IMAGE_SIZE", 20 * 1024 * 1024),
     "gif": getattr(settings, "MEDIA_LIBRARY_MAX_IMAGE_SIZE", 20 * 1024 * 1024),
@@ -50,6 +75,33 @@ MAX_FILE_SIZES = {
 def determine_file_type(mime_type):
     """Map a MIME type to our FileType enum value."""
     return MIME_TO_FILE_TYPE.get(mime_type)
+
+
+def storage_filename(original_name, sniffed_mime):
+    """The name to store an upload under: the caller's stem, our extension.
+
+    ``MediaAsset.filename`` keeps whatever the uploader called it for display;
+    this is only the key on disk or in the bucket. Swapping the suffix for the
+    one the sniffed bytes justify is what stops an upload from choosing the
+    Content-Type it will later be served with — see CANONICAL_EXTENSION.
+    """
+    extension = CANONICAL_EXTENSION.get(sniffed_mime)
+    if not extension:
+        # Unreachable via validate_file(), which rejects anything outside
+        # ALL_ALLOWED_MIMES first. Fall back to a suffix no server will hand
+        # back as script rather than trusting the client's.
+        extension = "bin"
+
+    # Leading dots go too: ".htaccess" is all stem to pathlib, and a dotfile is
+    # not a name we want to create inside MEDIA_ROOT.
+    stem = Path(original_name or "").stem.strip().lstrip(".")
+    try:
+        stem = get_valid_filename(stem)
+    except SuspiciousFileOperation:
+        # Raised for a name that is empty, or that sanitises down to nothing.
+        stem = ""
+
+    return f"{stem or 'upload'}.{extension}"
 
 
 # Magic-byte signatures for sniffing the *real* MIME of an uploaded file.
@@ -130,7 +182,52 @@ def validate_file(uploaded_file):
         max_mb = max_size / (1024 * 1024)
         errors.append(f"File too large. Maximum size for {file_type} files is {max_mb:.0f}MB.")
 
+    if file_type in ("image", "gif"):
+        errors.extend(_image_pixel_errors(uploaded_file))
+
     return file_type, errors
+
+
+def _image_pixel_errors(uploaded_file) -> list[str]:
+    """Reject images whose decoded size would blow the worker's memory budget.
+
+    File size does not bound this: a highly compressible image can be tiny on
+    disk and enormous decoded, and decoded cost is what the worker pays. The
+    worker has to enforce the ceiling itself because presigned
+    direct-to-storage uploads never pass through here, but checking it on the
+    synchronous path means the common case is told at upload time instead of
+    silently landing in FAILED minutes later.
+
+    Goes through ``open_image`` with the same ``draft_size`` the thumbnail path
+    uses, rather than measuring the header here, so the two agree by
+    construction. Measuring raw header dimensions would reject a 40MP JPEG that
+    the worker thumbnails without trouble — the JPEG decoder downscales during
+    the read — and would make a REST upload behave differently from a presigned
+    one for the same file.
+
+    Imported lazily because ``services`` imports this module; at module level it
+    would be circular.
+
+    Anything unreadable is left alone: ``sniff_mime`` has already vouched for
+    the magic bytes, and a Pillow failure here is not this function's to report.
+    """
+    from django.conf import settings
+
+    from .services import ImageTooLargeError, open_image
+
+    thumb_size = getattr(settings, "MEDIA_LIBRARY_THUMBNAIL_SIZE", (400, 400))
+
+    try:
+        with open_image(uploaded_file, draft_size=thumb_size):
+            return []
+    except ImageTooLargeError as exc:
+        return [str(exc)]
+    except Exception:
+        return []
+    finally:
+        # The caller stores this file next; a consumed handle writes nothing.
+        with contextlib.suppress(OSError, ValueError):
+            uploaded_file.seek(0)
 
 
 def get_accepted_file_types():

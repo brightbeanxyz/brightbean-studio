@@ -4,6 +4,12 @@ from django.core.exceptions import PermissionDenied
 
 from .models import OrgMembership, WorkspaceMembership
 
+# Prefixes served straight off disk by a URLconf route rather than by a view.
+# Nothing downstream of them reads request.org / request.workspace, so
+# resolving that context would only cost a session read, a user query and two
+# membership queries — once per file, and a media-heavy page requests dozens.
+CONTEXT_FREE_PATH_PREFIXES = ("/static/", "/media/")
+
 
 class RBACMiddleware:
     """Attach org and workspace context to the request.
@@ -33,6 +39,9 @@ class RBACMiddleware:
         request.org_membership = None
         request.workspace = None
         request.workspace_membership = None
+
+        if request.path.startswith(CONTEXT_FREE_PATH_PREFIXES):
+            return self.get_response(request)
 
         # Resolve org and workspace context early.
         # Workspace-from-URL resolution happens in process_view() (after URL
@@ -71,11 +80,14 @@ class RBACMiddleware:
         This runs after URL resolution, so resolver_match and view_kwargs
         are available.
         """
-        if not hasattr(request, "user") or not request.user.is_authenticated:
-            return None
-
+        # workspace_id first: it is a dict lookup, while ``request.user`` is
+        # lazy and forces a session read plus a user query on every URL that
+        # has no workspace in it at all.
         workspace_id = view_kwargs.get("workspace_id")
         if not workspace_id:
+            return None
+
+        if not hasattr(request, "user") or not request.user.is_authenticated:
             return None
 
         # Clear stale context from __call__ before resolving

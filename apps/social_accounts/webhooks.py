@@ -18,7 +18,7 @@ from background_task import background
 
 from .error_messages import WEBHOOK_REJECTED_MESSAGE, WEBHOOK_UNAVAILABLE_MESSAGE, classify_webhook_failure
 from .models import SocialAccount
-from .provider_factory import _get_provider_for_platform
+from .provider_factory import _get_provider_for_platform, apply_analytics_scope_flag
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +203,7 @@ def subscribe_account_webhooks_task(account_id):
     except SocialAccount.DoesNotExist:
         logger.info("Account %s gone before webhooks could be subscribed.", account_id)
         return
+    record_missing_scopes(account)
     subscribe_account_webhooks(account)
 
 
@@ -244,3 +245,38 @@ def unsubscribe_account_webhooks(account) -> bool:
             account.platform,
         )
         return False
+
+
+def record_missing_scopes(account) -> list[str]:
+    """Note which requested scopes the grant came back without.
+
+    Runs on the same post-connect task as the webhook subscription so the
+    OAuth redirect stays free of blocking round trips. Best-effort: a platform
+    that cannot answer leaves the field untouched rather than claiming nothing
+    was granted.
+    """
+    try:
+        provider = _get_provider_for_platform(account.platform, account.workspace.organization_id)
+        # Match what OAuth actually asked for. Connect omits the analytics-only
+        # scopes when the platform's analytics is switched off, so comparing
+        # against the unconditional list would report a scope as missing that we
+        # deliberately never requested — and send the user to reconnect for it.
+        apply_analytics_scope_flag(provider, account.platform)
+        granted = provider.get_granted_scopes(account.oauth_access_token)
+    except Exception:
+        logger.exception("Could not read granted scopes for %s (%s)", account.id, account.platform)
+        return []
+
+    if granted is None:
+        return []
+
+    missing = sorted(set(provider.required_scopes) - granted)
+    SocialAccount.objects.filter(pk=account.pk).update(missing_scopes=missing)
+    if missing:
+        logger.warning(
+            "Account %s (%s) connected without %s; those features will fail.",
+            account.id,
+            account.platform,
+            ", ".join(missing),
+        )
+    return missing

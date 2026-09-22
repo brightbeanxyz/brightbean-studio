@@ -1,11 +1,17 @@
+import logging
+import re
+from urllib.parse import urlsplit
+
 from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import include, path
+from django.urls import include, path, re_path
+from django.views.static import serve
 
 from apps.accounts.views import health_check
 from apps.api.api import api as agent_api
 from apps.oauth_server import views as oauth_views
+
+logger = logging.getLogger(__name__)
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -29,6 +35,7 @@ urlpatterns = [
     path("workspace/<uuid:workspace_id>/inbox/", include("apps.inbox.urls")),
     path("workspace/<uuid:workspace_id>/analytics/", include("apps.analytics.urls")),
     path("webhooks/", include("apps.inbox.webhook_urls")),
+    path("webhooks/", include("apps.common.webhook_urls")),
     # Agent API (Phase 2) — programmatic access for external AI agents.
     # Authenticated via scoped bearer tokens issued from the Organization
     # → API Keys page. OpenAPI docs at /api/v1/docs. ``agent_api.urls``
@@ -101,5 +108,84 @@ if settings.INTELLIGENCE_ENABLED:
         ),
     ]
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# ---------------------------------------------------------------------------
+# User-uploaded media.
+#
+# Gated on SERVE_MEDIA, not DEBUG: under config.settings.production with
+# STORAGE_BACKEND=local the uploads on disk have no other route, so every
+# {{ asset.file.url }} 404s *and* the absolute URLs apps/publisher/engine.py
+# hands to Instagram, Threads, Facebook, Pinterest and Google Business (which
+# fetch media server-side, with no byte-upload fallback) are unfetchable.
+#
+# django.conf.urls.static.static() can't express this — it returns [] whenever
+# DEBUG is False, which is exactly the case that needs the route.
+# ---------------------------------------------------------------------------
+
+
+# Subtrees of MEDIA_ROOT reachable without authentication. An allowlist, not a
+# filter: a new upload_to prefix is private-by-default until it is named here,
+# rather than silently world-readable the day it is added.
+#
+# media_library/ (assets, thumbs/, versions/) has to be public — the platforms
+# listed above fetch those URLs server-side as anonymous clients. avatars/ and
+# workspaces/icons/ are page chrome in templates/base.html, carry nothing
+# confidential, and would cost a permission query per page behind a view.
+#
+# comment_attachments/ is deliberately absent: PostComment has an "internal"
+# visibility that apps/client_portal/views.py filters out for portal clients,
+# so a public URL there would hand back precisely what that filter withholds.
+# apps.approvals.views.comment_attachment serves those behind the workspace
+# membership check instead.
+PUBLIC_MEDIA_PREFIXES = (
+    "media_library/",
+    "avatars/",
+    "workspaces/icons/",
+)
+
+
+def media_urlpatterns():
+    """Route the public subtrees of ``MEDIA_ROOT`` when this process serves media itself."""
+    media_url = settings.MEDIA_URL
+    document_root = settings.MEDIA_ROOT
+
+    if urlsplit(media_url).netloc:
+        # MEDIA_URL points at another host (CDN, object storage). There is
+        # nothing local to route, and a pattern built from an absolute URL
+        # would compile to a regex no request can ever match. The static()
+        # helper this replaced short-circuited on netloc for the same reason.
+        return []
+
+    prefix = media_url.lstrip("/")
+    if not prefix:
+        # An empty prefix compiles to ^(?P<path>.*)$ — a catch-all appended
+        # after every real route, serving whatever it matches out of the
+        # process CWD. With STORAGE_BACKEND=s3, MEDIA_URL is never assigned and
+        # Django normalises the empty default to "/", so this guard is what
+        # keeps a misconfigured deployment from handing out the repo it runs
+        # from (GET /.env, /requirements.txt, ...).
+        return []
+
+    if not document_root:
+        # Refusing to build the route is right — serve() would resolve every
+        # path against the process CWD — but a silent 404 for every upload is
+        # exactly the failure this module exists to stop, so say so out loud.
+        logger.warning(
+            "SERVE_MEDIA is on but MEDIA_ROOT is empty: %s is not routed, so every "
+            "upload will 404 and publishing to the platforms that fetch attachment "
+            "URLs server-side will fail.",
+            media_url,
+        )
+        return []
+
+    return [
+        re_path(
+            rf"^{re.escape(prefix)}(?P<path>{re.escape(subtree)}.*)$",
+            serve,
+            {"document_root": document_root},
+        )
+        for subtree in PUBLIC_MEDIA_PREFIXES
+    ]
+
+
+if settings.SERVE_MEDIA:
+    urlpatterns += media_urlpatterns()

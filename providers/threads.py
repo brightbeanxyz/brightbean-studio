@@ -41,6 +41,11 @@ LONG_LIVED_TOKEN_TTL = 60 * 24 * 60 * 60
 class ThreadsProvider(SocialProvider):
     """Threads API provider using OAuth 2.0."""
 
+    # Publishes from hosted URLs only — the platform fetches the media
+    # itself, so ``PublishContent.media_files`` is never read and the engine
+    # can skip downloading the asset to local disk entirely.
+    needs_local_media = False
+
     def __init__(self, credentials: dict | None = None):
         creds = dict(credentials or {})
         # Normalize: accept app_id/app_secret as aliases for client_id/client_secret
@@ -352,10 +357,8 @@ class ThreadsProvider(SocialProvider):
         # Step 1: Create individual item containers
         children_ids: list[str] = []
 
-        for url in content.media_urls:
-            # Determine media type by extension heuristic
-            lower_url = url.lower()
-            if any(lower_url.endswith(ext) for ext in (".mp4", ".mov")):
+        for index, url in enumerate(content.media_urls):
+            if content.is_video(index):
                 media_type = "VIDEO"
                 key = "video_url"
             else:

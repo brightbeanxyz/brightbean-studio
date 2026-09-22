@@ -5,6 +5,7 @@ comment where the comment never appeared, while the post showed as fully
 published and nothing in the database recorded that anything had gone wrong.
 """
 
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from django.db import OperationalError
@@ -29,7 +30,7 @@ from apps.social_accounts.error_messages import (
 )
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
-from providers.exceptions import APIError, PublishError, RateLimitError
+from providers.exceptions import APIError, PublishError, QuotaExceededError, RateLimitError, TokenExpiredError
 from providers.types import CommentResult
 
 Status = PlatformPost.FirstCommentStatus
@@ -252,6 +253,22 @@ class FirstCommentTaskTest(TestCase):
             self._run(provider)
 
         requeue.assert_called_once_with(str(self.platform_post.id), schedule=900)
+
+    def test_a_quota_reset_time_overrides_the_short_retry_ladder(self):
+        reset_at = timezone.now() + timedelta(hours=8)
+        provider = MagicMock()
+        provider.publish_comment.side_effect = QuotaExceededError(
+            "daily quota spent",
+            resets_at=reset_at,
+            status_code=403,
+        )
+
+        with patch("apps.publisher.engine._post_first_comment_task") as requeue:
+            self._run(provider)
+
+        requeue.assert_called_once()
+        delay = requeue.call_args.kwargs["schedule"]
+        self.assertGreaterEqual(delay, 8 * 3600 - 1)
 
     def test_retries_stop_after_the_maximum(self):
         self.platform_post.first_comment_retry_count = FIRST_COMMENT_MAX_RETRIES
@@ -660,3 +677,32 @@ class FirstCommentDelayCascadeTest(TestCase):
         )
 
         self.assertEqual(_first_comment_delay(self.workspace.id), 90)
+
+
+class TestClassifiedErrorRetryGates:
+    """No-regression pins for the new provider exception classes.
+
+    Both gates read ``status_code`` through a ``getattr`` default of ``None``,
+    so a reclassified error that forgets to carry one silently changes retry
+    behaviour with nothing to show for it in a diff.
+    """
+
+    def test_token_expired_401_is_unambiguous_exactly_like_the_api_error_it_replaces(self):
+        from apps.publisher.engine import _is_ambiguous_submission_failure
+
+        assert _is_ambiguous_submission_failure(APIError("x", status_code=401)) is False
+        assert _is_ambiguous_submission_failure(TokenExpiredError("x", status_code=401)) is False
+
+    def test_token_expired_401_stays_retryable(self):
+        """A refresh happens between attempts, so the next try is a real retry."""
+        from apps.publisher.engine import _is_retryable_first_comment_failure
+
+        assert _is_retryable_first_comment_failure(TokenExpiredError("x", status_code=401)) is True
+
+    def test_quota_exceeded_is_a_rejection_before_the_write_not_an_unknown_outcome(self):
+        from apps.publisher.engine import _is_ambiguous_submission_failure, _is_retryable_first_comment_failure
+
+        exc = QuotaExceededError("spent", status_code=403)
+
+        assert _is_ambiguous_submission_failure(exc) is False
+        assert _is_retryable_first_comment_failure(exc) is True

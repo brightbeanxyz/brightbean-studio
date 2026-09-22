@@ -28,6 +28,14 @@ from apps.api.pagination import decode_offset_cursor, encode_offset_cursor
 from apps.api.schemas import PostResponse
 from apps.composer.models import PlatformPost, Post
 from apps.composer.services import create_post, transition_platform_post
+from apps.inbox.models import InboxMessage, InboxReply
+from apps.inbox.services import (
+    ReplyStateError,
+    create_reply_draft,
+    discard_reply_draft,
+    send_reply_now,
+    update_reply_draft,
+)
 from apps.mcp.protocol import INVALID_PARAMS, JsonRpcError
 from apps.mcp.tools import Tool, register_tool
 from apps.social_accounts.models import SocialAccount
@@ -900,18 +908,20 @@ register_tool(
 # the same workspace — the media is always found.
 
 _MCP_PRESIGN_LOCAL_MODE_MSG = (
-    "Presigned upload requires S3/R2 storage. In local mode use upload_media "
-    "(base64, ≤1 MB) or POST /api/v1/media/ (multipart)."
+    "Presigned upload is not available on this deployment's storage. Use "
+    "upload_media (base64, ≤1 MB) or POST /api/v1/media/ (multipart) instead."
 )
 
 
 def _request_media_upload(args: dict, context: dict[str, Any]) -> dict:
     from apps.media_library.services import create_pending_upload
-    from apps.media_library.storage import is_s3_backend
+    from apps.media_library.storage import supports_presigned_post
     from apps.media_library.validators import ALL_ALLOWED_MIMES
 
     _require_perm(context, "upload_media")
-    if not is_s3_backend():
+    # Capability, not just "is it S3": R2 answers presigned POST with 501, and
+    # a URL the bucket will reject is worse than a clear refusal here.
+    if not supports_presigned_post():
         raise JsonRpcError(INVALID_PARAMS, _MCP_PRESIGN_LOCAL_MODE_MSG)
 
     filename = args.get("filename")
@@ -965,11 +975,11 @@ def _finalize_media_upload(args: dict, context: dict[str, Any]) -> dict:
     from apps.media_library.models import MediaAsset, PendingUpload
     from apps.media_library.quotas import StorageQuotaExceededError
     from apps.media_library.services import inspect_uploaded_object, register_uploaded_asset
-    from apps.media_library.storage import is_s3_backend
+    from apps.media_library.storage import supports_presigned_post
     from apps.media_library.tasks import process_media_asset
 
     _require_perm(context, "upload_media")
-    if not is_s3_backend():
+    if not supports_presigned_post():
         raise JsonRpcError(INVALID_PARAMS, _MCP_PRESIGN_LOCAL_MODE_MSG)
 
     upload_id = _parse_uuid(args.get("upload_id"), "upload_id")
@@ -1206,5 +1216,382 @@ register_tool(
             "additionalProperties": False,
         },
         handler=_get_post_analytics,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# Inbox: shared helpers
+# ---------------------------------------------------------------------------
+
+
+def _inbox_allowed_account_ids(api_key) -> list:
+    return [sa.id for sa in api_key.social_accounts.all()]
+
+
+def _visible_inbox_qs(api_key):
+    """InboxMessages this key may see: in its workspace, on an allowlisted account.
+
+    Fails closed on an empty allowlist rather than relying on ``__in=[]`` folding.
+    """
+    allowed = _inbox_allowed_account_ids(api_key)
+    if not allowed:
+        return InboxMessage.objects.none()
+    return InboxMessage.objects.filter(
+        workspace_id=api_key.workspace_id,
+        social_account_id__in=allowed,
+    ).select_related("social_account")
+
+
+def _get_inbox_message_for_key(api_key, message_id_str: str) -> InboxMessage:
+    message_id = _parse_uuid(message_id_str, "message_id")
+    try:
+        return _visible_inbox_qs(api_key).prefetch_related("replies__author").get(id=message_id)
+    except InboxMessage.DoesNotExist as exc:
+        raise JsonRpcError(INVALID_PARAMS, "Inbox message not found") from exc
+
+
+def _get_inbox_reply_for_key(api_key, reply_id_str: str) -> InboxReply:
+    reply_id = _parse_uuid(reply_id_str, "reply_id")
+    allowed = _inbox_allowed_account_ids(api_key)
+    try:
+        reply = InboxReply.objects.select_related("inbox_message", "inbox_message__social_account", "author").get(
+            id=reply_id, inbox_message__workspace_id=api_key.workspace_id
+        )
+    except InboxReply.DoesNotExist as exc:
+        raise JsonRpcError(INVALID_PARAMS, "Reply not found") from exc
+    if reply.inbox_message.social_account_id not in allowed:
+        raise JsonRpcError(INVALID_PARAMS, "Reply not found")
+    return reply
+
+
+def _serialize_inbox_message(message: InboxMessage) -> dict:
+    from apps.api.schemas import InboxMessageResponse
+
+    return InboxMessageResponse.from_message(message, include_replies=True).model_dump(mode="json")
+
+
+def _serialize_inbox_reply(reply: InboxReply) -> dict:
+    from apps.api.schemas import InboxReplyResponse
+
+    return InboxReplyResponse.from_reply(reply).model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# Tool: list_inbox_messages
+# ---------------------------------------------------------------------------
+
+
+_MCP_INBOX_LIMIT_DEFAULT = 50
+_MCP_INBOX_LIMIT_MAX = 100
+
+
+def _list_inbox_messages(args: dict, context: dict[str, Any]) -> dict:
+    _require_perm(context, "use_inbox")
+    api_key = context["api_key"]
+
+    status = args.get("status")
+    if status is not None and status not in InboxMessage.Status.values:
+        raise JsonRpcError(INVALID_PARAMS, f"status must be one of {', '.join(InboxMessage.Status.values)}")
+    message_type = args.get("message_type")
+    if message_type is not None and message_type not in InboxMessage.MessageType.values:
+        raise JsonRpcError(INVALID_PARAMS, f"message_type must be one of {', '.join(InboxMessage.MessageType.values)}")
+
+    raw_limit = args.get("limit")
+    try:
+        limit = _MCP_INBOX_LIMIT_DEFAULT if raw_limit is None else int(raw_limit)
+    except (TypeError, ValueError) as exc:
+        raise JsonRpcError(INVALID_PARAMS, f"limit must be an integer between 1 and {_MCP_INBOX_LIMIT_MAX}") from exc
+    if limit < 1 or limit > _MCP_INBOX_LIMIT_MAX:
+        raise JsonRpcError(INVALID_PARAMS, f"limit must be between 1 and {_MCP_INBOX_LIMIT_MAX}")
+
+    try:
+        offset = decode_offset_cursor(args.get("cursor"))
+    except ValueError as exc:
+        raise JsonRpcError(INVALID_PARAMS, "cursor is not a valid pagination cursor") from exc
+
+    qs = _visible_inbox_qs(api_key).prefetch_related("replies__author")
+    if status:
+        qs = qs.filter(status=status)
+    if message_type:
+        qs = qs.filter(message_type=message_type)
+    sa_id = args.get("social_account_id")
+    if sa_id is not None:
+        sa_uuid = _parse_uuid(sa_id, "social_account_id")
+        if sa_uuid not in set(_inbox_allowed_account_ids(api_key)):
+            raise JsonRpcError(INVALID_PARAMS, "social_account_id is not in this API key's allowlist")
+        qs = qs.filter(social_account_id=sa_uuid)
+    qs = qs.order_by("-received_at", "id")
+
+    rows = list(qs[offset : offset + limit + 1])
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return _wrap_text(
+        {
+            "messages": [_serialize_inbox_message(m) for m in rows],
+            "limit": limit,
+            "next_cursor": encode_offset_cursor(offset + limit) if has_more else None,
+        }
+    )
+
+
+register_tool(
+    Tool(
+        name="list_inbox_messages",
+        description=(
+            "List inbound inbox items (comments, mentions, DMs, reviews) for the accounts this "
+            "API key is allowed to act on, newest first. Each item carries its reply thread "
+            "(including any draft replies). Optional `status` (unread/open/resolved/archived), "
+            "`message_type` (comment/mention/dm/review) and `social_account_id` filters, plus "
+            "`limit` (default 50, max 100). When more remain, `next_cursor` is non-null — pass it "
+            "back as `cursor`. Requires the use_inbox permission."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": list(InboxMessage.Status.values)},
+                "message_type": {"type": "string", "enum": list(InboxMessage.MessageType.values)},
+                "social_account_id": {"type": "string", "format": "uuid"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": _MCP_INBOX_LIMIT_MAX,
+                    "default": _MCP_INBOX_LIMIT_DEFAULT,
+                },
+                "cursor": {"type": "string", "description": "Opaque cursor from a previous call's next_cursor."},
+            },
+            "additionalProperties": False,
+        },
+        handler=_list_inbox_messages,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# Tool: get_inbox_message
+# ---------------------------------------------------------------------------
+
+
+def _get_inbox_message(args: dict, context: dict[str, Any]) -> dict:
+    _require_perm(context, "use_inbox")
+    if "message_id" not in args:
+        raise JsonRpcError(INVALID_PARAMS, "message_id is required")
+    message = _get_inbox_message_for_key(context["api_key"], args["message_id"])
+    return _wrap_text(_serialize_inbox_message(message))
+
+
+register_tool(
+    Tool(
+        name="get_inbox_message",
+        description=(
+            "Retrieve one inbox message by ID, including its full reply thread and any draft "
+            "replies. Returns 'Inbox message not found' for IDs outside this key's workspace or "
+            "account allowlist (same as a truly nonexistent ID). Requires the use_inbox permission."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {"message_id": {"type": "string", "format": "uuid"}},
+            "required": ["message_id"],
+            "additionalProperties": False,
+        },
+        handler=_get_inbox_message,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# Tool: create_reply_draft
+# ---------------------------------------------------------------------------
+
+
+def _create_reply_draft(args: dict, context: dict[str, Any]) -> dict:
+    _require_perm(context, "use_inbox")
+    api_key = context["api_key"]
+    if "message_id" not in args:
+        raise JsonRpcError(INVALID_PARAMS, "message_id is required")
+    if not args.get("body"):
+        raise JsonRpcError(INVALID_PARAMS, "body is required")
+    message = _get_inbox_message_for_key(api_key, args["message_id"])
+    try:
+        reply = create_reply_draft(
+            message=message,
+            body=args["body"],
+            author=api_key.issued_by if api_key.issued_by_id else None,
+        )
+    except ValueError as exc:
+        raise JsonRpcError(INVALID_PARAMS, str(exc)) from exc
+    return _wrap_text(_serialize_inbox_reply(reply))
+
+
+register_tool(
+    Tool(
+        name="create_reply_draft",
+        description=(
+            "Draft a reply to an inbox message. The draft is saved but NOT sent to the platform; "
+            "a human can review it in the inbox, or call send_reply to deliver it. Requires the "
+            "use_inbox permission (drafting is not sending)."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "message_id": {"type": "string", "format": "uuid"},
+                "body": {"type": "string", "minLength": 1, "maxLength": 10000},
+            },
+            "required": ["message_id", "body"],
+            "additionalProperties": False,
+        },
+        handler=_create_reply_draft,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# Tool: update_reply_draft
+# ---------------------------------------------------------------------------
+
+
+def _update_reply_draft(args: dict, context: dict[str, Any]) -> dict:
+    _require_perm(context, "use_inbox")
+    if "reply_id" not in args:
+        raise JsonRpcError(INVALID_PARAMS, "reply_id is required")
+    if not args.get("body"):
+        raise JsonRpcError(INVALID_PARAMS, "body is required")
+    reply = _get_inbox_reply_for_key(context["api_key"], args["reply_id"])
+    try:
+        update_reply_draft(reply, body=args["body"])
+    except (ReplyStateError, ValueError) as exc:
+        raise JsonRpcError(INVALID_PARAMS, str(exc)) from exc
+    return _wrap_text(_serialize_inbox_reply(reply))
+
+
+register_tool(
+    Tool(
+        name="update_reply_draft",
+        description=(
+            "Replace the body of an existing draft (or failed) reply. Sent replies cannot be "
+            "edited. Requires the use_inbox permission."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "reply_id": {"type": "string", "format": "uuid"},
+                "body": {"type": "string", "minLength": 1, "maxLength": 10000},
+            },
+            "required": ["reply_id", "body"],
+            "additionalProperties": False,
+        },
+        handler=_update_reply_draft,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# Tool: discard_reply_draft
+# ---------------------------------------------------------------------------
+
+
+def _discard_reply_draft(args: dict, context: dict[str, Any]) -> dict:
+    _require_perm(context, "use_inbox")
+    if "reply_id" not in args:
+        raise JsonRpcError(INVALID_PARAMS, "reply_id is required")
+    reply = _get_inbox_reply_for_key(context["api_key"], args["reply_id"])
+    reply_id = str(reply.id)
+    try:
+        discard_reply_draft(reply)
+    except ReplyStateError as exc:
+        raise JsonRpcError(INVALID_PARAMS, str(exc)) from exc
+    return _wrap_text({"discarded": True, "reply_id": reply_id})
+
+
+register_tool(
+    Tool(
+        name="discard_reply_draft",
+        description=(
+            "Delete a draft (or failed) reply. Sent replies are permanent and cannot be "
+            "discarded. Requires the use_inbox permission."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {"reply_id": {"type": "string", "format": "uuid"}},
+            "required": ["reply_id"],
+            "additionalProperties": False,
+        },
+        handler=_discard_reply_draft,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# Tool: send_reply
+# ---------------------------------------------------------------------------
+
+
+def _send_reply(args: dict, context: dict[str, Any]) -> dict:
+    # Sending pushes text to the real platform on the workspace's behalf,
+    # so it needs the stronger inbox permission — same split as the web UI.
+    _require_perm(context, "reply_from_inbox")
+    api_key = context["api_key"]
+    actor = api_key.issued_by if api_key.issued_by_id else None
+
+    if "reply_id" in args and ("message_id" in args or "body" in args):
+        raise JsonRpcError(INVALID_PARAMS, "reply_id cannot be combined with message_id or body")
+    if "reply_id" in args:
+        reply = _get_inbox_reply_for_key(api_key, args["reply_id"])
+    else:
+        if "message_id" not in args or not args.get("body"):
+            raise JsonRpcError(
+                INVALID_PARAMS,
+                "Provide either reply_id (to send an existing draft) or message_id + body",
+            )
+        message = _get_inbox_message_for_key(api_key, args["message_id"])
+        try:
+            reply = create_reply_draft(message=message, body=args["body"], author=actor)
+        except ValueError as exc:
+            raise JsonRpcError(INVALID_PARAMS, str(exc)) from exc
+
+    try:
+        send_reply_now(reply, actor=actor)
+    except ReplyStateError as exc:
+        raise JsonRpcError(INVALID_PARAMS, str(exc)) from exc
+    except Exception as exc:  # platform refused it — reply is left in "failed"
+        raise JsonRpcError(INVALID_PARAMS, f"Reply not sent: {reply.send_error or 'Please try again later.'}") from exc
+
+    return _wrap_text(_serialize_inbox_reply(reply))
+
+
+register_tool(
+    Tool(
+        name="send_reply",
+        description=(
+            "Deliver a reply to an inbox message's platform. Either pass `reply_id` to send an "
+            "existing draft, or `message_id` + `body` to create and send in one step. On a "
+            "platform refusal the reply is kept in `failed` state (retry with the same reply_id) "
+            "and an error is returned. Requires the reply_from_inbox permission."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "reply_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "ID of an existing draft/failed reply to send.",
+                },
+                "message_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Inbox message to reply to (with `body`) when not using `reply_id`.",
+                },
+                "body": {"type": "string", "minLength": 1, "maxLength": 10000},
+            },
+            "oneOf": [
+                {
+                    "required": ["reply_id"],
+                    "not": {"anyOf": [{"required": ["message_id"]}, {"required": ["body"]}]},
+                },
+                {"required": ["message_id", "body"], "not": {"required": ["reply_id"]}},
+            ],
+            "additionalProperties": False,
+        },
+        handler=_send_reply,
     )
 )

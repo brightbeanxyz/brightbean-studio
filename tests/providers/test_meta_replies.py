@@ -6,6 +6,7 @@ HUMAN_AGENT tag once the incoming message is more than 24 hours old.
 """
 
 from unittest.mock import MagicMock
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -463,3 +464,87 @@ def test_instagram_login_without_its_own_id_keeps_every_message():
     provider._fetch_media_comments = MagicMock(return_value=[])
 
     assert len(provider.get_messages("token")) == 1
+
+
+# --------------------------------------------------- re-requesting permissions
+
+
+def test_facebook_auth_url_rerequests_declined_permissions():
+    """Without auth_type=rerequest Meta skips the dialog on a reconnect.
+
+    A user who declined a scope could then never be asked again, and the
+    connection silently lacks the ability it advertises.
+    """
+    provider = FacebookProvider(CREDS)
+    url = provider.get_auth_url("https://studio.example/cb", "state-1")
+
+    assert parse_qs(urlparse(url).query)["auth_type"] == ["rerequest"]
+
+
+def test_instagram_auth_url_rerequests_declined_permissions():
+    provider = InstagramProvider(CREDS)
+    url = provider.get_auth_url("https://studio.example/cb", "state-1")
+
+    assert parse_qs(urlparse(url).query)["auth_type"] == ["rerequest"]
+
+
+def test_instagram_login_auth_url_carries_no_facebook_only_params():
+    """auth_type belongs to the facebook.com dialog, not Instagram's own.
+
+    Sending parameters the Instagram-hosted dialog does not document risks it
+    rejecting the request outright, so the shared helper must not reach here.
+    """
+    provider = InstagramLoginProvider(CREDS)
+    query = parse_qs(urlparse(provider.get_auth_url("https://studio.example/cb", "state-1")).query)
+
+    assert "auth_type" not in query
+
+
+# ------------------------------------------------------ granted-scope readback
+
+
+def test_granted_scopes_inspect_the_token_not_me_permissions():
+    """These accounts hold a *Page* token, so /me resolves to the Page, which
+    has no permissions edge. debug_token reports any token's scopes."""
+    provider = FacebookProvider(CREDS)
+    provider._request = MagicMock(
+        return_value=_resp({"data": {"is_valid": True, "scopes": ["pages_show_list", "pages_manage_posts"]}})
+    )
+
+    assert provider.get_granted_scopes("page-token") == {"pages_show_list", "pages_manage_posts"}
+    provider._request.assert_called_once_with(
+        "GET",
+        "https://graph.facebook.com/v25.0/debug_token",
+        params={"input_token": "page-token", "access_token": "id|secret"},
+    )
+
+
+def test_granted_scopes_need_app_credentials_to_ask():
+    """debug_token requires an app token; without one the answer is unknown."""
+    provider = FacebookProvider({"client_id": "id"})
+
+    assert provider.get_granted_scopes("token") is None
+
+
+def test_a_token_meta_will_not_describe_is_unknown_not_unscoped():
+    """An empty set would report every scope as missing and demand a reconnect."""
+    provider = FacebookProvider(CREDS)
+    provider._request = MagicMock(return_value=_resp({"data": {"is_valid": False}}))
+
+    assert provider.get_granted_scopes("token") is None
+
+
+def test_a_failed_readback_is_unknown_not_empty():
+    from providers.exceptions import RateLimitError
+
+    provider = FacebookProvider(CREDS)
+    provider._request = MagicMock(side_effect=RateLimitError("slow down", platform="facebook"))
+
+    assert provider.get_granted_scopes("token") is None
+
+
+def test_providers_that_cannot_be_asked_report_unknown():
+    from providers.bluesky import BlueskyProvider
+
+    assert BlueskyProvider(CREDS).get_granted_scopes("token") is None
+    assert InstagramLoginProvider(CREDS).get_granted_scopes("token") is None

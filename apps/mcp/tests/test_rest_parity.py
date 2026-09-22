@@ -488,3 +488,76 @@ class TestProposedPublishAtMcp:
         )
         # A tz-less value is interpreted as UTC and serialized with a Z suffix.
         assert created["proposed_publish_at"] == "2027-09-01T09:00:00Z"
+
+
+# ---------------------------------------------------------------------------
+# Inbox parity — REST /inbox and the MCP inbox tools share
+# ``InboxMessageResponse`` / ``InboxReplyResponse``, so payloads must match.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def inbox_message(db, workspace, social_account):
+    from apps.inbox.models import InboxMessage
+
+    return InboxMessage.objects.create(
+        workspace=workspace,
+        social_account=social_account,
+        platform_message_id="pm-parity-1",
+        message_type="comment",
+        sender_name="Commenter",
+        sender_handle="commenter",
+        body="Nice post!",
+        received_at=timezone.now() - timedelta(hours=1),
+    )
+
+
+@pytest.mark.django_db
+class TestRestMcpInboxParity:
+    def test_get_inbox_message_bodies_match(self, client_with_token, inbox_message):
+        from apps.inbox.models import InboxReply
+
+        InboxReply.objects.create(inbox_message=inbox_message, body="a draft reply")
+
+        rest = client_with_token.get(f"/api/v1/inbox/{inbox_message.id}")
+        assert rest.status_code == 200, rest.content
+        rest_body = rest.json()
+
+        mcp = client_with_token.post(
+            MCP_URL,
+            data=json.dumps(
+                _rpc(
+                    "tools/call",
+                    {"name": "get_inbox_message", "arguments": {"message_id": str(inbox_message.id)}},
+                )
+            ),
+            content_type="application/json",
+        )
+        assert mcp.status_code == 200
+        envelope = mcp.json()
+        assert "error" not in envelope, envelope
+        mcp_body = json.loads(envelope["result"]["content"][0]["text"])
+
+        assert mcp_body == rest_body, (
+            "MCP and REST disagree on the InboxMessageResponse payload. "
+            "Both surfaces must call InboxMessageResponse.from_message."
+        )
+
+    def test_list_inbox_messages_matches_rest_list(self, client_with_token, inbox_message):
+        from apps.inbox.models import InboxReply
+
+        InboxReply.objects.create(inbox_message=inbox_message, body="draft")
+
+        rest = client_with_token.get("/api/v1/inbox/")
+        assert rest.status_code == 200, rest.content
+        rest_body = rest.json()
+
+        mcp = client_with_token.post(
+            MCP_URL,
+            data=json.dumps(_rpc("tools/call", {"name": "list_inbox_messages", "arguments": {}})),
+            content_type="application/json",
+        )
+        assert mcp.status_code == 200
+        mcp_body = json.loads(mcp.json()["result"]["content"][0]["text"])
+
+        assert mcp_body == rest_body

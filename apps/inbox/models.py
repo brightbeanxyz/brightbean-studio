@@ -124,6 +124,11 @@ class InboxMessage(models.Model):
 
 
 class InboxReply(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     inbox_message = models.ForeignKey(
         InboxMessage,
@@ -137,15 +142,26 @@ class InboxReply(models.Model):
         related_name="inbox_replies",
     )
     body = models.TextField()
+    status = models.CharField(
+        max_length=10,
+        choices=Status.choices,
+        default=Status.DRAFT,
+        db_index=True,
+    )
     platform_reply_id = models.CharField(max_length=255, blank=True, default="")
-    sent_at = models.DateTimeField(auto_now_add=True)
+    send_error = models.TextField(blank=True, default="")
+    # ``sent_at`` is null until the reply is actually delivered to the platform;
+    # a row now exists in ``draft``/``failed`` states before any send happens.
+    sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "inbox_reply"
-        ordering = ["sent_at"]
+        ordering = ["created_at"]
 
     def __str__(self):
-        return f"Reply by {self.author} on {self.sent_at:%Y-%m-%d %H:%M}"
+        return f"{self.get_status_display()} reply by {self.author} ({self.created_at:%Y-%m-%d %H:%M})"
 
 
 class InternalNote(models.Model):

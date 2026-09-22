@@ -84,3 +84,70 @@ class TestConnectionLinkPkce:
         mock_provider.exchange_code.assert_called_once()
         _, kwargs = mock_provider.exchange_code.call_args
         assert kwargs["code_verifier"] == verifier
+
+
+@pytest.mark.django_db
+class TestConnectionLinkPageTokens:
+    """A Page must be driven by its own token, and a Page we had to skip must
+    not leave the client on a success page for an account never connected."""
+
+    def _callback(self, client, workspace, connection_link, pages):
+        nonce = "nonce-pages"
+        state = _sign_connection_link_state(workspace.id, "facebook", connection_link.token, nonce)
+        session = client.session
+        session[CONNECTION_LINK_OAUTH_SESSION_KEY] = {
+            "nonce": nonce,
+            "workspace_id": str(workspace.id),
+            "platform": "facebook",
+            "token": connection_link.token,
+        }
+        session.save()
+
+        provider = MagicMock()
+        provider.exchange_code.return_value = OAuthTokens(access_token="USER-TOKEN", refresh_token="", expires_in=None)
+        provider.get_profile.return_value = AccountProfile(platform_id="me-1", name="Owner")
+        provider.get_user_pages.return_value = pages
+
+        url = reverse("onboarding:oauth_callback", kwargs={"platform": "facebook"})
+        with (
+            patch("apps.onboarding.views._get_provider_for_platform", return_value=provider),
+            patch("apps.social_accounts.views.subscribe_account_webhooks_task"),
+        ):
+            response = client.get(url, {"code": "auth-code", "state": state})
+        return response
+
+    def test_a_page_is_connected_with_its_own_token(self, client, workspace, connection_link):
+        from apps.social_accounts.models import SocialAccount
+
+        response = self._callback(
+            client,
+            workspace,
+            connection_link,
+            [{"id": "page-1", "name": "Page One", "access_token": "PAGE-TOKEN"}],
+        )
+
+        assert response.status_code == 302
+        account = SocialAccount.objects.get(account_platform_id="page-1")
+        assert account.oauth_access_token == "PAGE-TOKEN"
+        assert "connection_link_error" not in client.session
+
+    def test_a_page_without_its_own_token_is_reported_not_silently_dropped(self, client, workspace, connection_link):
+        from apps.social_accounts.models import SocialAccount
+
+        response = self._callback(
+            client,
+            workspace,
+            connection_link,
+            [
+                {"id": "page-1", "name": "Page One", "access_token": "PAGE-TOKEN"},
+                {"id": "page-2", "name": "Page Two"},
+            ],
+        )
+
+        assert response.status_code == 302
+        assert SocialAccount.objects.filter(account_platform_id="page-1").exists()
+        # Never connected with the user token as a stand-in.
+        assert not SocialAccount.objects.filter(account_platform_id="page-2").exists()
+        error = client.session["connection_link_error"]
+        assert "Page Two" in error
+        assert "Page One" not in error

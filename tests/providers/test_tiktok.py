@@ -9,7 +9,7 @@ import pytest
 
 from providers.exceptions import APIError, PublishError
 from providers.tiktok import TikTokProvider
-from providers.types import PostType, PublishContent
+from providers.types import PostType, PublishContent, PublishState
 
 
 def _make_response(payload: dict) -> MagicMock:
@@ -609,4 +609,97 @@ class TestPublishPost:
             provider.publish_post("tok", _video_content(privacy_level="BOGUS"))
 
         assert excinfo.value.retryable is False
+        mock_request.assert_not_called()
+
+
+class TestCheckPublishStatus:
+    """TikTok only accepts the upload; publishing happens afterwards."""
+
+    def test_provider_declares_async_publish(self):
+        assert TikTokProvider({"client_key": "k", "client_secret": "s"}).publish_is_async is True
+
+    @patch.object(TikTokProvider, "_request")
+    def test_complete_returns_the_real_video_id(self, mock_request):
+        mock_request.return_value = _make_response(
+            {"data": {"status": "PUBLISH_COMPLETE", "publicaly_available_post_id": [7412345678901234567]}}
+        )
+        status = TikTokProvider({}).check_publish_status("tok", "v_pub_file~abc")
+
+        assert status.state is PublishState.COMPLETE
+        assert status.platform_post_id == "7412345678901234567"
+        assert status.error == ""
+
+    @patch.object(TikTokProvider, "_request")
+    def test_failed_carries_tiktoks_own_reason(self, mock_request):
+        mock_request.return_value = _make_response(
+            {"data": {"status": "FAILED", "fail_reason": "video_format_check_failed"}}
+        )
+        status = TikTokProvider({}).check_publish_status("tok", "v_pub_file~abc")
+
+        assert status.state is PublishState.FAILED
+        assert "video_format_check_failed" in status.error
+
+    @patch.object(TikTokProvider, "_request")
+    def test_processing_is_pending_not_an_outcome(self, mock_request):
+        mock_request.return_value = _make_response({"data": {"status": "PROCESSING_UPLOAD"}})
+
+        assert TikTokProvider({}).check_publish_status("tok", "v_pub_file~abc").state is PublishState.PENDING
+
+    @patch.object(TikTokProvider, "_request")
+    def test_unknown_future_status_is_pending_not_failed(self, mock_request):
+        """A status TikTok adds later must make us wait, not declare an outcome."""
+        mock_request.return_value = _make_response({"data": {"status": "SOMETHING_NEW"}})
+
+        assert TikTokProvider({}).check_publish_status("tok", "v_pub_file~abc").state is PublishState.PENDING
+
+    @patch.object(TikTokProvider, "_request")
+    def test_inbox_tells_the_user_to_finish_in_the_app(self, mock_request):
+        mock_request.return_value = _make_response({"data": {"status": "SEND_TO_USER_INBOX"}})
+        status = TikTokProvider({}).check_publish_status("tok", "v_inbox_file~abc")
+
+        assert status.state is PublishState.INBOX
+        assert "TikTok app" in status.error
+
+
+class TestFileUploadStreaming:
+    """The video is streamed off disk, never read into memory."""
+
+    @patch.object(TikTokProvider, "_check_creator_constraints", side_effect=lambda t, p, c, **kw: p)
+    @patch.object(TikTokProvider, "_request")
+    def test_upload_body_is_a_file_object_with_content_length(self, mock_request, _constraints, tmp_path):
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"\0" * 2048)
+        mock_request.return_value = _make_response(
+            {"data": {"publish_id": "v_pub_file~x", "upload_url": "https://upload.tiktok/x"}}
+        )
+
+        TikTokProvider({}).publish_post(
+            "tok",
+            PublishContent(text="hi", post_type=PostType.VIDEO, media_files=[str(video)]),
+        )
+
+        put_call = [c for c in mock_request.call_args_list if c.args[0] == "PUT"][0]
+        body = put_call.kwargs["data"]
+        assert hasattr(body, "read"), "video must be handed to httpx as a stream, not bytes"
+        assert put_call.kwargs["headers"]["Content-Length"] == "2048"
+
+    @patch.object(TikTokProvider, "_check_creator_constraints", side_effect=lambda t, p, c, **kw: p)
+    @patch.object(TikTokProvider, "_request")
+    def test_oversize_video_fails_permanently_with_the_real_reason(self, mock_request, _constraints, tmp_path):
+        """Retrying can't shrink the file; burning the budget hides why it failed."""
+        video = tmp_path / "huge.mp4"
+        video.write_bytes(b"\0" * 16)
+
+        with (
+            patch("providers.tiktok.os.path.getsize", return_value=90_000_000),
+            pytest.raises(PublishError) as exc,
+        ):
+            TikTokProvider({}).publish_post(
+                "tok",
+                PublishContent(text="hi", post_type=PostType.VIDEO, media_files=[str(video)]),
+            )
+
+        assert exc.value.retryable is False
+        assert "90 MB" in str(exc.value)
+        assert "64 MB" in str(exc.value)
         mock_request.assert_not_called()

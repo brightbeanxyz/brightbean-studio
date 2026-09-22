@@ -1,5 +1,6 @@
 """Business logic for media library operations."""
 
+import contextlib
 import io
 import logging
 import os
@@ -77,12 +78,22 @@ def create_asset(
     deployments would be served back with the spoofed type and execute script
     in the viewer's browser.
 
+    The *stored filename* gets the same treatment, because the sniff alone does
+    not close that hole: a file whose first bytes are a valid PNG header sails
+    through validation, and if it is still named "poc.html" on disk then both
+    django.views.static.serve and Caddy's file_server will hand it back as
+    text/html. ``filename`` keeps the uploader's name for display; the key on
+    disk gets the extension the bytes justify.
+
     Enforces the org-level storage quota before persisting; raises
     ``StorageQuotaExceededError`` (mapped to HTTP 413 by the API layer) when
     the upload would push usage over the cap.
     """
     from .quotas import enforce_storage_quota
-    from .validators import sniff_mime  # local import to avoid validator import cycle on the test path
+    from .validators import (  # local import to avoid validator import cycle on the test path
+        sniff_mime,
+        storage_filename,
+    )
 
     file_type, errors = validate_file(uploaded_file)
     if errors:
@@ -92,11 +103,14 @@ def create_asset(
 
     sniffed_mime = sniff_mime(uploaded_file) or ""
 
+    display_name = uploaded_file.name
+    uploaded_file.name = storage_filename(display_name, sniffed_mime)
+
     asset = MediaAsset(
         organization=organization,
         workspace=workspace,
         folder=folder,
-        filename=uploaded_file.name,
+        filename=display_name,
         file=uploaded_file,
         media_type=file_type,
         mime_type=sniffed_mime,
@@ -352,17 +366,93 @@ def _check_post_references(asset):
     return [{"id": str(ref.post_id), "caption": (ref.post.caption or "")[:80]} for ref in scheduled_refs]
 
 
-def extract_image_metadata(file_path_or_file):
-    """Extract dimensions from an image file using Pillow."""
-    try:
-        from PIL import Image
+class ImageTooLargeError(Exception):
+    """An image would cost more memory to decode than we are willing to spend."""
 
-        if hasattr(file_path_or_file, "read"):
-            file_path_or_file.seek(0)
-            img = Image.open(file_path_or_file)
-        else:
-            img = Image.open(file_path_or_file)
-        width, height = img.size
+
+@contextlib.contextmanager
+def open_image(file_path_or_file, *, draft_size=None, enforce_limit=True):
+    """Open an image, bound its decode cost, and close it afterwards.
+
+    Every Pillow entry point in this module goes through here, because on a
+    512 MB dyno the decode — not the file — is what kills the process. A 20 MB
+    upload (``MEDIA_LIBRARY_MAX_IMAGE_SIZE``) says nothing about pixel count,
+    and Pillow's own bomb check only *warns* between 1x and 2x its
+    ``MAX_IMAGE_PIXELS``, so its default leaves a window that decodes to over
+    500 MB.
+
+    ``Image.open`` reads the header only, so both the draft and the guard run
+    before a single pixel is decoded.
+
+    ``draft_size`` is the size the caller ultimately wants, and asks the JPEG
+    decoder to downscale during the read (DCT scaling at 1/2, 1/4, 1/8). An
+    8000x6000 JPEG then decodes at roughly 1000x750, and the guard sees that
+    reduced size — the honest measure of what the file costs us. We draft to
+    twice the requested size, which is what ``Image.thumbnail`` does with its
+    default ``reducing_gap=2.0``, so the later resample has the same source
+    data to work with and output quality is unchanged. (``thumbnail`` calls
+    ``draft`` itself; the second call is a documented no-op, guarded by
+    ``if self.decoderconfig: return None``.)
+
+    ``draft`` is defined on JpegImageFile only and documented as a no-op
+    elsewhere, so PNG/WebP/GIF fall through to a full-size check — which is
+    right, because those genuinely do decode full-size.
+
+    ``enforce_limit=False`` opens without the ceiling, for callers that only
+    read header attributes. ``Image.open`` decodes nothing, so reading
+    ``img.size`` off a 500-megapixel file is free — refusing to answer would
+    just mean storing 0x0 for an image whose dimensions we are holding.
+
+    Raises ``ImageTooLargeError`` rather than returning None: the caller has to
+    tell "this file is too big" from "Pillow could not read this", and the
+    media asset needs a real reason to show the user.
+    """
+    from PIL import Image
+
+    max_pixels = getattr(settings, "MEDIA_LIBRARY_MAX_IMAGE_PIXELS", 30_000_000)
+    # Deliberately NOT assigning Image.MAX_IMAGE_PIXELS from that number.
+    # Pillow evaluates its own ceiling inside Image.open(), before draft() has
+    # had a chance to reduce anything, so pinning it here would reject large
+    # JPEGs on their header dimensions — exactly the files draft() makes cheap.
+    # Pillow's default stays as the outer backstop; the check below is the
+    # operative limit, and it runs on the drafted size.
+
+    if hasattr(file_path_or_file, "seek"):
+        file_path_or_file.seek(0)
+
+    try:
+        opened = Image.open(file_path_or_file)
+    except Image.DecompressionBombError as exc:
+        # Pillow's own backstop fired first (above 2x MAX_IMAGE_PIXELS). Speak
+        # with one voice so callers only have to handle our exception.
+        raise ImageTooLargeError(str(exc)) from exc
+
+    with opened as img:
+        if draft_size is not None:
+            img.draft("RGB", (draft_size[0] * 2, draft_size[1] * 2))
+        pixels = img.width * img.height
+        if enforce_limit and pixels > max_pixels:
+            raise ImageTooLargeError(
+                f"Image is {img.width}x{img.height} ({pixels / 1_000_000:.1f} megapixels); "
+                f"the limit is {max_pixels / 1_000_000:g} megapixels."
+            )
+        yield img
+
+
+def extract_image_metadata(file_path_or_file):
+    """Extract dimensions from an image file using Pillow.
+
+    Deliberately exempt from the pixel ceiling, and not drafted. Reading
+    ``img.size`` decodes nothing, so there is no memory to save by refusing —
+    and refusing would be actively wrong, since the width and height we would
+    withhold are the very numbers the guard just read to make its decision.
+    Enforcing here stored 0x0 on assets whose thumbnails generated fine, because
+    the thumbnail path drafts the image down and this one does not, so the two
+    judged the same file against different pixel counts.
+    """
+    try:
+        with open_image(file_path_or_file, enforce_limit=False) as img:
+            width, height = img.size
         return {"width": width, "height": height}
     except Exception:
         logger.exception("Failed to extract image metadata")
@@ -370,34 +460,49 @@ def extract_image_metadata(file_path_or_file):
 
 
 def generate_image_thumbnail(file_path_or_file):
-    """Generate a thumbnail from an image file using Pillow."""
+    """Generate a thumbnail from an image file using Pillow.
+
+    Order matters here, and it used to be wrong. Flattening alpha or converting
+    a colour space BEFORE the resize does that work at full resolution — a
+    white background allocated at the source's size, then pasted onto, all to
+    produce a 400x400 JPEG. Shrinking first makes both operations free.
+    Measured on a 6000x4000 RGBA PNG: peak RSS +196 MB before, +104 MB after.
+
+    It also keeps ``thumbnail()``'s own internal ``draft()`` call effective.
+    Converting first replaces the JpegImageFile with a plain Image, and the DCT
+    downscale is lost with it — which is what made CMYK JPEGs so expensive.
+    """
     try:
         from PIL import Image
 
         thumb_size = getattr(settings, "MEDIA_LIBRARY_THUMBNAIL_SIZE", (400, 400))
 
-        if hasattr(file_path_or_file, "read"):
-            file_path_or_file.seek(0)
-            img = Image.open(file_path_or_file)
-        else:
-            img = Image.open(file_path_or_file)
+        with open_image(file_path_or_file, draft_size=thumb_size) as src:
+            # Palette images resample badly — Pillow forces NEAREST on mode "P"
+            # — so promote to RGBA first. That is the one conversion worth
+            # doing at full size, and it is 4 bytes/px against the 8 the old
+            # order cost.
+            img = src.convert("RGBA") if src.mode == "P" else src
 
-        # Convert to RGB if necessary (e.g., RGBA PNGs, CMYK)
-        if img.mode in ("RGBA", "LA", "P"):
-            background = Image.new("RGB", img.size, (255, 255, 255))
-            if img.mode == "P":
-                img = img.convert("RGBA")
-            background.paste(img, mask=img.split()[-1] if "A" in img.mode else None)
-            img = background
-        elif img.mode != "RGB":
-            img = img.convert("RGB")
+            img.thumbnail(thumb_size, Image.LANCZOS)
 
-        img.thumbnail(thumb_size, Image.LANCZOS)
+            # Now at thumbnail size, so flattening and converting are free.
+            if img.mode in ("RGBA", "LA"):
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[-1])
+                img = background
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
 
-        buffer = io.BytesIO()
-        img.save(buffer, format="JPEG", quality=85)
-        buffer.seek(0)
-        return ContentFile(buffer.read(), name="thumbnail.jpg")
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=85)
+            return ContentFile(buffer.getvalue(), name="thumbnail.jpg")
+    except ImageTooLargeError:
+        # Propagates on purpose, unlike every other failure here. "Too large" is
+        # determinate and worth telling the user about, so the caller can fail
+        # the asset; returning None would mark it COMPLETED with no thumbnail,
+        # no dimensions and nothing on screen to explain either.
+        raise
     except Exception:
         logger.exception("Failed to generate image thumbnail")
         return None
@@ -550,52 +655,55 @@ def apply_image_edits(file_path_or_file, operations):
     """
     from PIL import Image
 
-    if hasattr(file_path_or_file, "read"):
-        file_path_or_file.seek(0)
-        img = Image.open(file_path_or_file)
-    else:
-        img = Image.open(file_path_or_file)
+    # No draft here: crop and rotate operate on the original pixels, so this
+    # path genuinely needs full resolution and the guard's full-size check is
+    # the right one. ``ImageTooLargeError`` propagates to the caller, which
+    # fails the version rather than taking the dyno down with it.
+    with open_image(file_path_or_file) as src:
+        # Crop first when we have one — every later step then works on a
+        # smaller buffer.
+        crop = operations.get("crop")
+        if crop:
+            left = int(crop["x"])
+            top = int(crop["y"])
+            right = left + int(crop["width"])
+            bottom = top + int(crop["height"])
+            img = src.crop((left, top, right, bottom))
+        else:
+            img = src
 
-    # Apply crop
-    crop = operations.get("crop")
-    if crop:
-        left = int(crop["x"])
-        top = int(crop["y"])
-        right = left + int(crop["width"])
-        bottom = top + int(crop["height"])
-        img = img.crop((left, top, right, bottom))
+        # Apply rotation
+        rotate = operations.get("rotate")
+        if rotate:
+            img = img.rotate(-int(rotate), expand=True)
 
-    # Apply rotation
-    rotate = operations.get("rotate")
-    if rotate:
-        img = img.rotate(-int(rotate), expand=True)
+        # Apply flip
+        flip = operations.get("flip")
+        if flip == "horizontal":
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+        elif flip == "vertical":
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
-    # Apply flip
-    flip = operations.get("flip")
-    if flip == "horizontal":
-        img = img.transpose(Image.FLIP_LEFT_RIGHT)
-    elif flip == "vertical":
-        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+        # Apply resize
+        resize = operations.get("resize")
+        if resize:
+            img = img.resize((int(resize["width"]), int(resize["height"])), Image.LANCZOS)
 
-    # Apply resize
-    resize = operations.get("resize")
-    if resize:
-        img = img.resize((int(resize["width"]), int(resize["height"])), Image.LANCZOS)
+        # Save to buffer. Inside the ``with`` on purpose: when ``operations`` is
+        # empty, ``img`` IS the opened image, and leaving the block closes its
+        # file pointer before it has ever been loaded.
+        if img.mode in ("RGBA", "LA", "P"):
+            format_str = "PNG"
+            ext = "png"
+        else:
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            format_str = "JPEG"
+            ext = "jpg"
 
-    # Save to buffer
-    if img.mode in ("RGBA", "LA", "P"):
-        format_str = "PNG"
-        ext = "png"
-    else:
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        format_str = "JPEG"
-        ext = "jpg"
-
-    buffer = io.BytesIO()
-    img.save(buffer, format=format_str, quality=90)
-    buffer.seek(0)
-    return ContentFile(buffer.read(), name=f"edited.{ext}"), img.size
+        buffer = io.BytesIO()
+        img.save(buffer, format=format_str, quality=90)
+        return ContentFile(buffer.getvalue(), name=f"edited.{ext}"), img.size
 
 
 def trim_video(input_path, output_path, start_seconds, end_seconds):

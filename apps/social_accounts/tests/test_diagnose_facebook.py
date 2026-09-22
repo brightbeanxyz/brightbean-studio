@@ -49,7 +49,7 @@ def _provider(*, scopes, subscribed_fields, app_id="app-1"):
 
 def _run(account):
     out = StringIO()
-    with patch("apps.social_accounts.views._get_provider_for_platform") as factory:
+    with patch("apps.social_accounts.provider_factory._get_provider_for_platform") as factory:
         factory.return_value = account["provider"]
         # Non-zero exit is the documented signal that a check failed; the
         # report is still what we assert on.

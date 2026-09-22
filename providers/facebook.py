@@ -7,10 +7,12 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode, urlparse
 
 from .base import SocialProvider
-from .exceptions import APIError, OAuthError, PublishError
+from .exceptions import APIError, OAuthError, ProviderError, PublishError
+from .meta_accounts import fetch_me_accounts, page_can_publish
 from .meta_comments import parse_graph_time
 from .meta_insights import fetch_insights_safe, parse_insights_response
 from .meta_messaging import build_send_payload, resolve_recipient_id
+from .meta_oauth import facebook_login_params
 from .types import (
     AccountMetrics,
     AccountProfile,
@@ -79,16 +81,22 @@ FACEBOOK_FEED_WINDOW_DAYS = 30
 FACEBOOK_COMMENT_LOOKBACK_HOURS = 24
 FACEBOOK_COMMENT_FIELDS = "id,message,created_time,from,parent,permalink_url"
 
+# Facebook Reels published through the API must be between 3 and 90 seconds.
+FACEBOOK_REEL_MIN_DURATION_SEC = 3
+FACEBOOK_REEL_MAX_DURATION_SEC = 90
+
 # Facebook caps the ``attached_media`` array on a single feed post. Larger sets
 # must use the album-creation flow, which this provider does not implement.
 FACEBOOK_MAX_ATTACHED_MEDIA = 10
-# Extension heuristic for spotting video URLs, mirroring the per-item checks in
-# the Instagram / Threads carousel providers.
-VIDEO_URL_SUFFIXES = (".mp4", ".mov")
 
 
 class FacebookProvider(SocialProvider):
     """Facebook Graph API v25.0 provider."""
+
+    # Publishes from hosted URLs only — the platform fetches the media
+    # itself, so ``PublishContent.media_files`` is never read and the engine
+    # can skip downloading the asset to local disk entirely.
+    needs_local_media = False
 
     def __init__(self, credentials: dict | None = None):
         creds = dict(credentials or {})
@@ -117,7 +125,7 @@ class FacebookProvider(SocialProvider):
 
     @property
     def supported_post_types(self) -> list[PostType]:
-        return [PostType.TEXT, PostType.IMAGE, PostType.VIDEO, PostType.LINK]
+        return [PostType.TEXT, PostType.IMAGE, PostType.VIDEO, PostType.REEL, PostType.LINK]
 
     @property
     def supported_media_types(self) -> list[MediaType]:
@@ -161,13 +169,13 @@ class FacebookProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_auth_url(self, redirect_uri: str, state: str, code_verifier: str | None = None) -> str:
-        params = {
-            "client_id": self.credentials["client_id"],
-            "redirect_uri": redirect_uri,
-            "state": state,
-            "scope": ",".join(self.required_scopes),
-            "response_type": "code",
-        }
+        params = facebook_login_params(
+            client_id=self.credentials["client_id"],
+            redirect_uri=redirect_uri,
+            state=state,
+            scopes=self.required_scopes,
+            config_id=str(self.credentials.get("config_id") or "").strip(),
+        )
         return f"{OAUTH_URL}?{urlencode(params)}"
 
     def exchange_code(self, code: str, redirect_uri: str, code_verifier: str | None = None) -> OAuthTokens:
@@ -257,23 +265,15 @@ class FacebookProvider(SocialProvider):
         Returns a list of dicts each containing id, name, access_token,
         category, and picture.
         """
-        resp = self._request(
-            "GET",
-            f"{BASE_URL}/me/accounts",
+        raw_pages = fetch_me_accounts(
+            self,
             access_token=access_token,
-            params={"fields": "id,name,access_token,category,picture,followers_count"},
+            base_url=BASE_URL,
+            fields="id,name,access_token,category,picture,followers_count,tasks",
+            error_message="Failed to fetch pages",
         )
-        data = resp.json()
-        if "error" in data:
-            logger.error("Facebook /me/accounts error: %s", data["error"])
-            raise APIError(
-                f"Failed to fetch pages: {data['error'].get('message', 'Unknown error')}",
-                platform=self.platform_name,
-                raw_response=data,
-            )
-        logger.debug("Facebook /me/accounts returned %d pages", len(data.get("data", [])))
         pages: list[dict] = []
-        for page in data.get("data", []):
+        for page in raw_pages:
             picture_url = None
             if "picture" in page and "data" in page["picture"]:
                 picture_url = page["picture"]["data"].get("url")
@@ -285,6 +285,8 @@ class FacebookProvider(SocialProvider):
                     "category": page.get("category", ""),
                     "picture": picture_url,
                     "followers_count": page.get("followers_count", 0),
+                    "tasks": page.get("tasks") or [],
+                    "can_publish": page_can_publish(page),
                 }
             )
         return pages
@@ -303,6 +305,8 @@ class FacebookProvider(SocialProvider):
 
         if content.post_type == PostType.IMAGE and content.media_urls:
             return self._publish_photo(access_token, page_id, content)
+        if content.post_type == PostType.REEL:
+            return self._publish_reel(access_token, page_id, content)
         if content.post_type == PostType.VIDEO and content.media_urls:
             return self._publish_video(access_token, page_id, content)
         return self._publish_text_or_link(access_token, page_id, content)
@@ -357,7 +361,7 @@ class FacebookProvider(SocialProvider):
                 f"Facebook multi-photo posts support at most {FACEBOOK_MAX_ATTACHED_MEDIA} photos (got {len(urls)})",
                 platform=self.platform_name,
             )
-        if any(self._is_video_url(url) for url in urls):
+        if any(content.is_video(index) for index in range(len(urls))):
             raise PublishError(
                 "Facebook multi-photo posts support images only; post videos separately",
                 platform=self.platform_name,
@@ -413,15 +417,6 @@ class FacebookProvider(SocialProvider):
             extra={**data, "photo_ids": photo_ids},
         )
 
-    @staticmethod
-    def _is_video_url(url: str) -> bool:
-        """Heuristically detect a video URL by file extension.
-
-        Uses the URL path only so presigned query strings (R2/S3) don't defeat
-        the check.
-        """
-        return urlparse(url).path.lower().endswith(VIDEO_URL_SUFFIXES)
-
     def _delete_staged_photos(self, access_token: str, photo_ids: list[str]) -> None:
         """Best-effort cleanup of unpublished photos staged for a multi-photo post.
 
@@ -471,6 +466,118 @@ class FacebookProvider(SocialProvider):
             url=url,
             extra={**data, **video_fields, "video_id": video_id},
         )
+
+    def _publish_reel(self, access_token: str, page_id: str, content: PublishContent) -> PublishResult:
+        """Publish a Page Reel using Meta's start/upload/finish protocol."""
+        if len(content.media_urls) != 1:
+            raise PublishError(
+                "Facebook Reels require exactly one hosted video",
+                platform=self.platform_name,
+            )
+        # Fails open on an unknown duration, like TikTok's max-duration check.
+        # MediaAsset.duration comes from a best-effort background ffprobe that
+        # leaves 0 -> None when it has not run or could not read the file, and
+        # refusing to publish on that would block a perfectly valid Reel over a
+        # metadata job we never promised to have finished.
+        if content.video_duration_sec is not None and not (
+            FACEBOOK_REEL_MIN_DURATION_SEC <= content.video_duration_sec <= FACEBOOK_REEL_MAX_DURATION_SEC
+        ):
+            raise PublishError(
+                "Facebook Reels must be between 3 and 90 seconds",
+                platform=self.platform_name,
+            )
+
+        start_data = self._request(
+            "POST",
+            f"{BASE_URL}/{page_id}/video_reels",
+            access_token=access_token,
+            data={"upload_phase": "start"},
+        ).json()
+        video_id = start_data.get("video_id")
+        upload_url = start_data.get("upload_url")
+        if not video_id or not upload_url:
+            raise PublishError(
+                "Facebook did not create a Reel upload session",
+                platform=self.platform_name,
+                raw_response=start_data,
+            )
+
+        # Meta's resumable upload host expects OAuth (not Bearer) plus the
+        # publicly fetchable video URL in a header for hosted uploads.
+        #
+        # The body matters: Meta fetches the file server-side, so the transfer
+        # can fail after the request itself was accepted with a 2xx that
+        # _request would wave through. Catching it here names the upload as the
+        # failing step rather than letting the finish call report a video that
+        # was never assembled.
+        upload_resp = self._request(
+            "POST",
+            upload_url,
+            headers={
+                "Authorization": f"OAuth {access_token}",
+                "file_url": content.media_urls[0],
+            },
+        )
+        self._raise_for_reel_phase(self._safe_json(upload_resp), "upload the Reel video")
+
+        finish_payload: dict = {
+            "upload_phase": "finish",
+            "video_id": video_id,
+            "video_state": "PUBLISHED",
+        }
+        if content.text:
+            finish_payload["description"] = content.text
+        # No "title": content.title is the composer's internal organizing label,
+        # not copy written for Facebook, and _publish_video omits it for the
+        # same reason. A Reel's caption is its description.
+        finish_data = self._request(
+            "POST",
+            f"{BASE_URL}/{page_id}/video_reels",
+            access_token=access_token,
+            data=finish_payload,
+        ).json()
+        self._raise_for_reel_phase(finish_data, "publish the Reel")
+
+        # Publishing already succeeded. Metadata is best-effort so a delayed
+        # post_id or malformed response cannot trigger a duplicate retry.
+        video_fields: dict = {}
+        try:
+            video_fields = self._request(
+                "GET",
+                f"{BASE_URL}/{video_id}",
+                access_token=access_token,
+                params={"fields": "post_id,permalink_url"},
+            ).json()
+        except Exception as exc:
+            logger.debug("Facebook Reel %s post_id unavailable: %s", video_id, exc)
+
+        graph_post_id = video_fields.get("post_id") or video_id
+        return PublishResult(
+            platform_post_id=self._stored_post_id(graph_post_id),
+            url=video_fields.get("permalink_url") or f"https://www.facebook.com/reel/{video_id}",
+            # Only identifiers. The engine merges this dict into
+            # PlatformPost.platform_extra, which is an *input* channel that
+            # duplicate and recurrence deep-copy into clones — so anything put
+            # here outlives the post and is fed back as publish input.
+            # Spreading the phase responses would carry two things that must
+            # not live there: "post_type", which would plant a Reel hint on a
+            # clone whose media may no longer be a single video, and
+            # start_data's "upload_url", a signed rupload URL that has no
+            # business being persisted.
+            extra={
+                "video_id": video_id,
+                **{k: v for k, v in video_fields.items() if k in ("post_id", "permalink_url")},
+            },
+        )
+
+    def _raise_for_reel_phase(self, data: dict, action: str) -> None:
+        """Fail a Reel phase that answered 2xx but did not actually succeed."""
+        if data.get("success") is False or "error" in data:
+            raise PublishError(
+                f"Facebook failed to {action}",
+                platform=self.platform_name,
+                raw_response=data,
+            )
 
     # ------------------------------------------------------------------
     # Comments
@@ -1081,14 +1188,56 @@ class FacebookProvider(SocialProvider):
         )
         return resp.json().get("data", {})
 
-    def revoke_token(self, access_token: str) -> bool:
+    def get_granted_scopes(self, access_token: str) -> set[str] | None:
+        """Read the grant back by inspecting the token itself.
+
+        Not ``/me/permissions``: these accounts hold a *Page* token, and ``/me``
+        resolves to whatever the token identifies — the Page, which has no
+        ``permissions`` edge. ``/debug_token`` reports the scopes carried by any
+        token, Page ones included, and is the documented way to ask.
+
+        Needs an app access token to make the call, so a provider built without
+        app credentials reports "unknown" rather than guessing.
+        """
+        client_id = self.credentials.get("client_id")
+        client_secret = self.credentials.get("client_secret")
+        if not client_id or not client_secret:
+            return None
+
         try:
-            self._request(
-                "DELETE",
-                f"{BASE_URL}/me/permissions",
-                access_token=access_token,
+            resp = self._request(
+                "GET",
+                f"{BASE_URL}/debug_token",
+                params={
+                    "input_token": access_token,
+                    # Meta's documented app-token form. Never log this.
+                    "access_token": f"{client_id}|{client_secret}",
+                },
             )
-            return True
-        except APIError:
-            logger.warning("Failed to revoke Facebook token")
-            return False
+        except ProviderError:
+            logger.warning("Could not read granted permissions for %s", self.platform_name)
+            return None
+
+        data = resp.json().get("data") or {}
+        scopes = data.get("scopes")
+        if scopes is None:
+            # A token Meta declines to describe is unknown, not unscoped.
+            return None
+        return set(scopes)
+
+    def revoke_token(self, access_token: str) -> bool:
+        """Intentionally does nothing. Disconnecting cannot revoke the grant.
+
+        The only endpoint that would revoke it, ``DELETE /me/permissions``,
+        revokes this app for the *whole* Facebook user. One workspace
+        disconnecting one Page would sever every other Page and Instagram
+        account that person connected anywhere else, so it must never run from
+        a per-account action.
+
+        Disconnect therefore drops our stored token, removes the webhook
+        subscription, and deletes posts that targeted only this account.
+        Removing the app's access outright is the user's own action in Facebook
+        → Settings → Apps and Websites — which is also what makes the next
+        connect show the full permission dialog instead of "continue sharing?".
+        """
+        return False

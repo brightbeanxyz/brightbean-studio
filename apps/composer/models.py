@@ -366,6 +366,20 @@ class PlatformPost(models.Model):
         FAILED = "failed", "Failed"
         ON_HOLD = "on_hold", "On Hold"
 
+    # Every field :meth:`transition_to` may write. A caller that passes
+    # ``update_fields`` MUST include these or the transition half-applies
+    # silently — which is exactly how the retry-budget and publish-handle
+    # resets went missing on three of the five scheduling paths. Spell the
+    # set once here rather than re-listing it at each call site.
+    TRANSITION_FIELDS = (
+        "status",
+        "published_at",
+        "platform_post_id",
+        "retry_count",
+        "next_retry_at",
+        "publish_error",
+    )
+
     # Statuses that must never be removed by *accidental* deletion paths
     # (composer account deselection, autosave sync): a published or
     # mid-publish row is history, and deleting it cascades away its
@@ -499,6 +513,26 @@ class PlatformPost(models.Model):
     retry_count = models.PositiveIntegerField(default=0)
     next_retry_at = models.DateTimeField(blank=True, null=True)
 
+    # Analytics sync state — the read-side counterpart to the retry budget
+    # above, owned solely by ``apps.analytics.tasks``.
+    #
+    # ``analytics_attempted_at`` is the last time the sync *tried* this post's
+    # per-post metrics fetch, successful or not. The cadence ladder used to be
+    # derived from the newest ``PostInsightsSnapshot.captured_at`` instead,
+    # which meant a post whose fetch kept failing wrote no row, looked
+    # never-synced, and was retried on every hourly tick forever. That is the
+    # amplification that emptied a whole day of YouTube API quota in an hour.
+    #
+    # NULL means "never attempted under this scheme"; the sync falls back to the
+    # old snapshot signal for those, so no backfill is needed.
+    analytics_attempted_at = models.DateTimeField(blank=True, null=True)
+
+    # Consecutive failed attempts, reset to 0 by any success. Drives the
+    # exponential backoff in ``apps.analytics.tasks._analytics_failure_backoff``
+    # so a permanently unfetchable post (deleted video, revoked visibility)
+    # costs one call a week rather than one an hour.
+    analytics_failure_count = models.PositiveSmallIntegerField(default=0, db_default=0)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -548,6 +582,22 @@ class PlatformPost(models.Model):
         self.status = new_status
         if new_status == "published":
             self.published_at = timezone.now()
+        if new_status == "scheduled":
+            # A deliberate re-schedule is a fresh start, so the old attempt's
+            # backoff must not carry over: a spent retry_count would otherwise
+            # fail the post on its first attempt instead of giving it the full
+            # budget, and a stale next_retry_at would hold it back from the due
+            # query. Safe to do here because the publish engine's own
+            # retry path sets ``status`` directly and never comes through this
+            # method — so this cannot clear a backoff it just scheduled.
+            self.retry_count = 0
+            self.next_retry_at = None
+            self.publish_error = ""
+            # The handle belongs to the *previous* attempt. Left in place, the
+            # confirmation sweep would treat it as this attempt's and settle the
+            # post against an outcome that has nothing to do with it — reporting
+            # a publish that never reached the platform as done.
+            self.platform_post_id = ""
 
     @property
     def status_color(self):

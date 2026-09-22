@@ -22,6 +22,8 @@ from .types import (
     PostType,
     PublishContent,
     PublishResult,
+    PublishState,
+    PublishStatus,
     RateLimitConfig,
 )
 
@@ -82,6 +84,23 @@ CONTENT_TYPE_BY_EXT = {
     ".mov": "video/quicktime",
 }
 
+# /v2/post/publish/status/fetch/ "status" values, mapped to what they mean for
+# us. Anything absent from this map is treated as still-in-flight, so a status
+# TikTok adds later makes the engine wait rather than declare a false outcome.
+PUBLISH_STATE_BY_TIKTOK_STATUS = {
+    "PUBLISH_COMPLETE": PublishState.COMPLETE,
+    "FAILED": PublishState.FAILED,
+    # The direct-post request was downgraded to an upload: the video is sitting
+    # in the creator's TikTok drafts and only they can publish it. Terminal for
+    # us, and the one outcome where "failed" needs a very specific sentence.
+    "SEND_TO_USER_INBOX": PublishState.INBOX,
+}
+
+INBOX_HINT = (
+    "TikTok put this video in your TikTok inbox as a draft instead of posting it. "
+    "Open the TikTok app to finish posting it."
+)
+
 
 def _pkce_code_challenge(code_verifier: str) -> str:
     """Derive TikTok's PKCE ``code_challenge`` from a ``code_verifier``.
@@ -100,6 +119,13 @@ class TikTokProvider(SocialProvider):
     # TikTok requires PKCE on the authorization request (for desktop/native
     # apps and localhost redirect URIs); see ``_pkce_code_challenge``.
     uses_pkce = True
+
+    # /post/publish/video/init/ only *accepts* the video; TikTok transcodes and
+    # publishes it afterwards, and that step can still fail (format, duration,
+    # spam risk) or divert the video to the creator's drafts. So a finished
+    # upload is not a published post — the engine settles these from
+    # :meth:`check_publish_status`. See ``PUBLISH_STATE_BY_TIKTOK_STATUS``.
+    publish_is_async = True
 
     # ------------------------------------------------------------------
     # Metadata
@@ -438,11 +464,16 @@ class TikTokProvider(SocialProvider):
         video_path = content.media_files[0]
         video_size = os.path.getsize(video_path)
         if video_size > MAX_SINGLE_CHUNK_SIZE:
+            # Not retryable: the file will be exactly this big on every attempt,
+            # and letting it burn the retry budget replaces this sentence with
+            # the generic "we stopped retrying" copy — hiding the one thing the
+            # user can actually act on.
             raise PublishError(
-                f"Video file is {video_size} bytes; TikTok single-chunk upload "
-                f"supports up to {MAX_SINGLE_CHUNK_SIZE} bytes. Multi-chunk upload "
-                "is not yet implemented.",
+                f"This video is {video_size / 1_000_000:.0f} MB. TikTok accepts up to "
+                f"{MAX_SINGLE_CHUNK_SIZE // 1_000_000} MB per upload — compress it or "
+                "trim it, then try again.",
                 platform=self.platform_name,
+                retryable=False,
             )
 
         ext = os.path.splitext(video_path)[1].lower()
@@ -469,25 +500,54 @@ class TikTokProvider(SocialProvider):
                 raw_response=init_body,
             )
 
-        # Step 2: stream the video binary to TikTok's presigned URL
-        with open(video_path, "rb") as f:
-            video_bytes = f.read()
-        self._request(
-            "PUT",
-            upload_url,
-            headers={
-                "Content-Type": content_type,
-                "Content-Length": str(video_size),
-                "Content-Range": f"bytes 0-{video_size - 1}/{video_size}",
-            },
-            data=video_bytes,
-            timeout=120.0,
-        )
+        # Step 2: stream the video binary to TikTok's presigned URL. The file
+        # object is handed to httpx as-is so it is read in chunks off disk —
+        # reading it into a bytes object first put the whole video in RSS, which
+        # is what took the worker dyno over its memory quota.
+        with open(video_path, "rb") as video:
+            self._request(
+                "PUT",
+                upload_url,
+                headers={
+                    "Content-Type": content_type,
+                    "Content-Length": str(video_size),
+                    "Content-Range": f"bytes 0-{video_size - 1}/{video_size}",
+                },
+                data=video,
+                timeout=120.0,
+            )
 
         return PublishResult(
             platform_post_id=publish_id,
             extra=init_body.get("data", {}),
         )
+
+    def check_publish_status(self, access_token: str, handle: str) -> PublishStatus:
+        """Report what TikTok did with an accepted upload.
+
+        ``handle`` is the ``publish_id`` from ``/post/publish/video/init/``.
+        A transport failure is *not* swallowed here: the caller needs to tell
+        "TikTok says it failed" apart from "we could not reach TikTok", and only
+        the first of those is a reason to fail the post.
+        """
+        data = self._fetch_publish_status(access_token, handle)
+        status = data.get("status") or ""
+        state = PUBLISH_STATE_BY_TIKTOK_STATUS.get(status, PublishState.PENDING)
+
+        video_id = ""
+        if state is PublishState.COMPLETE:
+            ids = data.get("publicaly_available_post_id") or []
+            # Defensive: some TikTok response variants return a bare string.
+            video_id = ids if isinstance(ids, str) else (ids[0] if ids else "")
+
+        error = ""
+        if state is PublishState.FAILED:
+            reason = data.get("fail_reason") or "no reason given"
+            error = f"TikTok could not process the video ({reason})."
+        elif state is PublishState.INBOX:
+            error = INBOX_HINT
+
+        return PublishStatus(state=state, platform_post_id=str(video_id or ""), error=error, raw=data)
 
     # ------------------------------------------------------------------
     # Analytics

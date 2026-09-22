@@ -3,6 +3,9 @@
 Also covers the two behaviours that decide whether Meta accepts a reply at all:
 tagging a late reply as written by a human, and never recording a reply the
 platform refused.
+
+The platform-dispatch logic lives in ``apps.inbox.services`` now; the view is a
+thin wrapper over it.
 """
 
 from datetime import timedelta
@@ -13,7 +16,7 @@ import pytest
 from django.utils import timezone
 
 from apps.inbox.models import InboxMessage, InboxReply
-from apps.inbox.views import _send_platform_reply
+from apps.inbox.services import _dispatch_to_platform
 from apps.social_accounts.models import SocialAccount
 
 
@@ -62,8 +65,8 @@ def test_comment_goes_to_the_comment_edge(fb_account):
     message = _message(fb_account, message_type=InboxMessage.MessageType.COMMENT)
     provider = _provider()
 
-    with patch("apps.inbox.views.get_provider", return_value=provider):
-        assert _send_platform_reply(message, "Thanks!") == "c-1"
+    with patch("apps.inbox.services.get_provider", return_value=provider):
+        assert _dispatch_to_platform(message, "Thanks!") == "c-1"
 
     provider.reply_to_comment.assert_called_once()
     provider.reply_to_message.assert_not_called()
@@ -74,8 +77,8 @@ def test_mention_is_treated_as_a_comment(fb_account):
     message = _message(fb_account, message_type=InboxMessage.MessageType.MENTION)
     provider = _provider()
 
-    with patch("apps.inbox.views.get_provider", return_value=provider):
-        _send_platform_reply(message, "Thanks for the shout-out")
+    with patch("apps.inbox.services.get_provider", return_value=provider):
+        _dispatch_to_platform(message, "Thanks for the shout-out")
 
     provider.reply_to_comment.assert_called_once()
 
@@ -111,7 +114,7 @@ def test_a_provider_that_cannot_reply_records_the_reply_locally(client, fb_accou
     message = _message(fb_account, message_type=InboxMessage.MessageType.DM)
     client.force_login(user)
 
-    with patch("apps.inbox.views._send_platform_reply", side_effect=NotImplementedError):
+    with patch("apps.inbox.services._dispatch_to_platform", side_effect=NotImplementedError):
         response = client.post(
             f"/workspace/{fb_account.workspace_id}/inbox/{message.id}/reply/",
             {"body": "Noted internally"},
@@ -120,6 +123,7 @@ def test_a_provider_that_cannot_reply_records_the_reply_locally(client, fb_accou
     assert response.status_code == 200
     assert "HX-Reply-Failed" not in response
     reply = InboxReply.objects.get(inbox_message=message)
+    assert reply.status == InboxReply.Status.SENT
     assert reply.platform_reply_id == ""
 
 
@@ -135,7 +139,7 @@ def test_the_error_shown_to_users_carries_no_raw_api_text(client, fb_account, or
     client.force_login(user)
 
     raw = 'Facebook API error 401: {"error":{"fbtrace_id":"AFC8u7xsP__NwLs"}}'
-    with patch("apps.inbox.views._send_platform_reply", side_effect=APIError(raw, platform="facebook")):
+    with patch("apps.inbox.services._dispatch_to_platform", side_effect=APIError(raw, platform="facebook")):
         response = client.post(
             f"/workspace/{fb_account.workspace_id}/inbox/{message.id}/reply/",
             {"body": "This will fail"},
@@ -157,7 +161,10 @@ def test_an_expired_connection_gets_a_reconnect_hint(client, fb_account, org_own
     message = _message(fb_account, message_type=InboxMessage.MessageType.DM)
     client.force_login(user)
 
-    with patch("apps.inbox.views._send_platform_reply", side_effect=TokenExpiredError("expired", platform="facebook")):
+    with patch(
+        "apps.inbox.services._dispatch_to_platform",
+        side_effect=TokenExpiredError("expired", platform="facebook"),
+    ):
         response = client.post(
             f"/workspace/{fb_account.workspace_id}/inbox/{message.id}/reply/",
             {"body": "hi"},
@@ -170,8 +177,8 @@ def test_recent_dm_replies_without_the_human_agent_tag(fb_account):
     message = _message(fb_account, message_type=InboxMessage.MessageType.DM, hours_ago=2)
     provider = _provider()
 
-    with patch("apps.inbox.views.get_provider", return_value=provider):
-        _send_platform_reply(message, "On it")
+    with patch("apps.inbox.services.get_provider", return_value=provider):
+        _dispatch_to_platform(message, "On it")
 
     assert provider.reply_to_message.call_args.kwargs["human_agent"] is False
 
@@ -180,8 +187,8 @@ def test_dm_older_than_24_hours_is_tagged_human_agent(fb_account):
     message = _message(fb_account, message_type=InboxMessage.MessageType.DM, hours_ago=30)
     provider = _provider()
 
-    with patch("apps.inbox.views.get_provider", return_value=provider):
-        _send_platform_reply(message, "Sorry for the delay")
+    with patch("apps.inbox.services.get_provider", return_value=provider):
+        _dispatch_to_platform(message, "Sorry for the delay")
 
     assert provider.reply_to_message.call_args.kwargs["human_agent"] is True
 
@@ -190,8 +197,8 @@ def test_sender_handle_is_passed_as_the_recipient(fb_account):
     message = _message(fb_account, message_type=InboxMessage.MessageType.DM, sender_handle="psid-99")
     provider = _provider()
 
-    with patch("apps.inbox.views.get_provider", return_value=provider):
-        _send_platform_reply(message, "Hi")
+    with patch("apps.inbox.services.get_provider", return_value=provider):
+        _dispatch_to_platform(message, "Hi")
 
     assert provider.reply_to_message.call_args.kwargs["extra"]["recipient_id"] == "psid-99"
 
@@ -205,8 +212,8 @@ def test_existing_extra_recipient_is_not_overwritten(fb_account):
     )
     provider = _provider()
 
-    with patch("apps.inbox.views.get_provider", return_value=provider):
-        _send_platform_reply(message, "Hi")
+    with patch("apps.inbox.services.get_provider", return_value=provider):
+        _dispatch_to_platform(message, "Hi")
 
     assert provider.reply_to_message.call_args.kwargs["extra"]["recipient_id"] == "from-payload"
 
@@ -221,7 +228,7 @@ def test_failed_send_records_no_reply(client, fb_account, org_owner, user):
     message = _message(fb_account, message_type=InboxMessage.MessageType.DM)
     client.force_login(user)
 
-    with patch("apps.inbox.views._send_platform_reply", side_effect=RuntimeError("Meta said no")):
+    with patch("apps.inbox.services._dispatch_to_platform", side_effect=RuntimeError("Meta said no")):
         response = client.post(
             f"/workspace/{fb_account.workspace_id}/inbox/{message.id}/reply/",
             {"body": "This will fail"},
@@ -245,7 +252,7 @@ def test_successful_send_records_the_reply(client, fb_account, org_owner, user):
     message = _message(fb_account, message_type=InboxMessage.MessageType.DM)
     client.force_login(user)
 
-    with patch("apps.inbox.views._send_platform_reply", return_value="mid.sent"):
+    with patch("apps.inbox.services._dispatch_to_platform", return_value="mid.sent"):
         response = client.post(
             f"/workspace/{fb_account.workspace_id}/inbox/{message.id}/reply/",
             {"body": "Happy to help"},
@@ -254,4 +261,6 @@ def test_successful_send_records_the_reply(client, fb_account, org_owner, user):
     assert response.status_code == 200
     assert "HX-Reply-Failed" not in response
     reply = InboxReply.objects.get(inbox_message=message)
+    assert reply.status == InboxReply.Status.SENT
+    assert reply.sent_at is not None
     assert reply.platform_reply_id == "mid.sent"

@@ -6,6 +6,9 @@ from datetime import timedelta
 from background_task import background
 from django.utils import timezone
 
+from apps.common import quota
+from providers.exceptions import QuotaExceededError
+
 from .webhooks import retry_failed_subscription
 
 logger = logging.getLogger(__name__)
@@ -25,7 +28,7 @@ def check_social_account_health(account_id: str):
     """
     from providers import get_provider
 
-    from .error_messages import friendly_health_check_error
+    from .error_messages import friendly_health_check_error, quota_blocked_message
     from .models import SocialAccount
 
     try:
@@ -73,27 +76,76 @@ def check_social_account_health(account_id: str):
             account.connection_status = SocialAccount.ConnectionStatus.TOKEN_EXPIRING
             account.last_error = friendly_health_check_error(e)
 
-    # Validate token by fetching profile
-    try:
-        profile = provider.get_profile(account.oauth_access_token)
-        account.follower_count = profile.follower_count
-        # Provider CDNs (TikTok, Meta) return signed avatar URLs that
-        # expire; display names and handles can also change on-platform.
-        # Guard each write so a transient empty response doesn't wipe
-        # previously-good values.
-        if profile.avatar_url:
-            account.avatar_url = profile.avatar_url
-        if profile.name:
-            account.account_name = profile.name
-        if profile.handle:
-            account.account_handle = profile.handle
-        if account.connection_status != SocialAccount.ConnectionStatus.TOKEN_EXPIRING:
-            account.connection_status = SocialAccount.ConnectionStatus.CONNECTED
-        account.last_error = ""
-    except Exception as e:
-        logger.warning("Health check: profile fetch failed for %s: %s", account, e)
-        account.connection_status = SocialAccount.ConnectionStatus.ERROR
-        account.last_error = friendly_health_check_error(e)
+    # A block already recorded means the platform has told us it will refuse
+    # until the window rolls over. Probing anyway spends a unit from the very
+    # budget that is exhausted — and on YouTube that budget is also what
+    # publishing and reconnecting draw on, so the probe competes with the
+    # recovery it is trying to detect.
+    #
+    # Skipped rather than returned early: a refresh may have just rotated this
+    # account's token, and that belongs in the save below whether or not we got
+    # to ask the platform how it is doing. The refresh itself is unaffected —
+    # Google meters the token endpoint separately from the Data API.
+    #
+    # ``read_scope`` rather than a literal, so this, the inbox poll and the
+    # analytics sync resolve one breaker row instead of three that never meet.
+    credential = quota.credential_key(credentials)
+    scope = quota.read_scope(account.platform)
+    blocked_until = quota.quota_blocked_until(account.platform, credential, scope)
+
+    if blocked_until:
+        # Deliberately no status change: a spent budget says nothing about the
+        # grant, and the last check's verdict is still the best one we have.
+        logger.info(
+            "Health check probe deferred for %s: %s quota blocked until %s",
+            account,
+            account.platform,
+            blocked_until.isoformat(),
+        )
+        # Say so on the card. Leaving ``last_error`` untouched showed a healthy
+        # CONNECTED account for the whole outage while its inbox, analytics and
+        # publishing all silently did nothing — the opposite of what recording
+        # the block was for.
+        account.last_error = quota_blocked_message(account.platform, blocked_until)
+    else:
+        # Validate token by fetching profile
+        try:
+            profile = provider.get_profile(account.oauth_access_token)
+            account.follower_count = profile.follower_count
+            # Provider CDNs (TikTok, Meta) return signed avatar URLs that
+            # expire; display names and handles can also change on-platform.
+            # Guard each write so a transient empty response doesn't wipe
+            # previously-good values.
+            if profile.avatar_url:
+                account.avatar_url = profile.avatar_url
+            if profile.name:
+                account.account_name = profile.name
+            if profile.handle:
+                account.account_handle = profile.handle
+            if account.connection_status != SocialAccount.ConnectionStatus.TOKEN_EXPIRING:
+                account.connection_status = SocialAccount.ConnectionStatus.CONNECTED
+            account.last_error = ""
+        except QuotaExceededError as e:
+            # YouTube reports a spent daily quota as a 403. It says nothing about
+            # the OAuth grant, so do not turn a recoverable platform budget window
+            # into ERROR — that would remove the account from this scheduler's
+            # CONNECTED/TOKEN_EXPIRING selection until someone reconnects it.
+            logger.warning("Health check: quota exhausted for %s: %s", account, e)
+            # Arm the breaker. This check runs on its own schedule and can be
+            # the first to learn the budget is spent; recording nothing left the
+            # inbox and the analytics sync to each rediscover it at the cost of
+            # another doomed request against the same exhausted client budget.
+            quota.trip_from_exception(account.platform, credential, e)
+            if account.connection_status in (
+                SocialAccount.ConnectionStatus.CONNECTED,
+                SocialAccount.ConnectionStatus.ERROR,
+            ):
+                account.connection_status = SocialAccount.ConnectionStatus.CONNECTED
+            account.last_error = friendly_health_check_error(e)
+        except Exception as e:
+            logger.warning("Health check: profile fetch failed for %s: %s", account, e)
+            account.connection_status = SocialAccount.ConnectionStatus.ERROR
+            account.last_error = friendly_health_check_error(e)
 
     account.last_health_check_at = timezone.now()
     account.save(

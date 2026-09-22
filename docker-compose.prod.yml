@@ -53,6 +53,13 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
       - caddy_config:/config
+      # Read-only so Caddy can serve uploads but never write into MEDIA_ROOT.
+      - media_data:/app/media:ro
+    environment:
+      # Set CADDY_MEDIA_ROOT=/var/empty in .env when STORAGE_BACKEND=s3: the
+      # named volume outlives the switch, and Caddy cannot read Django's
+      # SERVE_MEDIA. See the Caddyfile.
+      - CADDY_MEDIA_ROOT=${CADDY_MEDIA_ROOT:-/app/media}
     depends_on:
       app:
         condition: service_healthy

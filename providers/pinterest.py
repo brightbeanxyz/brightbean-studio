@@ -256,18 +256,20 @@ class PinterestProvider(SocialProvider):
         upload_url = media_body.get("upload_url")
 
         if upload_url and content.media_files:
-            # Step 2: Upload video binary
+            # Step 2: Upload video binary, streamed from disk rather than read
+            # into memory (see the same change in the TikTok/YouTube providers).
             video_path = content.media_files[0]
-            with open(video_path, "rb") as f:
-                video_data = f.read()
-
-            self._request(
-                "PUT",
-                upload_url,
-                headers={"Content-Type": "video/mp4"},
-                data=video_data,
-                timeout=120.0,
-            )
+            with open(video_path, "rb") as video:
+                self._request(
+                    "PUT",
+                    upload_url,
+                    headers={
+                        "Content-Type": "video/mp4",
+                        "Content-Length": str(os.path.getsize(video_path)),
+                    },
+                    data=video,
+                    timeout=120.0,
+                )
 
         # Step 3: Create pin referencing media_id
         payload["media_source"] = {

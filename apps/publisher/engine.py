@@ -15,8 +15,10 @@ aggregate ``status`` property derived from its children (see
 
 import contextlib
 import logging
+import math
 import os
 import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timedelta
@@ -28,19 +30,24 @@ from django.db.models import F
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
+from apps.common.db import in_worker_thread, release_idle_connection
 from apps.composer.models import PlatformPost
 from apps.credentials.models import resolve_platform_credentials
+from apps.media_library.storage import download_to_path
 from apps.social_accounts.error_messages import (
     FIRST_COMMENT_GENERIC_MESSAGE,
+    PUBLISH_CONFIRM_TIMEOUT_MESSAGE,
     PUBLISH_EXHAUSTED_MESSAGE,
     PUBLISH_GENERIC_MESSAGE,
+    PUBLISH_INTERRUPTED_MESSAGE,
     PUBLISH_RATE_LIMIT_MESSAGE,
+    PUBLISH_UNCONFIRMED_MESSAGE,
     friendly_first_comment_error,
     friendly_publish_error,
 )
 from providers import get_provider
 from providers.exceptions import ProviderError, RateLimitError
-from providers.types import PostType, PublishContent
+from providers.types import PostType, PublishContent, PublishState
 
 from .models import PublishLog, RateLimitState
 
@@ -106,8 +113,89 @@ def _resolve_publish_credentials(account):
 
 
 MAX_RETRIES = 3
-MAX_CONCURRENT_PUBLISHES = getattr(settings, "PUBLISHER_MAX_CONCURRENT_PUBLISHES", 10)
-MAX_CONCURRENT_POSTS = getattr(settings, "PUBLISHER_MAX_CONCURRENT_POSTS", 4)
+
+# States that legitimately explain a lost race in ``_fail_permanently``: the row
+# was settled by someone else, or put back for another attempt. Anything outside
+# this set means the caller was not mid-attempt, which is a bug worth a warning.
+TERMINAL_OR_REQUEUED_STATUSES = (
+    PlatformPost.Status.FAILED,
+    PlatformPost.Status.PUBLISHED,
+    PlatformPost.Status.SCHEDULED,
+    PlatformPost.Status.ON_HOLD,
+)
+
+# How long a row may sit in ``publishing`` before ``confirm_pending_publishes``
+# calls it. STALE_PUBLISHING covers a row with no platform handle — the worker
+# died between the status flip and the upload, and nothing will ever finish it.
+# PUBLISH_CONFIRM covers a row the platform accepted and is still transcoding.
+# Read at call time, not import time: the module-level ``getattr(settings, ...)``
+# used elsewhere in this file binds once, which makes the value untunable by
+# ``override_settings`` and quietly turns any test that tries into a no-op.
+DEFAULT_STALE_PUBLISHING_TIMEOUT = 900
+DEFAULT_PUBLISH_CONFIRM_TIMEOUT = 1800
+# Much longer than the two above, and deliberately so: this one covers "we
+# cannot reach the platform to ask", where the post may already be live. Every
+# extra minute spent retrying is a minute we might still learn the real answer,
+# and the alternative is warning a user about a duplicate we could have ruled
+# out. Long enough to ride out a platform outage or a token refresh.
+DEFAULT_PUBLISH_UNCONFIRMED_TIMEOUT = 6 * 3600
+
+
+def _stale_publishing_timeout() -> int:
+    return int(getattr(settings, "PUBLISHER_STALE_PUBLISHING_TIMEOUT", DEFAULT_STALE_PUBLISHING_TIMEOUT))
+
+
+def _publish_confirm_timeout() -> int:
+    return int(getattr(settings, "PUBLISHER_PUBLISH_CONFIRM_TIMEOUT", DEFAULT_PUBLISH_CONFIRM_TIMEOUT))
+
+
+def _publish_unconfirmed_timeout() -> int:
+    return int(getattr(settings, "PUBLISHER_UNCONFIRMED_TIMEOUT", DEFAULT_PUBLISH_UNCONFIRMED_TIMEOUT))
+
+
+# Row cap on the due query — how many PlatformPosts one cycle will look at. Not
+# a connection cost: the query runs on the worker's own connection.
+DEFAULT_MAX_CONCURRENT_PUBLISHES = 10
+
+# The two below ARE a database budget, not a throughput knob. Django connections
+# are thread-local, so every thread this engine spawns opens its own Postgres
+# connection: POSTS group threads plus PLATFORM_PUBLISHES publish threads, on
+# top of the web dyno's gunicorn threads, against the 20 the whole ROLE gets on
+# heroku-postgresql:essential-0. Exceed it and every dyno starts failing to
+# connect, which is what took production down on 2026-09-15. Raise these only
+# alongside the Postgres plan.
+#
+# The budget covers the fan-out only. ``_process_retries`` and
+# ``confirm_pending_publishes`` also reach providers, but both run sequentially
+# on the worker's own single connection, so they cost one between them rather
+# than one apiece. Parallelising either means routing it through this budget.
+DEFAULT_MAX_CONCURRENT_POSTS = 4
+DEFAULT_MAX_CONCURRENT_PLATFORM_PUBLISHES = 6
+
+
+def _bounded_setting(name: str, default: int) -> int:
+    """Read a concurrency ceiling from settings, floored at 1.
+
+    Read at call time for the same reason as the timeouts above, and floored
+    because both ceilings size a ``ThreadPoolExecutor``: 0 or a negative is a
+    ``ValueError`` at construction, and a 0-sized bound that did construct would
+    wedge the cycle forever rather than pause it. Pausing publishing is
+    ``heroku ps:scale worker=0``, not a 0 here.
+    """
+    return max(1, int(getattr(settings, name, default)))
+
+
+def _max_concurrent_publishes() -> int:
+    return _bounded_setting("PUBLISHER_MAX_CONCURRENT_PUBLISHES", DEFAULT_MAX_CONCURRENT_PUBLISHES)
+
+
+def _max_concurrent_posts() -> int:
+    return _bounded_setting("PUBLISHER_MAX_CONCURRENT_POSTS", DEFAULT_MAX_CONCURRENT_POSTS)
+
+
+def _max_concurrent_platform_publishes() -> int:
+    return _bounded_setting("PUBLISHER_MAX_CONCURRENT_PLATFORM_PUBLISHES", DEFAULT_MAX_CONCURRENT_PLATFORM_PUBLISHES)
+
 
 # First comments retry on their own schedule, separate from the publish retry:
 # the post has already gone out, so there is no double-post risk and no reason
@@ -116,6 +204,74 @@ MAX_CONCURRENT_POSTS = getattr(settings, "PUBLISHER_MAX_CONCURRENT_POSTS", 4)
 FIRST_COMMENT_MAX_RETRIES = getattr(settings, "PUBLISHER_FIRST_COMMENT_MAX_RETRIES", 3)
 FIRST_COMMENT_RETRY_BACKOFF = [120, 600, 1800]  # 2min, 10min, 30min
 FirstCommentStatus = PlatformPost.FirstCommentStatus
+
+
+class _SharedMediaCache:
+    """Materialize each of a post's attachments to local disk at most once.
+
+    ``_publish_post_group`` has always claimed to share the media download
+    across a post's platforms; it never did — the download lived inside
+    ``_dispatch_to_provider``, which runs once per platform, in parallel
+    threads. A post going to five platforms downloaded the same video five
+    times at once. This is the shared cache that claim assumed.
+
+    Not thread-safe by accident: the platform threads all reach for the same
+    asset at the same moment, so the lock is what makes "at most once" true
+    rather than "usually once".
+    """
+
+    class _Entry:
+        """One asset's download slot: its own lock, and the path once it exists."""
+
+        __slots__ = ("lock", "path")
+
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.path: str | None = None
+
+    def __init__(self):
+        self._entries: dict = {}
+        # Guards the entry map only. The download itself runs under the entry's
+        # own lock so threads wanting *different* assets never wait on each
+        # other — and, more importantly, one wedged download cannot block every
+        # other platform in the group (the executor then joins on all of them,
+        # which would stall the whole worker).
+        self._lock = threading.Lock()
+
+    def path_for(self, asset) -> str:
+        """Return a local path holding ``asset``'s bytes, downloading if needed."""
+        with self._lock:
+            entry = self._entries.get(asset.id)
+            if entry is None:
+                entry = self._entries[asset.id] = self._Entry()
+
+        with entry.lock:
+            if entry.path is not None:
+                return entry.path
+            suffix = os.path.splitext(asset.filename)[1] or ".tmp"
+            tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)  # noqa: SIM115
+            tmp.close()
+            try:
+                download_to_path(asset.file, tmp.name)
+            except Exception:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp.name)
+                raise
+            entry.path = tmp.name
+            return entry.path
+
+    def cleanup(self) -> None:
+        with self._lock:
+            entries = list(self._entries.values())
+            self._entries.clear()
+        for entry in entries:
+            # Take each entry's lock so we never unlink a file a straggling
+            # thread is still writing into.
+            with entry.lock:
+                if entry.path:
+                    with contextlib.suppress(OSError):
+                        os.unlink(entry.path)
+                    entry.path = None
 
 
 def _first_comment_delay(workspace_id) -> int:
@@ -140,6 +296,13 @@ def _first_comment_delay(workspace_id) -> int:
         return default
 
 
+#: How close to expiry a token has to be before the publish path spends a
+#: refresh call on it. Generous because publishing is user-triggered and
+#: infrequent. A loop that runs on a schedule needs a much tighter window —
+#: see ``apps.analytics.tasks._ANALYTICS_REFRESH_WINDOW``.
+_PUBLISH_REFRESH_WINDOW = timedelta(days=7)
+
+
 def _provider_and_access_token(account):
     """Build the provider for ``account`` and return a usably-fresh token.
 
@@ -153,7 +316,7 @@ def _provider_and_access_token(account):
     provider = get_provider(account.platform, _resolve_publish_credentials(account))
 
     access_token = account.oauth_access_token
-    if account.token_expires_at and account.is_token_expiring_soon and account.oauth_refresh_token:
+    if account.token_expires_within(_PUBLISH_REFRESH_WINDOW) and account.oauth_refresh_token:
         try:
             access_token = account.refresh_oauth_token(provider)
             logger.info("Refreshed token for %s", account)
@@ -161,6 +324,21 @@ def _provider_and_access_token(account):
             logger.exception("Token refresh failed for %s", account)
 
     return provider, access_token
+
+
+@contextlib.contextmanager
+def _platform_executor(shared, group_size):
+    """Yield the cycle's shared platform pool, or a private one for direct callers.
+
+    A shared pool is not ours to shut down — other groups are still submitting
+    to it — so it is yielded as-is and the ``with`` does nothing on exit.
+    """
+    if shared is not None:
+        yield shared
+        return
+
+    with ThreadPoolExecutor(max_workers=min(group_size, _max_concurrent_platform_publishes())) as own:
+        yield own
 
 
 class PublishEngine:
@@ -180,17 +358,38 @@ class PublishEngine:
             groups.setdefault(pp.post_id, []).append(pp)
 
         published_count = 0
-        with ThreadPoolExecutor(max_workers=min(len(groups), MAX_CONCURRENT_POSTS) or 1) as executor:
-            futures = {
-                executor.submit(self._publish_post_group, pps[0].post, pps): post_id for post_id, pps in groups.items()
-            }
-            for future in as_completed(futures):
-                post_id = futures[future]
-                try:
-                    future.result()
-                    published_count += 1
-                except Exception:
-                    logger.exception("Unexpected error publishing post group %s", post_id)
+        # Two pools, and the dependency runs one way: group threads submit
+        # platform work and wait on it, platform threads wait on nothing. That
+        # is what makes sharing one platform pool across all groups safe, and
+        # sharing it is the whole point — its size IS the connection ceiling, so
+        # a pool per group would multiply that ceiling by the number of groups.
+        # Entering the platform pool first means it is torn down last, after
+        # every group thread that might still be submitting to it.
+        #
+        # Guarded because min(len(groups), ...) is 0 with nothing due, and
+        # ThreadPoolExecutor rejects a zero-sized pool outright.
+        if groups:
+            with (
+                ThreadPoolExecutor(max_workers=_max_concurrent_platform_publishes()) as platform_pool,
+                ThreadPoolExecutor(max_workers=min(len(groups), _max_concurrent_posts())) as group_pool,
+            ):
+                futures = {
+                    group_pool.submit(
+                        in_worker_thread, self._publish_post_group, pps[0].post, pps, platform_pool
+                    ): post_id
+                    for post_id, pps in groups.items()
+                }
+                for future in as_completed(futures):
+                    post_id = futures[future]
+                    try:
+                        # A group that found every child held or already claimed
+                        # publishes nothing; counting it would report success for
+                        # a cycle that did none, which is the one line an operator
+                        # reads to tell whether publishing recovered.
+                        if future.result():
+                            published_count += 1
+                    except Exception:
+                        logger.exception("Unexpected error publishing post group %s", post_id)
 
         # Always process retries, even when no new posts are due
         self._process_retries()
@@ -206,20 +405,33 @@ class PublishEngine:
             )
             .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
             .filter(effective_at__lte=now)
+            # A row parked on a retry backoff is still SCHEDULED with a
+            # scheduled_at in the past, so without this it came straight back on
+            # the next 15s tick and the whole backoff schedule was dead code —
+            # four attempts inside a minute instead of across half an hour. For
+            # a video platform that also meant re-uploading the file four times.
+            .exclude(retry_count__gt=0, next_retry_at__gt=now)
             # Never publish a post that has any platform on hold — a client hold
             # parks the whole post out of the publish path even if a sibling
             # platform is already scheduled.
             .exclude(post__platform_posts__status=PlatformPost.Status.ON_HOLD)
             .select_related("post__workspace", "social_account")
-            .order_by("effective_at")[:MAX_CONCURRENT_PUBLISHES]
+            .order_by("effective_at")[: _max_concurrent_publishes()]
         )
 
-    def _publish_post_group(self, post, due_pps):
+    def _publish_post_group(self, post, due_pps, platform_pool=None):
         """Publish a group of due PlatformPosts belonging to the same Post.
 
         Grouping is purely an operational optimization (shared media download,
         shared credential resolution). Status lives on the children — the
         parent Post is not touched.
+
+        ``platform_pool`` is the cycle's shared platform executor, whose size is
+        the connection budget. Callers outside the cycle (a direct "publish now",
+        a test) pass nothing and get a private pool bounded by the same budget.
+
+        Returns True when this group actually dispatched something, so the cycle
+        can count published groups rather than completed futures.
         """
         # Lock and transition each due child from SCHEDULED → PUBLISHING.
         with transaction.atomic():
@@ -234,37 +446,62 @@ class PublishEngine:
             )
 
             if any(pp.status == PlatformPost.Status.ON_HOLD for pp in locked):
-                return
+                return False
 
             due_ids = {pp.id for pp in due_pps}
             platform_posts = [pp for pp in locked if pp.id in due_ids and pp.status == PlatformPost.Status.SCHEDULED]
 
             if not platform_posts:
-                return
+                return False
 
+            # ``updated_at`` is explicit because queryset .update() bypasses
+            # auto_now, and the confirmation sweep uses it to tell a publish
+            # that is merely slow from one whose worker died mid-flight.
             PlatformPost.objects.filter(id__in=[pp.id for pp in platform_posts]).update(
-                status=PlatformPost.Status.PUBLISHING
+                status=PlatformPost.Status.PUBLISHING,
+                updated_at=timezone.now(),
             )
 
-        # Publish in parallel
-        results = {}
-        with ThreadPoolExecutor(max_workers=min(len(platform_posts), 5)) as executor:
-            futures = {executor.submit(self._publish_platform_post, pp): pp for pp in platform_posts}
-            for future in as_completed(futures):
-                pp = futures[future]
-                try:
-                    results[pp.id] = future.result()
-                except Exception as e:
-                    results[pp.id] = {"success": False, "error": str(e)}
+        # The transition is committed, and what follows is minutes of media
+        # download and platform I/O during which this thread asks the database
+        # nothing. Holding a connection through that would cost one per
+        # in-flight group for the duration of the slowest upload.
+        release_idle_connection()
+
+        # Publish in parallel, sharing one download of the post's media. Nothing
+        # reads the per-platform return value — the loop below re-reads each row
+        # from the DB — so a future's result is only consumed for its exception,
+        # which must be logged rather than stashed in a dict no one inspects.
+        media_cache = _SharedMediaCache()
+        try:
+            with _platform_executor(platform_pool, len(platform_posts)) as executor:
+                futures = {
+                    executor.submit(in_worker_thread, self._publish_platform_post, pp, media_cache=media_cache): pp
+                    for pp in platform_posts
+                }
+                for future in as_completed(futures):
+                    pp = futures[future]
+                    try:
+                        future.result()
+                    except Exception:
+                        logger.exception("Unexpected error publishing PlatformPost %s", pp.id)
+        finally:
+            media_cache.cleanup()
 
         # Reflect the aggregate onto Post.published_at so dashboards that
         # display "last published" don't need to query every child.
         self._sync_parent_published_at(post)
 
-        # Schedule first comments for successful publishes (non-blocking)
-        for pp in platform_posts:
-            pp.refresh_from_db()
+        # Schedule first comments for successful publishes (non-blocking). One
+        # query for the group rather than a refresh_from_db() per child, which
+        # lands right after the reconnect the release above forces.
+        refreshed = PlatformPost.objects.filter(id__in=[pp.id for pp in platform_posts]).select_related(
+            "social_account", "post"
+        )
+        for pp in refreshed:
             self._maybe_schedule_first_comment(pp)
+
+        return True
 
     def _maybe_schedule_first_comment(self, platform_post):
         """Queue the first comment for a freshly published post, once.
@@ -296,7 +533,7 @@ class PublishEngine:
             first_comment_status=PlatformPost.FirstCommentStatus.PENDING
         )
 
-    def _publish_platform_post(self, platform_post):
+    def _publish_platform_post(self, platform_post, media_cache=None):
         """Publish a single PlatformPost to its target platform.
 
         Returns dict: {"success": bool, "platform_post_id": str, "error": str}
@@ -319,7 +556,7 @@ class PublishEngine:
 
         try:
             # Get the provider for this platform
-            result = self._dispatch_to_provider(platform_post)
+            result = self._dispatch_to_provider(platform_post, media_cache=media_cache)
 
             duration_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -331,40 +568,53 @@ class PublishEngine:
                         **(platform_post.platform_extra or {}),
                         **response_extra,
                     }
-                platform_post.status = PlatformPost.Status.PUBLISHED
-                platform_post.published_at = timezone.now()
+                # Captured before the reset below, or every success would log
+                # as attempt 1 and the retry history would vanish.
+                attempt_number = platform_post.retry_count + 1
+                # A successful retry must not leave a stale backoff behind, or
+                # the next schedule of this row would be gated on a past failure.
+                platform_post.retry_count = 0
+                platform_post.next_retry_at = None
+                platform_post.publish_error = ""
+
+                if result.get("async_publish"):
+                    # The platform only took delivery — it has not published
+                    # anything yet. Hold the row in ``publishing`` and let
+                    # ``confirm_pending_publishes`` settle it from the platform's
+                    # own status endpoint, so a post that TikTok later rejects
+                    # doesn't sit in the UI reading "Published".
+                    #
+                    # ``status`` is assigned explicitly and NOT taken for granted:
+                    # this object was loaded before _publish_post_group flipped
+                    # the status with a queryset .update(), so its in-memory
+                    # ``status`` is still ``scheduled``. Saving without setting it
+                    # wrote that stale value back, leaving the row due again and
+                    # re-uploading the video on every 15s tick.
+                    platform_post.status = PlatformPost.Status.PUBLISHING
+                else:
+                    platform_post.status = PlatformPost.Status.PUBLISHED
+                    platform_post.published_at = timezone.now()
                 platform_post.save()
 
-                # A published post leaves the queue: drop the QueueEntry that
-                # held this channel's slot so the queue shows only upcoming posts
-                # and the slot frees up as a gap. Best-effort and isolated: the
-                # publish has already succeeded, so a cleanup failure here must
-                # NOT fall through to the `except` below (which would schedule a
-                # retry and double-post). The PlatformPost + published_at are kept.
-                try:
-                    from apps.calendar.models import QueueEntry
+                if not result.get("async_publish"):
+                    # A published post leaves the queue: drop the QueueEntry that
+                    # held this channel's slot so the queue shows only upcoming posts
+                    # and the slot frees up as a gap. Best-effort and isolated: the
+                    # publish has already succeeded, so a cleanup failure here must
+                    # NOT fall through to the `except` below (which would schedule a
+                    # retry and double-post). The PlatformPost + published_at are kept.
+                    self._drop_queue_entry(platform_post)
 
-                    QueueEntry.objects.filter(
-                        post_id=platform_post.post_id,
-                        queue__social_account_id=platform_post.social_account_id,
-                    ).delete()
-                except Exception:
-                    logger.warning(
-                        "Failed to drop QueueEntry for published PlatformPost %s",
-                        platform_post.id,
-                        exc_info=True,
-                    )
-
-                # Log success
+                # One writer for the log and the rate-limit state, whichever path
+                # we took — duplicating this block is how the async copy drifted
+                # into logging every attempt as number 1.
                 PublishLog.objects.create(
                     platform_post=platform_post,
-                    attempt_number=platform_post.retry_count + 1,
+                    attempt_number=attempt_number,
                     status_code=result.get("status_code", 200),
                     response_body=str(result.get("response", ""))[:1000],
                     duration_ms=duration_ms,
                 )
-
-                # Update rate limit state
                 self._update_rate_limit(account, result)
 
                 return result
@@ -401,17 +651,47 @@ class PublishEngine:
 
             user_message = friendly_publish_error(e)
             if getattr(e, "retryable", True):
-                self._schedule_retry(platform_post, error_msg, user_message=user_message)
+                self._schedule_retry(
+                    platform_post,
+                    error_msg,
+                    user_message=user_message,
+                    retry_at=getattr(e, "resets_at", None),
+                )
             else:
                 self._fail_permanently(platform_post, error_msg, user_message=user_message)
             return {"success": False, "error": error_msg}
 
-    def _dispatch_to_provider(self, platform_post):
+    @staticmethod
+    def _drop_queue_entry(platform_post):
+        """Free the queue slot a now-published post was holding.
+
+        Best-effort on purpose: the post is already live, so a cleanup failure
+        must never propagate into a retry (which would double-post).
+        """
+        try:
+            from apps.calendar.models import QueueEntry
+
+            QueueEntry.objects.filter(
+                post_id=platform_post.post_id,
+                queue__social_account_id=platform_post.social_account_id,
+            ).delete()
+        except Exception:
+            logger.warning(
+                "Failed to drop QueueEntry for published PlatformPost %s",
+                platform_post.id,
+                exc_info=True,
+            )
+
+    def _dispatch_to_provider(self, platform_post, media_cache=None):
         """Dispatch to the appropriate platform provider.
 
         Resolves credentials, refreshes tokens if needed, builds a
         PublishContent payload, and calls provider.publish_post().
         Returns: {"success": bool, "platform_post_id": str, ...}
+
+        ``media_cache`` is the post-level :class:`_SharedMediaCache`; when the
+        caller supplies one, the attachment bytes are downloaded once for the
+        whole post instead of once per platform, and the caller owns cleanup.
         """
         account = platform_post.social_account
         platform = account.platform
@@ -426,7 +706,16 @@ class PublishEngine:
         # that require fetchable URLs (Instagram, Threads, Google Business, etc.)
         media_files = []
         media_urls = []
+        # Per-item media type, parallel to media_urls. Sniffed from magic bytes
+        # at upload, so providers can route on what the file *is* rather than on
+        # a storage-key extension copied from the client-declared filename.
+        media_types = []
         temp_files = []
+        # Owned locally only when the caller didn't hand us a post-level cache
+        # (the retry path); ``owns_cache`` decides who cleans it up.
+        owns_cache = media_cache is None
+        if owns_cache:
+            media_cache = _SharedMediaCache()
         attachments = list(platform_post.post.media_attachments.select_related("media_asset").order_by("position"))
 
         # For video-only platforms (YouTube, TikTok), skip non-video attachments
@@ -434,14 +723,22 @@ class PublishEngine:
         if video_only:
             attachments = [pm for pm in attachments if pm.media_asset.media_type == "video"]
 
+        # Providers that publish from a hosted URL never read ``media_files``,
+        # so pulling the bytes down for them is pure cost — and on a small dyno
+        # an expensive one. The loop below still runs for them: it is also what
+        # collects media_urls, first_media_type and the video duration.
+        needs_local_media = provider.needs_local_media
+
         first_media_type = None
         primary_video_duration = None
+        usable_attachments = 0
         app_url = getattr(settings, "APP_URL", "").rstrip("/")
         try:
             for pm in attachments:
                 asset = pm.media_asset
                 if not asset.file:
                     continue
+                usable_attachments += 1
                 # Track the first media type for post type detection
                 if first_media_type is None:
                     first_media_type = asset.media_type
@@ -457,18 +754,10 @@ class PublishEngine:
                     # Local storage: make absolute using APP_URL
                     url = f"{app_url}{url}"
                 media_urls.append(url)
+                media_types.append(asset.media_type)
 
-                # Download to a temp file (works with any storage backend)
-                suffix = os.path.splitext(asset.filename)[1] or ".tmp"
-                tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
-                    suffix=suffix, delete=False
-                )
-                temp_files.append(tmp.name)
-                with asset.file.open("rb") as src:
-                    for chunk in iter(lambda: src.read(8192), b""):
-                        tmp.write(chunk)
-                tmp.close()
-                media_files.append(tmp.name)
+                if needs_local_media:
+                    media_files.append(media_cache.path_for(asset))
 
             # Merge per-platform extras (e.g. YouTube privacy_status, custom
             # tags, thumbnail) on top of the base extra dict.
@@ -502,11 +791,9 @@ class PublishEngine:
                     if thumb_asset.file:
                         suffix = os.path.splitext(thumb_asset.filename)[1] or ".jpg"
                         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)  # noqa: SIM115
-                        temp_files.append(tmp.name)
-                        with thumb_asset.file.open("rb") as src:
-                            for chunk in iter(lambda: src.read(8192), b""):
-                                tmp.write(chunk)
                         tmp.close()
+                        temp_files.append(tmp.name)
+                        download_to_path(thumb_asset.file, tmp.name)
                         extra["thumbnail_file"] = tmp.name
                 except MediaAsset.DoesNotExist:
                     logger.warning("Thumbnail asset %s not found", thumb_asset_id)
@@ -521,11 +808,9 @@ class PublishEngine:
                     if cover_asset.file:
                         suffix = os.path.splitext(cover_asset.filename)[1] or ".jpg"
                         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)  # noqa: SIM115
-                        temp_files.append(tmp.name)
-                        with cover_asset.file.open("rb") as src:
-                            for chunk in iter(lambda: src.read(8192), b""):
-                                tmp.write(chunk)
                         tmp.close()
+                        temp_files.append(tmp.name)
+                        download_to_path(cover_asset.file, tmp.name)
                         extra["cover_image_file"] = tmp.name
                         cover_url = cover_asset.file.url
                         if cover_url.startswith("/"):
@@ -537,7 +822,10 @@ class PublishEngine:
             post_type = self._resolve_post_type(
                 platform=platform,
                 platform_extra=platform_extra,
-                media_count=len(media_files),
+                # Count attachments, NOT downloaded files: media_files is empty
+                # for URL-only providers, and counting it there would silently
+                # demote every Instagram/Threads carousel to a single post.
+                media_count=usable_attachments,
                 first_media_type=first_media_type,
             )
 
@@ -548,6 +836,7 @@ class PublishEngine:
                 first_comment=platform_post.effective_first_comment,
                 media_files=media_files,
                 media_urls=media_urls,
+                media_types=media_types,
                 post_type=post_type,
                 extra=extra,
                 link_url=link_url,
@@ -567,12 +856,40 @@ class PublishEngine:
                 "platform_post_id": result.platform_post_id,
                 "url": result.url,
                 "response": result.extra,
+                # True when platform_post_id is a handle for work still in
+                # progress rather than a published post's id.
+                "async_publish": provider.publish_is_async,
             }
         finally:
-            # Clean up temp files regardless of success/failure
+            # Per-child temp files (thumbnail, cover) are ours either way. The
+            # shared attachment cache is only ours to drop when we created it.
             for path in temp_files:
                 with contextlib.suppress(OSError):
                     os.unlink(path)
+            if owns_cache:
+                media_cache.cleanup()
+
+    @staticmethod
+    def _hint_matches_media(hint: PostType, media_count: int, first_media_type: str | None) -> bool:
+        """Whether the current attachments can still satisfy a media-shaped hint.
+
+        The hint is written when the composer form is submitted, but attachments
+        are added and removed by endpoints that persist on their own (composer
+        remove_media, the media picker), so it can outlive the media it
+        described. Trusting it then routes the post to an endpoint its
+        attachments do not fit: a Reels or video endpoint handed an image, or a
+        video endpoint handed nothing at all.
+
+        Only hints that name a media shape are checked. TEXT, LINK, PIN and the
+        rest say nothing about attachments and are left to their callers.
+        """
+        if hint is PostType.REEL:
+            # Every Reels API takes exactly one video.
+            return media_count == 1 and first_media_type == "video"
+        if hint is PostType.VIDEO:
+            # _publish_video posts media_urls[0] to the video endpoint as-is.
+            return first_media_type == "video"
+        return True
 
     @staticmethod
     def _resolve_post_type(
@@ -584,18 +901,27 @@ class PublishEngine:
         """Derive the correct PostType from context.
 
         Priority:
-        1. Explicit hint in platform_extra (validated against PostType enum)
+        1. Explicit hint in platform_extra (validated against PostType enum,
+           and against the media actually attached right now)
         2. Platform defaults (Pinterest → PIN)
         3. Multi-media on carousel-capable platforms → CAROUSEL
-        4. Fallback: video → VIDEO, image → IMAGE, else → TEXT
+        4. Fallback: video → VIDEO (REEL on Instagram), image → IMAGE, else → TEXT
         """
         # 1. Explicit post_type hint from platform_extra
         hint = platform_extra.get("post_type")
         if hint:
             valid_values = {pt.value for pt in PostType}
-            if hint in valid_values:
+            if hint not in valid_values:
+                logger.warning("Invalid post_type hint %r, ignoring", hint)
+            elif not PublishEngine._hint_matches_media(PostType(hint), media_count, first_media_type):
+                logger.warning(
+                    "Ignoring stale %s post_type hint: %d attachment(s), first is %r",
+                    hint,
+                    media_count,
+                    first_media_type,
+                )
+            else:
                 return PostType(hint)
-            logger.warning("Invalid post_type hint %r, ignoring", hint)
 
         # 2. Platform defaults
         if platform == "pinterest":
@@ -611,6 +937,13 @@ class PublishEngine:
 
         # 4. Fallback based on first media type
         if first_media_type == "video":
+            # Instagram has no standalone feed video — a lone video is a Reel.
+            # Resolving that here keeps the platform rule next to the other
+            # platform rules above, rather than leaving each Instagram provider
+            # to translate PostType.VIDEO on its own (which instagram_login
+            # failed to do, publishing the .mp4 as image_url).
+            if platform in ("instagram", "instagram_login"):
+                return PostType.REEL
             return PostType.VIDEO
         if first_media_type == "image":
             return PostType.IMAGE
@@ -625,18 +958,111 @@ class PublishEngine:
         provider response body — which is why ``user_message`` has no default:
         every caller has to decide, and a forgotten one is a leak.
         """
-        platform_post.status = PlatformPost.Status.FAILED
-        platform_post.publish_error = (user_message or PUBLISH_GENERIC_MESSAGE)[:2000]
-        platform_post.save()
+        publish_error = (user_message or PUBLISH_GENERIC_MESSAGE)[:2000]
+
+        # A targeted UPDATE guarded on the row still being ``publishing``, not
+        # ``platform_post.save()``. Every one of the seven paths that reaches
+        # here is mid-attempt on a row it claimed into ``publishing``: the
+        # publish and retry paths set it before calling, and the confirmation
+        # sweep only ever selects rows already in it. So ``publishing`` is not a
+        # guess — it is the state this call is entitled to settle, and anything
+        # else means somebody else got there first.
+        #
+        # Narrower than excluding the terminal states, and deliberately so.
+        # ``scheduled`` has to be off limits too: a thread that fails slowly can
+        # finish after ``_schedule_retry`` has already put the row back for
+        # another attempt, and overwriting that would throw away a pending retry
+        # and email the author a failure that had not happened yet. ``published``
+        # matters for the opposite reason — ``VALID_TRANSITIONS`` gives it no
+        # outgoing edges, so a post the platform confirmed is live must never be
+        # walked back to ``failed``, told to the author as a failure, and offered
+        # a retry that double-posts.
+        #
+        # A full save() would push the whole stale object back, and an in-memory
+        # status check would not notice any of this, because the stale object
+        # still says ``publishing``. The row count is the only trustworthy answer
+        # to "did I settle this, or did someone else?", and it is what decides
+        # whether the author is told.
+        #
+        # ``updated_at`` is explicit because .update() bypasses auto_now, and the
+        # confirmation sweep reads it to tell a slow publish from a dead worker.
+        settled_here = PlatformPost.objects.filter(
+            id=platform_post.id,
+            status=PlatformPost.Status.PUBLISHING,
+        ).update(
+            status=PlatformPost.Status.FAILED,
+            publish_error=publish_error,
+            updated_at=timezone.now(),
+        )
+
         logger.warning(
             "PlatformPost %s failed (%s): %s",
             platform_post.id,
             reason,
             error_msg,
         )
+        if not settled_here:
+            # Someone else moved it on. Re-read rather than leaving the caller
+            # holding an object that claims a status and an error the database
+            # rejected.
+            platform_post.refresh_from_db()
+            if platform_post.status in TERMINAL_OR_REQUEUED_STATUSES:
+                logger.info(
+                    "PlatformPost %s is already %s; not notifying the author again",
+                    platform_post.id,
+                    platform_post.status,
+                )
+            else:
+                # Not a race we know about — a caller reached here with a row
+                # that was never claimed into ``publishing``, which would mean
+                # a post silently never failing. Loud on purpose.
+                logger.warning(
+                    "PlatformPost %s could not be failed: expected 'publishing', found %r",
+                    platform_post.id,
+                    platform_post.status,
+                )
+            return
 
-    def _schedule_retry(self, platform_post, error_msg, *, user_message):
-        """Schedule a retry with exponential backoff."""
+        platform_post.status = PlatformPost.Status.FAILED
+        platform_post.publish_error = publish_error
+        self._notify_publish_failed(platform_post)
+
+    @staticmethod
+    def _notify_publish_failed(platform_post):
+        """Tell the post's author their post didn't go out.
+
+        Until now a failed publish was silent unless the user happened to open
+        the Publish page — which is how a broken TikTok integration went a full
+        day without anyone knowing. Best-effort by construction: the post is
+        already marked failed, and a notification problem must not unwind that.
+        """
+        try:
+            from apps.notifications.engine import notify
+            from apps.notifications.models import EventType
+
+            author = platform_post.post.author
+            if not author:
+                return
+            platform = platform_post.social_account.get_platform_display()
+            notify(
+                author,
+                EventType.POST_FAILED,
+                title=f"{platform} post failed to publish",
+                body=platform_post.publish_error,
+                data={
+                    "post_id": str(platform_post.post_id),
+                    "platform_post_id": str(platform_post.id),
+                    "platform": platform_post.social_account.platform,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Could not notify the author that PlatformPost %s failed",
+                platform_post.id,
+            )
+
+    def _schedule_retry(self, platform_post, error_msg, *, user_message, retry_at=None):
+        """Schedule a retry, honoring a provider's absolute reset time when given."""
         if platform_post.retry_count >= MAX_RETRIES:
             # Not ``user_message``: everything that reaches this branch is a
             # retryable failure whose copy promises "We'll retry shortly", and
@@ -649,9 +1075,25 @@ class PublishEngine:
             )
             return
 
-        backoff_seconds = RETRY_BACKOFF[min(platform_post.retry_count, len(RETRY_BACKOFF) - 1)]
+        now = timezone.now()
+        if retry_at is not None:
+            # YouTube's daily quota reset is an absolute Pacific-midnight
+            # boundary. Retrying on the normal minute/5-minute/30-minute ladder
+            # would exhaust MAX_RETRIES long before that boundary arrives.
+            try:
+                backoff_seconds = max(1, math.ceil((retry_at - now).total_seconds()))
+                next_retry_at = max(retry_at, now + timedelta(seconds=1))
+            except (AttributeError, TypeError):
+                # A malformed provider value must not break the publish task;
+                # fall back to the ordinary retry ladder.
+                retry_at = None
+
+        if retry_at is None:
+            backoff_seconds = RETRY_BACKOFF[min(platform_post.retry_count, len(RETRY_BACKOFF) - 1)]
+            next_retry_at = now + timedelta(seconds=backoff_seconds)
+
         platform_post.retry_count += 1
-        platform_post.next_retry_at = timezone.now() + timedelta(seconds=backoff_seconds)
+        platform_post.next_retry_at = next_retry_at
         # Drop back to SCHEDULED so the next _process_retries tick picks it up
         # once next_retry_at passes.
         platform_post.status = PlatformPost.Status.SCHEDULED
@@ -689,11 +1131,201 @@ class PublishEngine:
                 pp.status = PlatformPost.Status.PUBLISHING
                 pp.save(update_fields=["status", "updated_at"])
                 result = self._publish_platform_post(pp)
+                if result.get("async_publish"):
+                    # Left in ``publishing`` on purpose — the confirmation sweep
+                    # owns it from here, including the first comment.
+                    continue
                 if result.get("success"):
                     self._sync_parent_published_at(pp.post)
                     self._maybe_schedule_first_comment(pp)
             except Exception:
                 logger.exception("Error retrying PlatformPost %s", pp.id)
+
+    # ------------------------------------------------------------------
+    # In-flight publishes
+    # ------------------------------------------------------------------
+
+    def confirm_pending_publishes(self):
+        """Settle every PlatformPost sitting in ``publishing``.
+
+        Two jobs, one query, because they are the same question asked of
+        different rows: *is this publish still alive, and what happened to it?*
+
+        1. **Confirmation.** A provider whose publish API is asynchronous
+           (TikTok) has only handed the video over. We ask the platform for the
+           real outcome and record it — which is why a video TikTok silently
+           refused to process no longer reads "Published" forever.
+        2. **Reaping.** Nothing else in the engine ever looks at a ``publishing``
+           row again: both the due query and the retry query filter on
+           ``scheduled``. So a worker killed mid-publish (a deploy, or the R15
+           out-of-memory kill that prompted all this) stranded the row for good,
+           in a status the UI renders read-only and un-selectable. Anything with
+           no platform handle and no progress inside the timeout is failed here.
+
+        Deliberately never re-publishes. We cannot tell "the platform never saw
+        it" from "the platform took it and we died before recording that", and a
+        duplicate video on a live account cannot be taken back. ``failed`` is
+        editable and retryable in one click; a double post is forever.
+        """
+        now = timezone.now()
+        stale_before = now - timedelta(seconds=_stale_publishing_timeout())
+        confirm_before = now - timedelta(seconds=_publish_confirm_timeout())
+        unconfirmed_before = now - timedelta(seconds=_publish_unconfirmed_timeout())
+
+        # ``post__author`` is joined because _fail_permanently notifies the
+        # author — without it every failure costs an extra query mid-sweep.
+        pending = PlatformPost.objects.filter(status=PlatformPost.Status.PUBLISHING).select_related(
+            "social_account", "post__workspace", "post__author"
+        )
+
+        settled = 0
+        for pp in pending:
+            try:
+                if self._confirm_one_publish(
+                    pp,
+                    stale_before=stale_before,
+                    confirm_before=confirm_before,
+                    unconfirmed_before=unconfirmed_before,
+                ):
+                    settled += 1
+            except Exception:
+                logger.exception("Error confirming PlatformPost %s", pp.id)
+        return settled
+
+    def _confirm_one_publish(self, platform_post, *, stale_before, confirm_before, unconfirmed_before) -> bool:
+        """Settle one in-flight row. Returns True when it reached a terminal status."""
+        handle = platform_post.platform_post_id
+        account = platform_post.social_account
+
+        if not handle:
+            # Never got as far as recording a platform handle. Nothing can
+            # finish this row but us, and only once we're sure it isn't simply
+            # still uploading.
+            if platform_post.updated_at < stale_before:
+                self._fail_permanently(
+                    platform_post,
+                    "Worker stopped mid-publish; no platform handle was recorded.",
+                    user_message=PUBLISH_INTERRUPTED_MESSAGE,
+                    reason="interrupted",
+                )
+                return True
+            return False
+
+        try:
+            provider, access_token = _provider_and_access_token(account)
+        except Exception:
+            logger.exception("Could not build a provider to confirm PlatformPost %s", platform_post.id)
+            return False
+
+        if not provider.publish_is_async:
+            # A synchronous provider has no status endpoint to ask, so we cannot
+            # confirm anything. A handle is NOT proof this attempt succeeded: it
+            # survives a transition back to ``scheduled``, so it may belong to an
+            # earlier publish of the same row. Claiming success here would tell
+            # the user a post went live when it never left the worker.
+            if platform_post.updated_at < stale_before:
+                self._fail_permanently(
+                    platform_post,
+                    f"{account.platform} cannot be asked about an in-flight publish.",
+                    user_message=PUBLISH_INTERRUPTED_MESSAGE,
+                    reason="interrupted",
+                )
+                return True
+            return False
+
+        try:
+            status = provider.check_publish_status(access_token, handle)
+        except NotImplementedError:
+            # The provider declared its publish asynchronous but gave us no way
+            # to confirm it, so we know strictly nothing about the outcome.
+            # Treat it like an unreachable platform rather than a success.
+            logger.warning(
+                "%s declares publish_is_async but implements no check_publish_status",
+                account.platform,
+            )
+            if platform_post.updated_at < unconfirmed_before:
+                self._give_up_unconfirmed(
+                    platform_post,
+                    f"{account.platform} cannot report publish status.",
+                )
+                return True
+            return False
+        except Exception as exc:
+            # We could not ASK. That is not an answer: the platform already
+            # accepted the upload, so the post may well be live. Keep
+            # reconciling on the (much longer) unconfirmed budget rather than
+            # calling it failed after the processing timeout — a platform
+            # outage or an expired token must not turn into a user being told
+            # to publish a video that is already on their profile.
+            logger.warning(
+                "Could not read publish status for PlatformPost %s: %s",
+                platform_post.id,
+                exc,
+            )
+            if platform_post.updated_at < unconfirmed_before:
+                self._give_up_unconfirmed(platform_post, f"Gave up confirming the publish: {exc}")
+                return True
+            return False
+
+        if status.state is PublishState.COMPLETE:
+            self._mark_confirmed_published(platform_post, status.platform_post_id or handle)
+            return True
+
+        if status.state in (PublishState.FAILED, PublishState.INBOX):
+            self._fail_permanently(
+                platform_post,
+                status.error or f"{account.platform} reported {status.state.value}",
+                # The platform's own sentence: these are written for the user
+                # (which video setting to change, which app to open), not a
+                # response body, so they are worth showing verbatim.
+                user_message=status.error or PUBLISH_GENERIC_MESSAGE,
+                reason=status.state.value,
+            )
+            return True
+
+        # Still processing. Normal for the first minutes after an upload.
+        if platform_post.updated_at < confirm_before:
+            self._fail_permanently(
+                platform_post,
+                f"{account.platform} never finished processing the upload.",
+                user_message=PUBLISH_CONFIRM_TIMEOUT_MESSAGE,
+                reason="confirm timeout",
+            )
+            return True
+        return False
+
+    def _give_up_unconfirmed(self, platform_post, error_msg: str):
+        """Stop reconciling a publish whose outcome we never learned.
+
+        It still has to leave ``publishing`` — that status is a dead end in the
+        UI, which is the bug this sweep exists to prevent — so ``failed`` is the
+        only terminal state available. What must NOT happen is telling the user
+        to publish again: the upload was accepted, so the post may be live, and
+        a duplicate video cannot be taken back.
+
+        ``platform_post_id`` is deliberately left on the row. It is the only
+        handle that can reconcile this post later, and it is cleared only when
+        the user explicitly re-schedules — the one moment it must not be reused.
+        """
+        self._fail_permanently(
+            platform_post,
+            error_msg,
+            user_message=PUBLISH_UNCONFIRMED_MESSAGE,
+            reason="unconfirmed",
+        )
+
+    def _mark_confirmed_published(self, platform_post, platform_post_id: str):
+        """Finish a publish the platform has confirmed, exactly as the sync path does."""
+        platform_post.platform_post_id = platform_post_id
+        platform_post.status = PlatformPost.Status.PUBLISHED
+        platform_post.published_at = timezone.now()
+        platform_post.publish_error = ""
+        platform_post.save()
+
+        self._drop_queue_entry(platform_post)
+        self._sync_parent_published_at(platform_post.post)
+        self._maybe_schedule_first_comment(platform_post)
+        logger.info("Confirmed publish of PlatformPost %s as %s", platform_post.id, platform_post_id)
 
     def _update_rate_limit(self, account, result):
         """Update rate limit state from API response headers."""
@@ -810,6 +1442,7 @@ def _record_first_comment_failure(
     retryable: bool,
     user_message: str = "",
     retry_after: int | None = None,
+    retry_at=None,
     unexpected: bool = False,
 ):
     """Persist a first-comment failure, and re-queue it when that can help.
@@ -844,8 +1477,17 @@ def _record_first_comment_failure(
         )
         return
 
-    index = min(platform_post.first_comment_retry_count, len(FIRST_COMMENT_RETRY_BACKOFF) - 1)
-    backoff = retry_after or FIRST_COMMENT_RETRY_BACKOFF[index]
+    if retry_at is not None:
+        try:
+            # The task queue accepts a delay, so convert the provider's absolute
+            # reset boundary without rounding down and waking just before it.
+            backoff = max(1, math.ceil((retry_at - timezone.now()).total_seconds()))
+        except (AttributeError, TypeError):
+            retry_at = None
+
+    if retry_at is None:
+        index = min(platform_post.first_comment_retry_count, len(FIRST_COMMENT_RETRY_BACKOFF) - 1)
+        backoff = retry_after or FIRST_COMMENT_RETRY_BACKOFF[index]
 
     if unexpected:
         logger.exception("Unexpected error posting first comment for PlatformPost %s", platform_post.id)
@@ -905,6 +1547,8 @@ def _post_first_comment_task(platform_post_id):
             str(exc),
             retryable=getattr(exc, "retryable", True),
             user_message=friendly_first_comment_error(exc),
+            retry_after=getattr(exc, "retry_after", None),
+            retry_at=getattr(exc, "resets_at", None),
             unexpected=not isinstance(exc, ProviderError),
         )
         return
@@ -932,6 +1576,8 @@ def _post_first_comment_task(platform_post_id):
                 f"Could not check for an existing first comment: {exc}",
                 retryable=True,
                 user_message=friendly_first_comment_error(exc),
+                retry_after=getattr(exc, "retry_after", None),
+                retry_at=getattr(exc, "resets_at", None),
             )
             return
         if existing:
@@ -964,6 +1610,7 @@ def _post_first_comment_task(platform_post_id):
             # RateLimitError is a sibling of APIError, not a subclass, so branch
             # on the attributes rather than on the exception type.
             retry_after=getattr(exc, "retry_after", None),
+            retry_at=getattr(exc, "resets_at", None),
             # Provider errors are self-explanatory; anything else is a bug here
             # and needs the stack to be diagnosable.
             unexpected=not isinstance(exc, ProviderError),

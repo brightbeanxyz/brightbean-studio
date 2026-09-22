@@ -1,12 +1,14 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, call
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 
+from providers.base import REQUEST_TIMEOUT
 from providers.exceptions import APIError, PublishError, RateLimitError
 from providers.facebook import FacebookProvider
-from providers.types import PostType, PublishContent
+from providers.types import PostType, PublishContent, is_video_url
 
 FACEBOOK_POST_FIELDS_PARAM = (
     "id,message,created_time,permalink_url,full_picture,post_id,shares,"
@@ -139,10 +141,14 @@ def test_publish_single_photo_uses_photos_edge_without_staging():
 
 
 def test_is_video_url_ignores_query_string():
-    """Presigned URLs carry query strings; the check must look at the path only."""
-    assert FacebookProvider._is_video_url("https://cdn.example.com/clip.mp4?X-Amz-Sig=abc&x=1") is True
-    assert FacebookProvider._is_video_url("https://cdn.example.com/clip.MOV") is True
-    assert FacebookProvider._is_video_url("https://cdn.example.com/pic.jpg?X-Amz-Sig=abc") is False
+    """Presigned URLs carry query strings; the check must look at the path only.
+
+    This is the fallback for callers that supply no media_types; see
+    test_is_video_prefers_the_sniffed_media_type for the trusted path.
+    """
+    assert is_video_url("https://cdn.example.com/clip.mp4?X-Amz-Sig=abc&x=1") is True
+    assert is_video_url("https://cdn.example.com/clip.MOV") is True
+    assert is_video_url("https://cdn.example.com/pic.jpg?X-Amz-Sig=abc") is False
 
 
 def test_publish_multi_photo_rejects_video_media():
@@ -244,6 +250,7 @@ def test_get_user_pages_includes_follower_count():
                             "access_token": "page-token",
                             "category": "Media",
                             "followers_count": 123,
+                            "tasks": ["CREATE_CONTENT", "ANALYZE"],
                             "picture": {"data": {"url": "https://example.com/avatar.jpg"}},
                         }
                     ]
@@ -255,12 +262,114 @@ def test_get_user_pages_includes_follower_count():
     pages = provider.get_user_pages("user-token")
 
     assert pages[0]["followers_count"] == 123
-    provider._request.assert_called_once_with(
-        "GET",
-        "https://graph.facebook.com/v25.0/me/accounts",
-        access_token="user-token",
-        params={"fields": "id,name,access_token,category,picture,followers_count"},
+    assert pages[0]["can_publish"] is True
+    assert pages[0]["tasks"] == ["CREATE_CONTENT", "ANALYZE"]
+    provider._request.assert_called_once()
+    call_args = provider._request.call_args
+    assert call_args.args == ("GET", "https://graph.facebook.com/v25.0/me/accounts")
+    assert call_args.kwargs["access_token"] == "user-token"
+    assert call_args.kwargs["params"] == {
+        "fields": "id,name,access_token,category,picture,followers_count,tasks",
+        "limit": 100,
+    }
+    # Derived from the remaining time budget, so only its bound is stable.
+    assert 0 < call_args.kwargs["timeout"] <= REQUEST_TIMEOUT
+
+
+def test_get_user_pages_follows_all_account_pages_and_marks_non_publishable_pages():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp(
+                {
+                    "data": [
+                        {
+                            "id": "page-1",
+                            "name": "Page One",
+                            "access_token": "token-1",
+                            "tasks": ["ANALYZE"],
+                        }
+                    ],
+                    "paging": {
+                        "cursors": {"after": "cursor-1"},
+                        "next": "https://graph.facebook.com/next",
+                    },
+                }
+            ),
+            _resp(
+                {
+                    "data": [
+                        {
+                            "id": "page-2",
+                            "name": "Page Two",
+                            "access_token": "token-2",
+                            "tasks": ["CREATE_CONTENT"],
+                        }
+                    ]
+                }
+            ),
+        ]
     )
+
+    pages = provider.get_user_pages("long-lived-user-token")
+
+    assert [page["id"] for page in pages] == ["page-1", "page-2"]
+    assert [page["can_publish"] for page in pages] == [False, True]
+    second = provider._request.call_args_list[1]
+    assert second.args == ("GET", "https://graph.facebook.com/v25.0/me/accounts")
+    assert second.kwargs["access_token"] == "long-lived-user-token"
+    assert second.kwargs["params"] == {
+        "fields": "id,name,access_token,category,picture,followers_count,tasks",
+        "limit": 100,
+        "after": "cursor-1",
+    }
+
+
+def test_get_user_pages_treats_explicit_empty_tasks_as_non_publishable():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        return_value=_resp(
+            {
+                "data": [
+                    {
+                        "id": "page-1",
+                        "name": "Page One",
+                        "access_token": "page-token",
+                        "tasks": [],
+                    }
+                ]
+            }
+        )
+    )
+
+    pages = provider.get_user_pages("user-token")
+
+    assert pages[0]["tasks"] == []
+    assert pages[0]["can_publish"] is False
+
+
+def test_facebook_login_for_business_uses_config_id_instead_of_scope():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret", "config_id": "business-config-1"})
+
+    url = provider.get_auth_url("https://studio.example/callback", "state-1")
+    query = parse_qs(urlparse(url).query)
+
+    assert query["config_id"] == ["business-config-1"]
+    assert query["override_default_response_type"] == ["true"]
+    assert "scope" not in query
+    # Login for Business changes where the permission list comes from, not
+    # whether a declined permission can be re-asked for.
+    assert query["auth_type"] == ["rerequest"]
+
+
+def test_facebook_auth_url_falls_back_to_scope_without_a_config_id():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret", "config_id": "  "})
+
+    query = parse_qs(urlparse(provider.get_auth_url("https://studio.example/cb", "state-1")).query)
+
+    assert "config_id" not in query
+    assert "override_default_response_type" not in query
+    assert query["scope"][0].split(",") == provider.required_scopes
 
 
 def test_get_profile_uses_user_safe_fields():
@@ -720,6 +829,199 @@ def test_publish_video_resolves_feed_post_id_for_analytics():
     )
 
 
+def test_publish_reel_uses_start_hosted_upload_and_finish_flow():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"video_id": "reel-video-1", "upload_url": "https://rupload.facebook.com/reel-upload"}),
+            _resp({"success": True}),
+            _resp({"success": True}),
+            _resp(
+                {
+                    "post_id": "page-1_post-9",
+                    "permalink_url": "https://www.facebook.com/reel/reel-video-1",
+                }
+            ),
+        ]
+    )
+
+    result = provider.publish_post(
+        "page-token",
+        PublishContent(
+            text="Reel caption",
+            title="Launch reel",
+            media_urls=["https://cdn.example.com/reel.mp4?sig=abc"],
+            post_type=PostType.REEL,
+            video_duration_sec=30,
+            extra={"page_id": "page-1"},
+        ),
+    )
+
+    assert result.platform_post_id == "post-9"
+    assert result.url == "https://www.facebook.com/reel/reel-video-1"
+    assert result.extra["video_id"] == "reel-video-1"
+    # platform_extra is an input channel the engine merges results into, and
+    # duplicate/recurrence deep-copy it. Echoing the Reel hint back would plant
+    # it on a clone whose media may no longer be a single video.
+    assert "post_type" not in result.extra
+    assert provider._request.call_args_list == [
+        call(
+            "POST",
+            "https://graph.facebook.com/v25.0/page-1/video_reels",
+            access_token="page-token",
+            data={"upload_phase": "start"},
+        ),
+        call(
+            "POST",
+            "https://rupload.facebook.com/reel-upload",
+            headers={
+                "Authorization": "OAuth page-token",
+                "file_url": "https://cdn.example.com/reel.mp4?sig=abc",
+            },
+        ),
+        call(
+            "POST",
+            "https://graph.facebook.com/v25.0/page-1/video_reels",
+            access_token="page-token",
+            data={
+                "upload_phase": "finish",
+                "video_id": "reel-video-1",
+                "video_state": "PUBLISHED",
+                "description": "Reel caption",
+            },
+        ),
+        call(
+            "GET",
+            "https://graph.facebook.com/v25.0/reel-video-1",
+            access_token="page-token",
+            params={"fields": "post_id,permalink_url"},
+        ),
+    ]
+
+
+@pytest.mark.parametrize("duration", [2.9, 91])
+def test_publish_reel_rejects_unsupported_duration_before_creating_upload(duration):
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock()
+
+    with pytest.raises(PublishError, match="between 3 and 90 seconds"):
+        provider.publish_post(
+            "page-token",
+            PublishContent(
+                media_urls=["https://cdn.example.com/reel.mp4"],
+                post_type=PostType.REEL,
+                video_duration_sec=duration,
+                extra={"page_id": "page-1"},
+            ),
+        )
+
+    provider._request.assert_not_called()
+
+
+def test_publish_reel_allows_an_unknown_duration_through():
+    """MediaAsset.duration comes from a best-effort background ffprobe.
+
+    When it has not run, or could not read the file, the duration is unknown —
+    and refusing to publish on that would block a valid Reel over a metadata
+    job we never promised to have finished. Same fail-open shape as TikTok's
+    max-duration check.
+    """
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"video_id": "reel-video-1", "upload_url": "https://rupload.facebook.com/up"}),
+            _resp({"success": True}),
+            _resp({"success": True}),
+            _resp({"post_id": "page-1_post-9", "permalink_url": "https://www.facebook.com/reel/x"}),
+        ]
+    )
+
+    result = provider.publish_post(
+        "page-token",
+        PublishContent(
+            media_urls=["https://cdn.example.com/reel.mp4"],
+            post_type=PostType.REEL,
+            video_duration_sec=None,
+            extra={"page_id": "page-1"},
+        ),
+    )
+
+    assert result.platform_post_id == "post-9"
+
+
+def test_publish_reel_keeps_only_identifiers_out_of_the_phase_responses():
+    """PublishResult.extra is merged into platform_extra, an input channel.
+
+    start_data carries a signed rupload URL, which must not be persisted or
+    deep-copied into clones by duplicate/recurrence.
+    """
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"video_id": "reel-video-1", "upload_url": "https://rupload.facebook.com/signed?sig=secret"}),
+            _resp({"success": True}),
+            _resp({"success": True}),
+            _resp({"post_id": "page-1_post-9", "permalink_url": "https://www.facebook.com/reel/x"}),
+        ]
+    )
+
+    result = provider.publish_post(
+        "page-token",
+        PublishContent(
+            media_urls=["https://cdn.example.com/reel.mp4"],
+            post_type=PostType.REEL,
+            extra={"page_id": "page-1"},
+        ),
+    )
+
+    assert result.extra == {
+        "video_id": "reel-video-1",
+        "post_id": "page-1_post-9",
+        "permalink_url": "https://www.facebook.com/reel/x",
+    }
+    assert "upload_url" not in result.extra
+    assert "post_type" not in result.extra
+
+
+def test_publish_reel_fails_when_the_hosted_upload_reports_failure():
+    """Meta fetches the file server-side, so a 2xx does not mean it arrived."""
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"video_id": "reel-video-1", "upload_url": "https://rupload.facebook.com/up"}),
+            _resp({"success": False, "debug_info": "could not fetch file_url"}),
+        ]
+    )
+
+    with pytest.raises(PublishError, match="upload the Reel video"):
+        provider.publish_post(
+            "page-token",
+            PublishContent(
+                media_urls=["https://cdn.example.com/reel.mp4"],
+                post_type=PostType.REEL,
+                extra={"page_id": "page-1"},
+            ),
+        )
+
+    # Stops at the upload; never reaches the finish phase.
+    assert provider._request.call_count == 2
+
+
+def test_publish_reel_requires_a_complete_upload_session():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(return_value=_resp({"video_id": "reel-video-1"}))
+
+    with pytest.raises(PublishError, match="did not create a Reel upload session"):
+        provider.publish_post(
+            "page-token",
+            PublishContent(
+                media_urls=["https://cdn.example.com/reel.mp4"],
+                post_type=PostType.REEL,
+                extra={"page_id": "page-1"},
+            ),
+        )
+
+
 @pytest.mark.parametrize(
     "lookup_error",
     [
@@ -890,9 +1192,13 @@ def test_fetch_post_comments_uses_field_expansion_and_does_not_pass_caller_since
     """`since` on /feed filters by POST time, so passing the caller's `since`
     would hide every new comment on an older post."""
     provider = FacebookProvider({"client_id": "id", "client_secret": "secret", "page_id": "page-1"})
-    provider._request = MagicMock(return_value=_feed_response([_comment()]))
+    # Both dates relative to now. Fixed ones silently invert this test once they
+    # drift past FACEBOOK_FEED_WINDOW_DAYS: the 30-day window floor then lands
+    # *after* the caller's `since`, and the comment falls outside the lookback.
+    recent = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S+0000")
+    provider._request = MagicMock(return_value=_feed_response([_comment(created=recent)]))
 
-    since = datetime(2026, 8, 7, 8, 0, tzinfo=UTC)
+    since = datetime.now(UTC) - timedelta(days=2)
     messages = provider._fetch_post_comments("page-token", since=since)
 
     assert [m.platform_message_id for m in messages] == ["comment-1"]

@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from providers.exceptions import APIError
+from providers.exceptions import APIError, PublishError
 from providers.instagram import InstagramProvider
 from providers.instagram_login import InstagramLoginProvider
 from providers.meta_comments import INSTAGRAM_COMMENT_FIELD_SETS
@@ -27,6 +27,7 @@ def test_get_user_pages_returns_linked_instagram_business_accounts():
                             "name": "Facebook Page",
                             "access_token": "page-token",
                             "category": "Creator",
+                            "tasks": ["CREATE_CONTENT"],
                             "picture": {"data": {"url": "https://example.com/page.jpg"}},
                             "instagram_business_account": {
                                 "id": "17841400000000000",
@@ -60,19 +61,21 @@ def test_get_user_pages_returns_linked_instagram_business_accounts():
             "followers_count": 42,
             "page_id": "page-1",
             "page_name": "Facebook Page",
+            "tasks": ["CREATE_CONTENT"],
+            "can_publish": True,
         }
     ]
-    provider._request.assert_called_once_with(
-        "GET",
-        "https://graph.facebook.com/v25.0/me/accounts",
-        access_token="user-token",
-        params={
-            "fields": (
-                "id,name,access_token,category,picture,"
-                "instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}"
-            ),
-        },
-    )
+    provider._request.assert_called_once()
+    call_args = provider._request.call_args
+    assert call_args.args == ("GET", "https://graph.facebook.com/v25.0/me/accounts")
+    assert call_args.kwargs["access_token"] == "user-token"
+    assert call_args.kwargs["params"] == {
+        "fields": (
+            "id,name,access_token,category,picture,tasks,"
+            "instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}"
+        ),
+        "limit": 100,
+    }
 
 
 def test_get_user_pages_omits_blank_page_access_token():
@@ -103,6 +106,73 @@ def test_get_user_pages_omits_blank_page_access_token():
 
     assert len(accounts) == 1
     assert "access_token" not in accounts[0]
+    assert accounts[0]["can_publish"] is True
+
+
+def test_get_user_pages_follows_pagination_and_marks_missing_create_content():
+    provider = InstagramProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp(
+                {
+                    "data": [],
+                    "paging": {
+                        "cursors": {"after": "next-page"},
+                        "next": "https://graph.facebook.com/next",
+                    },
+                }
+            ),
+            _resp(
+                {
+                    "data": [
+                        {
+                            "id": "page-2",
+                            "name": "Second Page",
+                            "access_token": "page-token-2",
+                            "tasks": ["ANALYZE"],
+                            "instagram_business_account": {
+                                "id": "ig-2",
+                                "username": "second",
+                            },
+                        }
+                    ]
+                }
+            ),
+        ]
+    )
+
+    accounts = provider.get_user_pages("user-token")
+
+    assert [account["id"] for account in accounts] == ["ig-2"]
+    assert accounts[0]["can_publish"] is False
+    assert provider._request.call_args_list[1].kwargs["params"]["after"] == "next-page"
+
+
+def test_get_user_pages_treats_explicit_empty_tasks_as_non_publishable():
+    provider = InstagramProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        return_value=_resp(
+            {
+                "data": [
+                    {
+                        "id": "page-1",
+                        "name": "Facebook Page",
+                        "access_token": "page-token",
+                        "tasks": [],
+                        "instagram_business_account": {
+                            "id": "ig-1",
+                            "username": "brightbean",
+                        },
+                    }
+                ]
+            }
+        )
+    )
+
+    accounts = provider.get_user_pages("user-token")
+
+    assert accounts[0]["tasks"] == []
+    assert accounts[0]["can_publish"] is False
 
 
 def test_account_metrics_use_current_instagram_insights_metrics():
@@ -936,27 +1006,281 @@ def test_comment_poll_keeps_the_author_when_only_replies_are_rejected(make_provi
     assert "replies" not in sent
 
 
-def test_instagram_login_reel_uses_cover_image_url():
-    provider = InstagramLoginProvider(IG_LOGIN_CREDS)
-    provider._create_container = MagicMock(return_value="container-1")
-    provider._wait_for_container = MagicMock()
-    provider._publish_container = MagicMock(return_value=MagicMock())
-    cover_url = "https://media.example.test/signed-cover.jpg"
+# ----------------------------------------------------------------------
+# Publishing
+# ----------------------------------------------------------------------
+
+# (provider factory, container-creation edge). Kept separate from IG_PROVIDERS:
+# that list carries the *comment* media edge, which coincides with the publish
+# edge only by accident of Meta's API shape.
+IG_PUBLISHERS = [
+    pytest.param(
+        lambda: InstagramProvider(IG_CREDS),
+        "https://graph.facebook.com/v25.0/ig-1/media",
+        id="facebook-login",
+    ),
+    pytest.param(
+        lambda: InstagramLoginProvider(IG_LOGIN_CREDS),
+        "https://graph.instagram.com/v25.0/me/media",
+        id="instagram-login",
+    ),
+]
+
+# Media storage sets AWS_QUERYSTRING_AUTH, so every real media URL arrives
+# presigned. A bare ".mp4" never reaches a provider in production, and testing
+# only with one hides every extension check that looks at the whole URL.
+VIDEO_URL = "https://cdn.example/clip.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc"
+IMAGE_URL = "https://cdn.example/pic.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=def"
+
+
+def _publish(provider, **kwargs):
+    """Drive publish_post over a create → poll → publish container exchange."""
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "container-1"}),
+            _resp({"status_code": "FINISHED"}),
+            _resp({"id": "media-1"}),
+        ]
+    )
+    kwargs.setdefault("extra", {"ig_user_id": "ig-1"})
+    return provider.publish_post("token", PublishContent(**kwargs))
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+@pytest.mark.parametrize("post_type", [PostType.VIDEO, PostType.REEL])
+def test_a_single_video_is_published_as_a_reel(make_provider, create_url, post_type):
+    """A lone video asset resolves to PostType.VIDEO in the engine, not REEL.
+
+    Both have to build a REELS container: a video that falls through to the
+    IMAGE branch is sent as ``image_url`` and Instagram rejects it with 'The
+    image format is not supported' (36001).
+    """
+    provider = make_provider()
+
+    result = _publish(provider, text="Look at this", media_urls=[VIDEO_URL], post_type=post_type)
+
+    assert result.platform_post_id == "media-1"
+    create = provider._request.call_args_list[0]
+    assert create.args[:2] == ("POST", create_url)
+    assert create.kwargs["json"] == {
+        "caption": "Look at this",
+        "media_type": "REELS",
+        "video_url": VIDEO_URL,
+    }
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_a_single_image_is_still_published_as_an_image(make_provider, create_url):
+    provider = make_provider()
+
+    _publish(provider, media_urls=[IMAGE_URL], post_type=PostType.IMAGE)
+
+    assert provider._request.call_args_list[0].kwargs["json"] == {"image_url": IMAGE_URL}
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_a_video_story_is_sent_as_a_video_not_an_image(make_provider, create_url):
+    """The story branch picks its field by extension, and presigned URLs end in
+    a signature — so a whole-URL ``endswith`` check sends the .mp4 as image_url.
+    """
+    provider = make_provider()
+
+    _publish(provider, media_urls=[VIDEO_URL], post_type=PostType.STORY)
+
+    assert provider._request.call_args_list[0].kwargs["json"] == {
+        "media_type": "STORIES",
+        "video_url": VIDEO_URL,
+    }
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_an_image_story_is_sent_as_an_image(make_provider, create_url):
+    provider = make_provider()
+
+    _publish(provider, media_urls=[IMAGE_URL], post_type=PostType.STORY)
+
+    assert provider._request.call_args_list[0].kwargs["json"] == {
+        "media_type": "STORIES",
+        "image_url": IMAGE_URL,
+    }
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_a_carousel_video_child_is_sent_as_a_video(make_provider, create_url):
+    """Same extension trap as the story branch, one level down: a presigned
+    video child built as an image fails the container and strands the children
+    already created before it.
+    """
+    provider = make_provider()
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "child-1"}),
+            _resp({"status_code": "FINISHED"}),
+            _resp({"id": "child-2"}),
+            _resp({"status_code": "FINISHED"}),
+            _resp({"id": "carousel-1"}),
+            _resp({"status_code": "FINISHED"}),
+            _resp({"id": "media-1"}),
+        ]
+    )
 
     provider.publish_post(
         "token",
         PublishContent(
-            media_urls=["https://media.example.test/signed-video.mp4"],
-            post_type=PostType.REEL,
-            extra={"cover_image_url": cover_url},
+            media_urls=[IMAGE_URL, VIDEO_URL],
+            post_type=PostType.CAROUSEL,
+            extra={"ig_user_id": "ig-1"},
         ),
     )
 
-    provider._create_container.assert_called_once_with(
-        "token",
-        {
-            "media_type": "REELS",
-            "video_url": "https://media.example.test/signed-video.mp4",
-            "cover_url": cover_url,
-        },
+    first, second = (provider._request.call_args_list[i].kwargs["json"] for i in (0, 2))
+    assert first == {"is_carousel_item": True, "image_url": IMAGE_URL}
+    assert second == {"is_carousel_item": True, "media_type": "VIDEO", "video_url": VIDEO_URL}
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_a_carousel_of_one_video_is_published_as_a_reel(make_provider, create_url):
+    """A carousel needs 2-10 children, so a single-item one cannot be published
+    as a carousel — and must not fall through to the image branch either.
+    """
+    provider = make_provider()
+
+    _publish(provider, media_urls=[VIDEO_URL], post_type=PostType.CAROUSEL)
+
+    assert provider._request.call_args_list[0].kwargs["json"] == {
+        "media_type": "REELS",
+        "video_url": VIDEO_URL,
+    }
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_an_image_named_mp4_is_not_published_as_a_reel(make_provider, create_url):
+    """A storage key's extension comes from the client-declared filename and is
+    cosmetic — media_library re-sniffs the content at finalize. An image
+    uploaded as ``cat.mp4`` must follow its sniffed type, not its URL.
+    """
+    provider = make_provider()
+
+    _publish(
+        provider,
+        media_urls=["https://cdn.example/cat.mp4?X-Amz-Signature=abc"],
+        media_types=["image"],
+        post_type=PostType.IMAGE,
     )
+
+    assert provider._request.call_args_list[0].kwargs["json"] == {
+        "image_url": "https://cdn.example/cat.mp4?X-Amz-Signature=abc"
+    }
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_a_video_named_jpg_is_still_published_as_a_reel(make_provider, create_url):
+    """The same disagreement the other way round: trusting the .jpg suffix
+    would send an actual video through image_url and fail with 36001.
+    """
+    provider = make_provider()
+
+    _publish(
+        provider,
+        media_urls=["https://cdn.example/clip.jpg?X-Amz-Signature=abc"],
+        media_types=["video"],
+        post_type=PostType.IMAGE,
+    )
+
+    assert provider._request.call_args_list[0].kwargs["json"] == {
+        "media_type": "REELS",
+        "video_url": "https://cdn.example/clip.jpg?X-Amz-Signature=abc",
+    }
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_a_carousel_child_follows_its_own_sniffed_type(make_provider, create_url):
+    """media_types is parallel to media_urls, so each child has to read its own
+    entry — an off-by-one here swaps the two children's containers.
+    """
+    provider = make_provider()
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "child-1"}),
+            _resp({"status_code": "FINISHED"}),
+            _resp({"id": "child-2"}),
+            _resp({"status_code": "FINISHED"}),
+            _resp({"id": "carousel-1"}),
+            _resp({"status_code": "FINISHED"}),
+            _resp({"id": "media-1"}),
+        ]
+    )
+
+    provider.publish_post(
+        "token",
+        PublishContent(
+            media_urls=[VIDEO_URL, IMAGE_URL],
+            media_types=["video", "image"],
+            post_type=PostType.CAROUSEL,
+            extra={"ig_user_id": "ig-1"},
+        ),
+    )
+
+    first, second = (provider._request.call_args_list[i].kwargs["json"] for i in (0, 2))
+    assert first == {"is_carousel_item": True, "media_type": "VIDEO", "video_url": VIDEO_URL}
+    assert second == {"is_carousel_item": True, "image_url": IMAGE_URL}
+
+
+def test_is_video_prefers_the_sniffed_media_type():
+    """PublishContent.is_video trusts media_types, and falls back to the URL
+    only for the entries it was not given."""
+    content = PublishContent(
+        media_urls=["https://cdn.example/a.mp4?sig=x", "https://cdn.example/b.jpg?sig=x"],
+        media_types=["image", "video"],
+    )
+    assert content.is_video(0) is False
+    assert content.is_video(1) is True
+
+    # No media_types at all, and a blank entry: fall back to the URL path.
+    bare = PublishContent(media_urls=["https://cdn.example/a.mp4?sig=x"])
+    assert bare.is_video(0) is True
+    blank = PublishContent(media_urls=["https://cdn.example/a.mp4?sig=x"], media_types=[""])
+    assert blank.is_video(0) is True
+
+    # A gif is not a video, and an out-of-range index is not a crash.
+    assert PublishContent(media_urls=["x.gif"], media_types=["gif"]).is_video(0) is False
+    assert PublishContent().is_video(0) is False
+
+
+@pytest.mark.parametrize("provider_cls", [InstagramProvider, InstagramLoginProvider])
+def test_publishing_without_media_is_a_clean_error(provider_cls):
+    """Instagram has no text-only post; the provider owes the engine a
+    PublishError rather than an IndexError off an empty media list.
+    """
+    provider = provider_cls(IG_CREDS)
+    provider._request = MagicMock()
+
+    with pytest.raises(PublishError):
+        provider.publish_post("token", PublishContent(text="No media here"))
+
+    provider._request.assert_not_called()
+
+
+@pytest.mark.parametrize("provider_cls", [InstagramProvider, InstagramLoginProvider])
+def test_video_is_a_declared_post_type(provider_cls):
+    """An explicit post_type hint can still hand the provider VIDEO, so the
+    declared contract has to admit it."""
+    assert PostType.VIDEO in provider_cls(IG_CREDS).supported_post_types
+
+
+def test_instagram_login_reel_uses_cover_image_url():
+    provider = InstagramLoginProvider(IG_LOGIN_CREDS)
+    cover_url = "https://media.example.test/reel-cover.jpg"
+
+    _publish(
+        provider,
+        media_urls=[VIDEO_URL],
+        post_type=PostType.REEL,
+        extra={"cover_image_url": cover_url},
+    )
+
+    assert provider._request.call_args_list[0].kwargs["json"] == {
+        "media_type": "REELS",
+        "video_url": VIDEO_URL,
+        "cover_url": cover_url,
+    }

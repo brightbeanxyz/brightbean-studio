@@ -3,6 +3,7 @@
 import base64
 import contextlib
 import json
+import logging
 import re
 import uuid
 from datetime import UTC, datetime
@@ -12,7 +13,7 @@ import httpx
 from dateutil import parser as date_parser
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
-from django.core.cache import cache
+from django.core.cache import cache, caches
 from django.core.exceptions import PermissionDenied, SuspiciousOperation, ValidationError
 from django.db import models, transaction
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse, StreamingHttpResponse
@@ -48,6 +49,9 @@ from .models import (
     PostVersion,
     Tag,
 )
+from .status import READONLY_STATUSES, derive_post_status
+
+logger = logging.getLogger(__name__)
 
 MAX_CSV_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB cap on CSV planner imports
 
@@ -127,6 +131,99 @@ def _scoped_platform_post_ids(request, post):
     return list(post.platform_posts.filter(social_account_id=scope).values_list("id", flat=True))
 
 
+def _match_scope(children, scope):
+    """The PlatformPosts in ``children`` belonging to ``scope``, an account UUID.
+
+    Returns every child when ``scope`` is empty, and none when it is set but
+    unparseable. Compares UUID *objects*, never their strings: ``uuid.UUID``
+    accepts any case, but ``str()`` of one is always lowercase, so a
+    differently-cased ``?account=`` would silently match nothing.
+    """
+    if not scope:
+        return list(children)
+    try:
+        wanted = uuid.UUID(str(scope))
+    except (ValueError, TypeError):
+        return []
+    return [pp for pp in children if pp.social_account_id == wanted]
+
+
+def _gated_children(children, scope):
+    """The children a read-only decision should weigh, given ``scope``.
+
+    Like ``_match_scope``, except an unmatched scope falls back to the whole
+    list. That fallback is load-bearing: without it ``?account=<id of an
+    account with no row on this post>`` would leave the caller looking at an
+    empty list, which reads as "nothing published here" and reopens a live post
+    for editing. An unmatched scope must never be *more* permissive than no
+    scope at all.
+    """
+    return _match_scope(children, scope) or list(children)
+
+
+def _children_are_locked(children):
+    """Whether every one of ``children`` is published or mid-publish.
+
+    The *server's* rule, used by the save and autosave endpoints: a row in
+    ``PROTECTED_STATUSES`` can no longer be written, so when they all are there
+    is nothing left to save. Deliberately narrower than
+    ``_children_are_readonly`` — see there.
+    """
+    return bool(children) and all(pp.status in PlatformPost.PROTECTED_STATUSES for pp in children)
+
+
+def _children_are_readonly(children):
+    """Whether the composer should stop *offering* to change ``children``.
+
+    The *UI's* rule, and wider than ``_children_are_locked``: a
+    partially-published post still holds a writable failed child, so the server
+    keeps accepting scoped writes to it, but the aggregate is a finished
+    publish and the action bar steps back and points at Clone instead.
+
+    The two rules disagree on exactly that case, on purpose. The UI is the
+    stricter side, so the asymmetry only ever hides an affordance — it never
+    lets a write through that ``_children_are_locked`` would refuse. Change one
+    and you almost certainly need to think about the other.
+    """
+    return derive_post_status([pp.status for pp in children]) in READONLY_STATUSES
+
+
+def _is_readonly_write(request, post):
+    """Whether every PlatformPost this request would touch has already published.
+
+    Backs the composer's read-only banner on the server: once a post is live (or
+    mid-publish) there is nothing left to write, so the save and autosave paths
+    must stop rewriting its content and re-stamping ``scheduled_at``.
+
+    Scoped requests (``account_scope``) weigh only that child, mirroring the
+    scoped composer: a failed channel on a partially-published post stays
+    workable, and Clone remains the retry path for the published ones. A post
+    with no children yet (a brand-new draft) is never read-only.
+    """
+    # Only three columns are needed; skip hydrating captions and platform_extra.
+    children = list(post.platform_posts.only("id", "status", "social_account_id"))
+    return _children_are_locked(_gated_children(children, _get_account_scope(request)))
+
+
+def _readonly_rejection(request, post):
+    """A 400 for a write to an already-published post, or ``None`` to proceed.
+
+    ``{"errors": {...}}`` is the only shape the composer renders as a readable
+    message (see ``onFormSaved`` in compose.html); ``PermissionDenied`` would
+    return Django's HTML 403 and degrade to the generic fallback toast.
+    """
+    if not _is_readonly_write(request, post):
+        return None
+    return JsonResponse(
+        {
+            "errors": {
+                "status": "This post has already published and can't be edited. Use Clone to repost an editable copy."
+            }
+        },
+        status=400,
+    )
+
+
 def _sync_platform_posts(request, post, workspace, initial_status=None):
     """Sync platform post selections from form data.
 
@@ -158,7 +255,34 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
         pp.platform_specific_first_comment = override_comment if override_comment else None
 
         # Per-platform extras
-        if account.platform == "youtube":
+        if account.platform == "facebook" and f"facebook_panel_{acc_id}" in request.POST:
+            # Gated on the panel's hidden marker, which the composer renders for
+            # every selected Facebook account regardless of media: that keeps a
+            # non-composer save from wiping extras it never rendered, while
+            # still letting a composer save clear a hint whose video is gone.
+            #
+            # The Reel selector itself is omitted when the attachment set is not
+            # exactly one video. Clearing an earlier choice in that case is what
+            # stops removing or replacing media from leaving a stale Reel hint
+            # that sends a text or image post to Facebook's Reel endpoint.
+            extra = {**(pp.platform_extra or {})}
+            facebook_post_type = request.POST.get(f"facebook_post_type_{acc_id}", "").strip()
+            media_types = list(post.media_attachments.values_list("media_asset__media_type", flat=True)[:2])
+            has_exactly_one_video = media_types == ["video"]
+            if facebook_post_type == "reel" and has_exactly_one_video:
+                extra["post_type"] = "reel"
+            else:
+                # Only the deviation from the default is worth storing. A lone
+                # video already infers PostType.VIDEO at publish time, so a
+                # "video" hint restates what the media says and can only go
+                # wrong: if the attachment is later swapped for an image
+                # through the media endpoints, the hint would still route it to
+                # Facebook's video endpoint. Choosing regular video therefore
+                # clears the hint rather than recording it.
+                extra.pop("post_type", None)
+            pp.platform_extra = extra
+
+        elif account.platform == "youtube":
             tags_list = parse_and_truncate_youtube_tag_string(request.POST.get(f"yt_tags_{acc_id}", ""))
             privacy_status = request.POST.get(f"yt_privacy_status_{acc_id}", "public")
             if privacy_status not in ("public", "unlisted", "private"):
@@ -396,12 +520,11 @@ def compose(request, workspace_id, post_id=None):
             schedule_prefill_is_proposed = post.scheduled_at is None
         # One fetch serves selected ids, extras, and the status checks below.
         platform_post_list = list(post.platform_posts.select_related("social_account"))
-        if account_filter:
-            selected_account_ids = [
-                pp.social_account_id for pp in platform_post_list if str(pp.social_account_id) == account_filter
-            ]
-        else:
-            selected_account_ids = [pp.social_account_id for pp in platform_post_list]
+        # Matched strictly: the scoped form renders and selects only this account,
+        # so an unmatched ?account= must select nothing. The read-only gate below
+        # reuses the same match but falls back to every child — see _gated_children.
+        scoped_platform_posts = _match_scope(platform_post_list, account_filter)
+        selected_account_ids = [pp.social_account_id for pp in scoped_platform_posts]
         media_attachments = post.media_attachments.select_related("media_asset").all()
         platform_extras = {str(pp.social_account_id): (pp.platform_extra or {}) for pp in platform_post_list}
         template_data = None
@@ -431,6 +554,7 @@ def compose(request, workspace_id, post_id=None):
             initial["caption"] = template_data["caption"]
         form = PostForm(initial=initial)
         platform_post_list = []
+        scoped_platform_posts = []
         selected_account_ids = []
         media_attachments = []
         platform_extras = {}
@@ -496,12 +620,33 @@ def compose(request, workspace_id, post_id=None):
     ws_role = membership.workspace_role if membership else None
     can_view_internal_notes = ws_role not in ("client", "viewer") if ws_role else True
 
+    # "Read-only" describes what the composer is actually *showing*. Opened
+    # scoped to one account (``?account=``) only that child's status counts, so
+    # a failed channel on a partially-published post stays workable; unscoped,
+    # the aggregate decides. Clone is the escape hatch for the published ones.
+    # _gated_children, not the strict match: an ?account= that names no row on
+    # this post falls back to every child rather than reading as "nothing here".
+    post_is_readonly = post is not None and _children_are_readonly(_gated_children(platform_post_list, account_filter))
+
+    # Scoped away from the live channels, the composer would otherwise give no
+    # sign they exist — and the caption being edited is shared with them. Name
+    # them so the edit isn't made in ignorance of an already-published channel.
+    scoped_ids = {pp.id for pp in scoped_platform_posts}
+    live_siblings = (
+        [pp for pp in platform_post_list if pp.id not in scoped_ids and pp.status in PlatformPost.PROTECTED_STATUSES]
+        if not post_is_readonly
+        else []
+    )
+
     # Approval workflow context
     workflow_mode = workspace.approval_workflow_mode
-    show_resubmit_button = any(pp.status in ("changes_requested", "rejected", "approved") for pp in platform_post_list)
+    # A read-only post is done with the workflow — neither button applies.
+    show_resubmit_button = not post_is_readonly and any(
+        pp.status in ("changes_requested", "rejected", "approved") for pp in platform_post_list
+    )
     # Fresh drafts get "Submit for Approval"; posts already in the workflow
     # (changes-requested / rejected / approved-but-edited) get "Resubmit" instead.
-    show_submit_button = workflow_mode != "none" and not show_resubmit_button
+    show_submit_button = workflow_mode != "none" and not show_resubmit_button and not post_is_readonly
     # Once the post is committed to publishing, the Schedule Post panel re-times
     # a live schedule; while still a draft it captures a *proposed* time on save.
     # Mirror _capture_proposed_publish_at's guard exactly (scheduled_at OR a
@@ -613,6 +758,8 @@ def compose(request, workspace_id, post_id=None):
         "is_edit": post is not None,
         "schedule_prefill_is_proposed": schedule_prefill_is_proposed,
         "post_is_scheduled": post_is_scheduled,
+        "post_is_readonly": post_is_readonly,
+        "live_siblings": live_siblings,
         "categories": categories,
         "queues": queues,
         "template_data_json": json.dumps(template_data) if template_data else "null",
@@ -668,7 +815,7 @@ def _transition_post_children(post, target, *, allow_via_draft=True, only=None):
             else:
                 skipped.append(pp)
                 continue
-            pp.save(update_fields=["status", "published_at", "updated_at"])
+            pp.save(update_fields=[*PlatformPost.TRANSITION_FIELDS, "updated_at"])
             moved.append(pp)
         except ValueError:
             skipped.append(pp)
@@ -692,7 +839,7 @@ def _revert_approved_to_review(post):
     for pp in post.platform_posts.all():
         if pp.status == "approved" and pp.can_transition_to("pending_review"):
             pp.transition_to("pending_review")
-            pp.save(update_fields=["status", "published_at", "updated_at"])
+            pp.save(update_fields=[*PlatformPost.TRANSITION_FIELDS, "updated_at"])
             reverted.append(pp)
     return reverted
 
@@ -765,6 +912,12 @@ def save_post(request, workspace_id, post_id=None):
         perms = membership.effective_permissions if membership else {}
         if post.author != request.user and not perms.get("edit_others_posts", False):
             raise PermissionDenied("You do not have permission to edit this post.")
+        # Reject before the form binds, so an already-published post is never
+        # mutated in memory. Catches every action, including the ``save_draft``
+        # default a POST with no ``action`` falls back to.
+        readonly_error = _readonly_rejection(request, post)
+        if readonly_error is not None:
+            return readonly_error
         _orig_content = _base_content_snapshot(post)
         form = PostForm(request.POST, instance=post)
     else:
@@ -1091,7 +1244,7 @@ def transition_platform_post(request, workspace_id, post_id, platform_post_id):
         pp.transition_to(target)
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
-    pp.save(update_fields=["status", "published_at", "updated_at"])
+    pp.save(update_fields=[*PlatformPost.TRANSITION_FIELDS, "updated_at"])
     # Committing a child to publishing obsoletes any draft-stage proposal.
     # Clear it directly rather than via sync_post_scheduled_at: this view sets
     # ``scheduled`` WITHOUT a ``scheduled_at``, and the publisher relies on the
@@ -1124,6 +1277,12 @@ def autosave(request, workspace_id, post_id=None):
         perms = membership.effective_permissions if membership else {}
         if post.author != request.user and not perms.get("edit_others_posts", False):
             raise PermissionDenied("You do not have permission to edit this post.")
+        # A published post is read-only: silently stop saving rather than
+        # overwriting live content every 30 seconds. This returns 200 with the
+        # indicator markup on purpose — the response swaps into #autosave-status,
+        # so a 4xx here would fire the global error toast on every tick.
+        if _is_readonly_write(request, post):
+            return HttpResponse('<span class="text-xs text-gray-400">Read-only — not saved</span>')
         orig_content = _base_content_snapshot(post)
     else:
         # Check if a previous autosave already created a draft for this session
@@ -1377,6 +1536,33 @@ def thumbnail_upload(request, workspace_id):
 _RANGE_HEADER_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
+# Response chunk size for streamed media. Matches _RangeFileIterator's default
+# so the local and object-storage paths behave alike.
+_STREAM_CHUNK_SIZE = 64 * 1024
+
+
+def _iter_and_close(body, chunk_size=_STREAM_CHUNK_SIZE):
+    """Yield an object-storage body's chunks, closing it however iteration ends.
+
+    botocore's ``StreamingBody.iter_chunks`` is a bare ``while True: yield``
+    with no ``try/finally``, and Django only registers *this* generator's
+    ``close`` on the response — so closing the response unwinds the generator
+    without ever calling ``StreamingBody.close()``, and the underlying urllib3
+    connection is never returned to the pool. A seeking ``<video>`` aborts range
+    requests constantly, which is exactly how a pool of 10 runs dry.
+    """
+    try:
+        yield from body.iter_chunks(chunk_size)
+    finally:
+        with contextlib.suppress(Exception):
+            body.close()
+
+
+# Frame-picker filmstrips are derived from immutable bytes, so this only bounds
+# how long a cache entry squats on memory, not how stale it can get.
+FILMSTRIP_CACHE_SECONDS = 60 * 60
+
+
 class _RangeFileIterator:
     """Iterate a bounded byte window of an already-positioned file handle."""
 
@@ -1429,43 +1615,81 @@ def media_stream(request, workspace_id, asset_id):
     )
     if not asset.file:
         raise Http404
+    from apps.media_library.storage import is_s3_backend, open_object_range
+
+    # On object storage, ask for exactly the window the browser asked for.
+    # Opening the FieldFile instead would pull the ENTIRE video down before
+    # serving a 64 KiB slice — and a seeking <video> issues many such requests,
+    # which is how one frame-picker session could exhaust a web dyno.
+    remote = is_s3_backend()
+
     # The DB row can outlive the stored object (lifecycle rule, manual S3
     # deletion); opening/stat-ing it then raises a backend error rather than
     # returning an empty FieldFile, so map that to 404 instead of a 500.
     try:
         size = asset.file.size
-        file_handle = asset.file.open("rb")
+        file_handle = None if remote else asset.file.open("rb")
     except Exception:  # noqa: BLE001 - storage backends raise varied errors (OSError, botocore ClientError)
         raise Http404 from None
 
     content_type = asset.mime_type or "application/octet-stream"
     range_match = _RANGE_HEADER_RE.match(request.headers.get("Range", ""))
 
-    if range_match and size:
-        start_str, end_str = range_match.groups()
-        if not start_str:
-            # Suffix range: the last N bytes.
-            length = min(int(end_str or 0), size)
-            start = size - length
-            end = size - 1
+    try:
+        if range_match and size:
+            start_str, end_str = range_match.groups()
+            if not start_str:
+                # Suffix range: the last N bytes.
+                length = min(int(end_str or 0), size)
+                start = size - length
+                end = size - 1
+            else:
+                start = int(start_str)
+                end = min(int(end_str), size - 1) if end_str else size - 1
+            if start >= size or start > end:
+                if file_handle is not None:
+                    file_handle.close()
+                response = HttpResponse(status=416)
+                response["Content-Range"] = f"bytes */{size}"
+                return response
+            if remote:
+                body = open_object_range(asset.file.name, start, end)
+                response = StreamingHttpResponse(
+                    _iter_and_close(body),
+                    status=206,
+                    content_type=content_type,
+                )
+            else:
+                file_handle.seek(start)
+                response = StreamingHttpResponse(
+                    _RangeFileIterator(file_handle, end - start + 1),
+                    status=206,
+                    content_type=content_type,
+                )
+            response["Content-Length"] = str(end - start + 1)
+            response["Content-Range"] = f"bytes {start}-{end}/{size}"
+        elif remote:
+            body = open_object_range(asset.file.name)
+            response = StreamingHttpResponse(
+                _iter_and_close(body),
+                content_type=content_type,
+            )
+            response["Content-Length"] = str(size)
         else:
-            start = int(start_str)
-            end = min(int(end_str), size - 1) if end_str else size - 1
-        if start >= size or start > end:
+            response = FileResponse(file_handle, content_type=content_type)
+    except FileNotFoundError:
+        # Only a vanished object is a 404. Any other exception here is a bug in
+        # the range arithmetic or the response construction, and swallowing it
+        # as a 404 would hide it from the logs while the frame picker silently
+        # did nothing.
+        if file_handle is not None:
             file_handle.close()
-            response = HttpResponse(status=416)
-            response["Content-Range"] = f"bytes */{size}"
-            return response
-        file_handle.seek(start)
-        response = StreamingHttpResponse(
-            _RangeFileIterator(file_handle, end - start + 1),
-            status=206,
-            content_type=content_type,
-        )
-        response["Content-Length"] = str(end - start + 1)
-        response["Content-Range"] = f"bytes {start}-{end}/{size}"
-    else:
-        response = FileResponse(file_handle, content_type=content_type)
+        raise Http404 from None
+    except Exception:
+        if file_handle is not None:
+            file_handle.close()
+        logger.exception("media_stream failed for asset %s", asset.pk)
+        raise
 
     response["Accept-Ranges"] = "bytes"
     # Asset files are immutable per id - let the browser cache the stream so
@@ -1490,6 +1714,7 @@ def media_filmstrip(request, workspace_id, asset_id):
 
     from apps.media_library.models import MediaAsset
     from apps.media_library.services import extract_video_frames, extract_video_metadata
+    from apps.media_library.storage import download_to_path
 
     asset = get_object_or_404(
         MediaAsset.objects.for_workspace_with_shared(
@@ -1501,6 +1726,18 @@ def media_filmstrip(request, workspace_id, asset_id):
     if asset.media_type != MediaAsset.MediaType.VIDEO or not asset.file:
         raise Http404
 
+    # An asset's bytes never change once stored, so the strip for a given id is
+    # fixed. Worth caching: building it costs a full download plus eight ffmpeg
+    # runs inside a single web request, and the picker gets reopened a lot.
+    # Its own bounded alias, not the shared default cache: these entries are
+    # base64 JPEGs, big enough that 300 of them would be a memory problem of
+    # exactly the kind this endpoint was changed to avoid.
+    filmstrip_cache = caches["filmstrip"]
+    cache_key = f"composer:filmstrip:{asset.pk}"
+    cached = filmstrip_cache.get(cache_key)
+    if cached is not None:
+        return JsonResponse(cached)
+
     # Mirror media_library's video pipeline: pull the file to one local temp
     # file, then run all the ffmpeg seeks against it. Extracting each frame
     # straight from the (remote) signed URL re-opens the connection and
@@ -1508,9 +1745,8 @@ def media_filmstrip(request, workspace_id, asset_id):
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=f".{asset.file_extension}", delete=False) as tmp:
-            for chunk in asset.file.chunks():
-                tmp.write(chunk)
             tmp_path = tmp.name
+        download_to_path(asset.file, tmp_path)
     except Exception:  # noqa: BLE001 - storage backends raise varied errors when the object is gone
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -1535,7 +1771,9 @@ def media_filmstrip(request, workspace_id, asset_id):
     ]
     if not frames:
         return JsonResponse({"error": "Could not extract frames."}, status=502)
-    return JsonResponse({"frames": frames, "duration": duration})
+    payload = {"frames": frames, "duration": duration}
+    filmstrip_cache.set(cache_key, payload, FILMSTRIP_CACHE_SECONDS)
+    return JsonResponse(payload)
 
 
 UNSPLASH_API_BASE = "https://api.unsplash.com"

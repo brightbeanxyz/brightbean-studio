@@ -32,6 +32,11 @@ httpx>=0.27,<1.0
 
 # Date utilities
 python-dateutil>=2.9,<3.0
+# zoneinfo reads the *system* tz database, which python:3.12-slim (our
+# Dockerfile) does not reliably ship. providers/google_errors.py needs
+# America/Los_Angeles to know when YouTube's daily quota resets; without this
+# it silently falls back to a fixed UTC hour that drifts with daylight saving.
+tzdata>=2024.1
 
 # Agent API — Ninja for REST + Pydantic schemas + OpenAPI docs,
 # mcp SDK for the /api/v1/mcp/ Streamable-HTTP transport that

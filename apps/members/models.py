@@ -145,6 +145,13 @@ class Invitation(models.Model):
     expires_at = models.DateTimeField()
     accepted_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # How many times this address has been mailed about this invitation, and
+    # when it last was. On the row rather than in the cache on purpose: the
+    # cache is LocMemCache whenever REDIS_URL is unset, so a deploy would hand
+    # back a fresh allowance. The same reasoning as ApprovalReminder's
+    # reminder_count/last_reminder_at, which this mirrors.
+    send_count = models.PositiveIntegerField(default=0)
+    last_sent_at = models.DateTimeField(blank=True, null=True)
 
     objects = OrgScopedManager()
 

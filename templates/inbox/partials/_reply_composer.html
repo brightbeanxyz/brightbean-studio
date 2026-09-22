@@ -3,6 +3,16 @@
 <div class="border-t border-stone-200 px-5 py-3 flex-shrink-0" style="background: var(--surface-1);"
      x-data="{ mode: 'reply', noteText: '', replyText: '' }">
 
+    <!-- Pending draft replies (agent-created or saved for later) -->
+    {% if draft_replies %}
+    <div class="space-y-2 mb-3">
+        <p class="text-[10px] font-semibold uppercase tracking-wide text-stone-400">Pending replies</p>
+        {% for draft in draft_replies %}
+        {% include "inbox/partials/_draft_reply_item.html" with draft=draft %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
     <!-- Mode tabs -->
     <div class="flex items-center gap-1 mb-2">
         <button @click="mode = 'reply'"
@@ -53,12 +63,22 @@
                       required></textarea>
             <div class="flex items-center justify-between mt-2">
                 <p class="text-[10px] text-stone-400">Reply will be posted on {{ message.social_account.get_platform_display|default:message.social_account.platform|title }}</p>
-                <button type="submit"
-                        class="btn-primary-hover inline-flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold text-white rounded-full transition-all duration-150 cursor-pointer"
-                        style="background: var(--primary); box-shadow: var(--shadow-primary);">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-                    Send Reply
-                </button>
+                <div class="flex items-center gap-2">
+                    <button type="button"
+                            hx-post="{% url 'inbox:save_reply_draft' workspace_id=workspace.id message_id=message.id %}"
+                            hx-target="#inbox-detail-panel"
+                            hx-swap="innerHTML"
+                            :disabled="!replyText.trim()"
+                            class="inline-flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold text-stone-600 rounded-full border border-stone-200 hover:bg-stone-50 transition-all duration-150 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+                        Save as draft
+                    </button>
+                    <button type="submit"
+                            class="btn-primary-hover inline-flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold text-white rounded-full transition-all duration-150 cursor-pointer"
+                            style="background: var(--primary); box-shadow: var(--shadow-primary);">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                        Send Reply
+                    </button>
+                </div>
             </div>
         </form>
     </div>

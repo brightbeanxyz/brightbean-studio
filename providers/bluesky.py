@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
 import time
 from datetime import UTC, datetime
@@ -335,22 +336,32 @@ class BlueskyProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def _upload_blob(self, access_token: str, media_path: str) -> dict:
-        """Upload a blob to the PDS and return the blob reference."""
+        """Upload a blob to the PDS and return the blob reference.
+
+        The file object is handed to httpx as-is so it is read in chunks off
+        disk. Reading it into a bytes object first put the whole file in RSS,
+        and this is reached for VIDEO too (see :meth:`_build_embed`) where
+        ``MEDIA_LIBRARY_MAX_VIDEO_SIZE`` allows up to 1 GB — on a 512 MB worker
+        that is not a slow leak, it is an immediate OOM kill.
+        """
         import mimetypes
 
         mime_type, _ = mimetypes.guess_type(media_path)
         mime_type = mime_type or "application/octet-stream"
 
         with open(media_path, "rb") as f:
-            file_bytes = f.read()
-
-        resp = self._request(
-            "POST",
-            f"{self.pds_url}/xrpc/com.atproto.repo.uploadBlob",
-            access_token=access_token,
-            headers={"Content-Type": mime_type},
-            data=file_bytes,
-        )
+            resp = self._request(
+                "POST",
+                f"{self.pds_url}/xrpc/com.atproto.repo.uploadBlob",
+                access_token=access_token,
+                headers={
+                    "Content-Type": mime_type,
+                    # Explicit so httpx doesn't fall back to chunked transfer
+                    # encoding, which some PDS deployments reject.
+                    "Content-Length": str(os.path.getsize(media_path)),
+                },
+                data=f,
+            )
         data = resp.json()
         return data.get("blob", data)
 

@@ -24,6 +24,11 @@ EXEMPT_PATH_PREFIXES = (
     "/accounts/3rdparty/",
     "/health/",
     "/static/",
+    # Uploaded media, served by config/urls.py when SERVE_MEDIA is on. No view
+    # backs these URLs, so a redirect here just turns every <img>/<video> on
+    # the accept-terms page into a 302 — and the platforms that fetch
+    # attachment URLs server-side (see config/urls.py) are anonymous anyway.
+    "/media/",
     "/admin/",
 )
 
@@ -35,11 +40,14 @@ class TosAcceptanceMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        # Path check first: ``request.user`` is lazy, and touching it forces a
+        # session read plus a user query. On an exempt path — /static/, /media/
+        # — that work buys nothing, and media is requested once per file.
         if (
-            hasattr(request, "user")
+            not request.path.startswith(EXEMPT_PATH_PREFIXES)
+            and hasattr(request, "user")
             and request.user.is_authenticated
             and request.user.tos_accepted_at is None
-            and not request.path.startswith(EXEMPT_PATH_PREFIXES)
         ):
             return redirect(reverse("accounts:accept_terms"))
 

@@ -240,6 +240,8 @@ def transition_platform_post(
     """
     from django.db import transaction
 
+    from apps.composer.models import PlatformPost
+
     # Approval workflow gate — Codex review (PR #53) flagged that the
     # ``POST /posts/{id}/schedule`` route reached this function with
     # ``target_status="scheduled"`` and bypassed the approval check
@@ -257,7 +259,10 @@ def transition_platform_post(
         # Without this every API/MCP-driven transition would leave
         # ``PlatformPost.updated_at`` frozen at creation time, breaking
         # any "modified since X" sync and ORDER BY updated_at view.
-        update_fields = {"status", "updated_at"}
+        # TRANSITION_FIELDS covers everything transition_to writes (the retry
+        # budget and the publish handle, not just status), so the REST/MCP
+        # scheduling path persists the same reset the composer does.
+        update_fields = {*PlatformPost.TRANSITION_FIELDS, "updated_at"}
         if target_status == "scheduled":
             if scheduled_at is not None:
                 platform_post.scheduled_at = scheduled_at

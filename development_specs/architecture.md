@@ -297,6 +297,14 @@ STORAGE_BACKEND=local  →  FileSystemStorage (Docker volume)
 STORAGE_BACKEND=s3     →  S3Boto3Storage via django-storages
 ```
 
+**Serving:**
+- `s3` → django-storages hands out presigned URLs (private ACL, 1-hour expiry). `SERVE_MEDIA` is forced off.
+- `local` → `SERVE_MEDIA` (default `true`) mounts `MEDIA_URL` → `MEDIA_ROOT` in `config/urls.py`, for every settings module rather than only under `DEBUG`. The route is unauthenticated by necessity: `apps/publisher/engine.py` sends `APP_URL + asset.file.url` to Instagram, Threads, Facebook, Pinterest, Google Business and dev.to, which fetch the file server-side and offer no byte-upload path.
+- In the Docker Compose deployment, Caddy serves `/media/` straight off the `media_data` volume (`handle_path /media/*`), which adds byte-range support that `django.views.static.serve` lacks. Django's route is the fallback for deployments without that proxy.
+- Only the subtrees in `PUBLIC_MEDIA_PREFIXES` (`config/urls.py`) get a public route: `media_library/`, `avatars/`, `workspaces/icons/`. It is an allowlist, so a new `upload_to` prefix is private by default. `comment_attachments/` is deliberately excluded — `PostComment.visibility` can be `internal`, which the client portal filters out, so those are served by `approvals.views.comment_attachment` behind the workspace membership check.
+- Uploads are stored under an extension derived from the sniffed MIME (`validators.storage_filename`), not the client's filename. Both `django.views.static.serve` and Caddy pick `Content-Type` from the suffix, so a PNG/HTML polyglot named `poc.html` would otherwise come back as same-origin HTML.
+- `SERVE_MEDIA=false` is only correct when something else serves those prefixes at the same public path. In the Compose deployment set `CADDY_MEDIA_ROOT=/var/empty` when moving to s3: the `media_data` volume outlives the switch and Caddy cannot read `SERVE_MEDIA`.
+
 **Processing pipeline:**
 - *On upload:* save, extract metadata, generate thumbnail (Pillow/FFmpeg).
 - *Before publish:* background job processes media for posts within 60 minutes. Resizes images, converts formats, transcodes video (H.264/AAC/MP4). Processed versions stored alongside originals.

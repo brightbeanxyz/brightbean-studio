@@ -4,7 +4,7 @@ import difflib
 import re
 
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponse
+from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
 
@@ -272,6 +272,47 @@ def delete_comment(request, workspace_id, post_id, comment_id):
             "workspace": workspace,
         },
     )
+
+
+@login_required
+@require_workspace_role("viewer")
+@require_GET
+def comment_attachment(request, workspace_id, post_id, comment_id):
+    """Serve a comment's attachment behind the workspace membership check.
+
+    Not routed through MEDIA_URL like the rest of the uploads: a comment can be
+    ``visibility=internal``, which apps/client_portal/views.py filters out of
+    what portal clients are shown. A public /media/comment_attachments/ URL
+    would hand back exactly what that filter withholds, so config/urls.py
+    leaves this prefix off PUBLIC_MEDIA_PREFIXES and sends readers here.
+    """
+    workspace = _get_workspace(request, workspace_id)
+    post = get_object_or_404(Post, id=post_id, workspace=workspace)
+    comment = get_object_or_404(
+        PostComment,
+        id=comment_id,
+        post=post,
+        deleted_at__isnull=True,
+    )
+
+    if not comment.attachment:
+        raise Http404("This comment has no attachment.")
+
+    # The stored object can outlive the row (lifecycle rule, manual deletion);
+    # opening it then raises a backend error rather than returning an empty
+    # FieldFile, so map that to 404 instead of a 500.
+    try:
+        handle = comment.attachment.open("rb")
+    except Exception:  # noqa: BLE001 - storage backends raise varied errors (OSError, botocore ClientError)
+        raise Http404("Attachment is no longer stored.") from None
+
+    response = FileResponse(handle)
+    # Belt and braces: these are ImageFields, so Django's own
+    # validate_image_file_extension already refuses an .html suffix, but this
+    # response never passes through a CDN or proxy that would add it.
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Cache-Control"] = "private, max-age=3600"
+    return response
 
 
 # ---------------------------------------------------------------------------

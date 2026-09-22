@@ -219,7 +219,15 @@
       error remains). This listener reads that text (XSS-safe via DOMParser)
       and either routes it to a form's inline container (via
       data-inline-error="#selector") or shows the dismissible toast below.
-      A context can opt out entirely with data-no-error-toast.
+
+      An element that surfaces every one of its own failures opts out with
+      data-no-error-toast (the composer form does, via onFormSaved). That
+      opt-out is checked on the requesting element ONLY, never on its
+      ancestors: htmx reports the element the request came from, so a subtree
+      check would also silence nested controls that have no handler of their
+      own — the composer's Clone button and template picker sit inside its
+      form and would fail completely silently. Put the attribute on each
+      element that really does handle its own errors.
     {% endcomment %}
     <div x-data="{ show: false, message: '', timer: null }"
          x-show="show"
@@ -240,8 +248,9 @@
     <script nonce="{{ request.csp_nonce }}">
         document.body.addEventListener('htmx:responseError', function(event) {
             var elt = event.detail.elt;
-            // Contexts that manage their own error UI opt out entirely.
-            if (elt && elt.closest('[data-no-error-toast]')) return;
+            // Elements that surface their own failures opt out. Checked on the
+            // requesting element only — see the comment above.
+            if (elt && elt.hasAttribute && elt.hasAttribute('data-no-error-toast')) return;
             // Extract plain text from the response without executing or loading it.
             var responseText = (event.detail.xhr && event.detail.xhr.responseText) || '';
             var body = new DOMParser().parseFromString(responseText, 'text/html').body;

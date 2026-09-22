@@ -343,6 +343,7 @@ def test_connection_link_flow_passes_the_page_as_the_webhook_target(client, work
 
     provider = MagicMock()
     provider.exchange_code.return_value = OAuthTokens(access_token="user-token", refresh_token="r", expires_in=3600)
+    provider.refresh_token.return_value = OAuthTokens(access_token="long-lived-user-token", expires_in=5184000)
     provider.get_profile.return_value = AccountProfile(platform_id="ig-99", name="IG")
     provider.get_user_pages.return_value = [
         {
@@ -368,6 +369,10 @@ def test_connection_link_flow_passes_the_page_as_the_webhook_target(client, work
     assert response.status_code == 302
     account = SocialAccount.objects.get(workspace=workspace, platform="instagram")
     assert account.webhook_target_id == "page-77"
+    assert account.oauth_access_token == "page-token"
+    assert account.oauth_refresh_token == ""
+    assert account.token_expires_at is None
+    provider.get_user_pages.assert_called_once_with("long-lived-user-token")
 
 
 # ------------------------------------------- subscriptions shared across rows
@@ -624,3 +629,172 @@ def test_reconnecting_refunds_the_automatic_retry_budget(workspace):
         )
 
     assert account.webhook_retry_count == 0
+
+
+# --------------------------------------------------------------- token scoping
+
+
+def test_a_page_must_use_its_own_token():
+    from apps.social_accounts.views import resolve_page_account_token
+
+    page = {"id": "page-1", "access_token": "PAGE-TOKEN"}
+    assert resolve_page_account_token(page, "facebook", "USER-TOKEN") == "PAGE-TOKEN"
+
+
+def test_a_page_without_its_own_token_is_not_connectable():
+    """Substituting the user token publishes under the wrong identity, and made
+    the account eligible for a revoke that severs its siblings."""
+    from apps.social_accounts.views import resolve_page_account_token
+
+    assert resolve_page_account_token({"id": "page-1"}, "facebook", "USER-TOKEN") == ""
+
+
+def test_instagram_via_facebook_may_fall_back_to_the_user_token():
+    """Its calls address the IG user, so the user token is the right credential."""
+    from apps.social_accounts.views import resolve_page_account_token
+
+    assert resolve_page_account_token({"id": "ig-1"}, "instagram", "USER-TOKEN") == "USER-TOKEN"
+
+
+def test_both_connect_flows_share_one_resolver():
+    """select_account and the connection-link flow diverging is what let a user
+    token reach a Page in the first place."""
+    import inspect
+
+    from apps.onboarding import views as onboarding_views
+    from apps.social_accounts import views as accounts_views
+
+    for module in (onboarding_views, accounts_views):
+        assert "resolve_page_account_token(" in inspect.getsource(module)
+
+
+def test_disconnect_never_revokes_the_whole_facebook_user():
+    """DELETE /me/permissions revokes the app for the entire person, so one
+    workspace disconnecting one Page would take down every other account."""
+    from unittest.mock import MagicMock as _Mock
+
+    from providers.facebook import FacebookProvider
+    from providers.instagram import InstagramProvider
+
+    for cls in (FacebookProvider, InstagramProvider):
+        provider = cls({"client_id": "id", "client_secret": "secret"})
+        provider._request = _Mock()
+
+        assert provider.revoke_token("any-token") is False
+        provider._request.assert_not_called()
+
+
+def test_only_the_page_flows_warn_that_disconnect_keeps_the_grant(workspace):
+    """Instagram Login's token belongs to the one account, so it really does
+    revoke on disconnect and must not carry the warning."""
+    for platform, expected in (
+        ("facebook", True),
+        ("instagram", True),
+        ("instagram_login", False),
+        ("bluesky", False),
+    ):
+        account = SocialAccount(workspace=workspace, platform=platform, account_platform_id="x", account_name="x")
+        assert account.keeps_platform_grant_on_disconnect is expected, platform
+
+
+# ------------------------------------------------------------- missing scopes
+
+
+def test_a_partial_grant_is_recorded_on_the_account(workspace):
+    """The whole Meta saga started with a scope silently absent from a grant."""
+    from apps.social_accounts.webhooks import record_missing_scopes
+
+    account = _account(workspace)
+    provider = MagicMock()
+    provider.required_scopes = ["pages_show_list", "pages_manage_posts", "read_insights"]
+    provider.get_granted_scopes.return_value = {"pages_show_list", "pages_manage_posts"}
+
+    with patch("apps.social_accounts.webhooks._get_provider_for_platform", return_value=provider):
+        assert record_missing_scopes(account) == ["read_insights"]
+
+    account.refresh_from_db()
+    assert account.missing_scopes == ["read_insights"]
+
+
+def test_a_complete_grant_records_nothing(workspace):
+    from apps.social_accounts.webhooks import record_missing_scopes
+
+    account = _account(workspace, missing_scopes=["read_insights"])
+    provider = MagicMock()
+    provider.required_scopes = ["pages_show_list"]
+    provider.get_granted_scopes.return_value = {"pages_show_list", "extra_scope"}
+
+    with patch("apps.social_accounts.webhooks._get_provider_for_platform", return_value=provider):
+        assert record_missing_scopes(account) == []
+
+    account.refresh_from_db()
+    # A fresh, complete grant must clear a stale warning.
+    assert account.missing_scopes == []
+
+
+def test_an_unanswerable_platform_leaves_the_field_alone(workspace):
+    """None means unknown. Treating it as "nothing granted" would flag every
+    scope on every platform that cannot be asked."""
+    from apps.social_accounts.webhooks import record_missing_scopes
+
+    account = _account(workspace, missing_scopes=["previously_noted"])
+    provider = MagicMock()
+    provider.required_scopes = ["pages_show_list"]
+    provider.get_granted_scopes.return_value = None
+
+    with patch("apps.social_accounts.webhooks._get_provider_for_platform", return_value=provider):
+        assert record_missing_scopes(account) == []
+
+    account.refresh_from_db()
+    assert account.missing_scopes == ["previously_noted"]
+
+
+def test_a_readback_failure_does_not_break_the_connect_flow(workspace):
+    from apps.social_accounts.webhooks import record_missing_scopes
+
+    account = _account(workspace)
+    provider = MagicMock()
+    provider.get_granted_scopes.side_effect = RuntimeError("boom")
+
+    with patch("apps.social_accounts.webhooks._get_provider_for_platform", return_value=provider):
+        assert record_missing_scopes(account) == []
+
+
+def test_scopes_omitted_by_design_are_not_reported_missing(workspace):
+    """Connect drops the analytics-only scopes when analytics is off for the
+    platform, so comparing against the unconditional list would demand a
+    reconnect for something we deliberately never asked for."""
+    from apps.social_accounts.models import AnalyticsPlatformConfig
+    from apps.social_accounts.webhooks import record_missing_scopes
+
+    AnalyticsPlatformConfig.objects.update_or_create(platform="facebook", defaults={"is_enabled": False})
+    account = _account(workspace, platform="facebook")
+
+    from providers.facebook import FacebookProvider
+
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider.get_granted_scopes = MagicMock(return_value=set(provider.required_scopes) - {"read_insights"})
+
+    with patch("apps.social_accounts.webhooks._get_provider_for_platform", return_value=provider):
+        assert record_missing_scopes(account) == []
+
+    account.refresh_from_db()
+    assert account.missing_scopes == []
+
+
+def test_a_scope_missing_while_analytics_is_on_is_still_reported(workspace):
+    from apps.social_accounts.models import AnalyticsPlatformConfig
+    from apps.social_accounts.webhooks import record_missing_scopes
+
+    AnalyticsPlatformConfig.objects.update_or_create(platform="facebook", defaults={"is_enabled": True})
+    account = _account(workspace, platform="facebook")
+
+    from providers.facebook import FacebookProvider
+
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider.include_analytics_scopes = True
+    granted = set(provider.required_scopes) - {"read_insights"}
+    provider.get_granted_scopes = MagicMock(return_value=granted)
+
+    with patch("apps.social_accounts.webhooks._get_provider_for_platform", return_value=provider):
+        assert record_missing_scopes(account) == ["read_insights"]

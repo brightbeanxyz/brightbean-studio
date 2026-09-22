@@ -1,4 +1,43 @@
 {$APP_DOMAIN:localhost} {
-    reverse_proxy app:8000
+    # Uploaded media (STORAGE_BACKEND=local) lives on the media_data volume,
+    # which docker-compose.prod.yml mounts read-only here. Serving it from
+    # Caddy keeps large images and video off the Gunicorn worker threads and
+    # gives byte-range requests, which django.views.static.serve does not
+    # implement — without 206 responses a <video> can't be seeked and Safari
+    # often refuses to play it at all.
+    #
+    # With STORAGE_BACKEND=s3 the volume is empty and this block just 404s;
+    # the app never emits /media/ URLs in that mode.
+    handle_path /media/* {
+        # These bypass Django, so SecurityMiddleware never sees them. Repeat
+        # the two headers config/settings/production.py would have set, or
+        # uploads become the one public path on the origin served without
+        # them. Keep in step with SECURE_CONTENT_TYPE_NOSNIFF and
+        # SECURE_HSTS_* there.
+        header {
+            X-Content-Type-Options nosniff
+            Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        }
+
+        # MEDIA_ROOT is an env var everywhere else, but the media_data volume
+        # is mounted here at a fixed path, so the default has to match
+        # .env.example's MEDIA_ROOT=/app/media. Changing one without the other
+        # makes uploads 404 at the proxy, without ever reaching Django's own
+        # /media/ route.
+        #
+        # Set CADDY_MEDIA_ROOT=/var/empty when STORAGE_BACKEND=s3. Django forces
+        # SERVE_MEDIA off in that mode, but Caddy cannot see the setting, and a
+        # named volume survives the switch — so an installation that migrated
+        # local -> s3 would otherwise keep serving whatever uploads were left
+        # behind. Pointing the root at an empty (or absent) directory makes
+        # file_server 404 everything.
+        root * {$CADDY_MEDIA_ROOT:/app/media}
+        file_server
+    }
+
+    handle {
+        reverse_proxy app:8000
+    }
+
     encode gzip
 }

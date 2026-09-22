@@ -5,6 +5,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
+from django_ratelimit.decorators import ratelimit
 
 from apps.workspaces.models import Workspace
 
@@ -112,6 +113,7 @@ def member_list(request):
 @login_required
 @require_org_role("admin")
 @require_POST
+@ratelimit(key="user", rate="10/m", method="POST", block=True)
 def invite_member(request):
     """Create and send a team member invitation."""
     org = request.org
@@ -167,6 +169,7 @@ def invite_member(request):
 @login_required
 @require_org_role("admin")
 @require_POST
+@ratelimit(key="user", rate="10/m", method="POST", block=True)
 def resend_invite(request, invitation_id):
     """Resend an invitation email with a fresh token."""
     invitation = get_object_or_404(Invitation, id=invitation_id, organization=request.org)

@@ -1208,15 +1208,18 @@ def reschedule_post(request, workspace_id):
         # (re)schedule / retry: move it into "scheduled" so the publisher picks
         # it up. Other statuses (approved, scheduled, pending_*) just change
         # time and keep their editorial status.
-        fields = ["status", "scheduled_at", "updated_at"]
+        # Every field transition_to may write, always — the old hand-written
+        # list omitted platform_post_id, so a retry kept the previous attempt's
+        # handle and the confirmation sweep settled it against that outcome.
+        fields = [*PlatformPost.TRANSITION_FIELDS, "scheduled_at", "updated_at"]
         if pp.status == "failed":
-            # Retrying: don't carry the previous attempt's failure state into
-            # the fresh one (a stale publish_error renders on the chip, and a
-            # stale retry_count eats the new attempt's retry budget).
+            # Retrying a row that is NOT transitioning (already scheduled) still
+            # has to shed the last attempt's state, so this cannot simply defer
+            # to transition_to.
             pp.publish_error = ""
             pp.retry_count = 0
             pp.next_retry_at = None
-            fields += ["publish_error", "retry_count", "next_retry_at"]
+            pp.platform_post_id = ""
         if pp.status in _IMPLICIT_SCHEDULE_STATUSES and pp.can_transition_to("scheduled"):
             pp.transition_to("scheduled")
         pp.save(update_fields=fields)
@@ -1253,7 +1256,7 @@ def _bulk_save_platform_posts(rows):
         row.updated_at = stamp
     PlatformPost.objects.bulk_update(
         rows,
-        ["status", "scheduled_at", "publish_error", "retry_count", "next_retry_at", "updated_at"],
+        [*PlatformPost.TRANSITION_FIELDS, "scheduled_at", "updated_at"],
     )
 
 
@@ -1381,10 +1384,13 @@ def bulk_platform_action(request, workspace_id):
                 pp.scheduled_at = slot
                 if pp.status == "failed":
                     # Retrying: the previous attempt's failure state must not
-                    # ride along into the fresh one.
+                    # ride along into the fresh one — including its publish
+                    # handle, which the confirmation sweep would otherwise read
+                    # as this attempt's outcome.
                     pp.publish_error = ""
                     pp.retry_count = 0
                     pp.next_retry_at = None
+                    pp.platform_post_id = ""
                 if pp.status != "scheduled":
                     pp.transition_to("scheduled")
                 changed.append(pp)

@@ -57,7 +57,9 @@ def _transition_or_skip(pp, target_status):
     if not pp.can_transition_to(target_status):
         return False
     pp.transition_to(target_status)
-    pp.save(update_fields=["status", "published_at", "updated_at"])
+    # TRANSITION_FIELDS, not a hand-written list: transition_to writes the retry
+    # budget and publish handle too, and omitting them drops the reset silently.
+    pp.save(update_fields=[*PlatformPost.TRANSITION_FIELDS, "updated_at"])
     return True
 
 

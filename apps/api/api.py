@@ -20,6 +20,7 @@ from ninja.openapi.docs import Swagger
 from apps.api.auth import ApiKeyAuth, McpAuth
 from apps.api.routers.accounts import router as accounts_router
 from apps.api.routers.analytics import router as analytics_router
+from apps.api.routers.inbox import router as inbox_router
 from apps.api.routers.me import router as me_router
 from apps.api.routers.media import router as media_router
 from apps.api.routers.posts import router as posts_router
@@ -76,6 +77,7 @@ api.add_router("/accounts", accounts_router)
 api.add_router("/posts", posts_router)
 api.add_router("/media", media_router)
 api.add_router("/analytics", analytics_router)
+api.add_router("/inbox", inbox_router)
 # MCP Streamable HTTP transport. Same audit + rate limits as REST, but a
 # wider auth class: ``McpAuth`` accepts both bb_studio_ keys AND OAuth 2.1
 # access tokens (Claude Desktop's native connector flow). Mounted last so
@@ -233,6 +235,18 @@ def _action_for_path(method: str, path: str, *, status_code: int) -> str:
             return f"media.upload.{status_code}"
         if method == "GET":
             return f"media.read.{status_code}"
+    if "/inbox/" in path or path.endswith("/inbox"):
+        if "/replies" in path or "/reply" in path:
+            if path.endswith("/send"):
+                return f"inbox.reply.send.{status_code}"
+            if method == "POST":
+                return f"inbox.reply.create.{status_code}"
+            if method == "PATCH":
+                return f"inbox.reply.update.{status_code}"
+            if method == "DELETE":
+                return f"inbox.reply.discard.{status_code}"
+        if method == "GET":
+            return f"inbox.read.{status_code}"
     if "/mcp" in path:
         return f"mcp.error.{status_code}"
     if "/accounts" in path:

@@ -97,13 +97,13 @@ class Command(BaseCommand):
         self._check_local_state(account, check)
 
         try:
-            from apps.social_accounts.views import _apply_analytics_scope_flag, _get_provider_for_platform
+            from apps.social_accounts.provider_factory import _get_provider_for_platform, apply_analytics_scope_flag
 
             provider = _get_provider_for_platform("facebook", account.workspace.organization_id)
             # Mirror what the OAuth flow does, or required_scopes reports
             # read_insights as expected on a deployment where analytics is
             # deliberately off — and a healthy token gets reported as broken.
-            _apply_analytics_scope_flag(provider, "facebook")
+            apply_analytics_scope_flag(provider, "facebook")
         except Exception as exc:
             check("provider", False, f"could not build the Facebook provider: {exc}")
             return report

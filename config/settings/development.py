@@ -34,8 +34,17 @@ STORAGES["staticfiles"] = {  # noqa: F405
     "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
 }
 
-# Use console email backend in development
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+# Console email in development. EMAIL_BACKEND stays the budget wrapper from
+# base.py so the real send path is what runs locally, but the caps are off
+# (negative = unlimited): the console backend exists to show you every message,
+# and inheriting the production 6-per-recipient-per-hour would silently swallow
+# the seventh with nothing but a log line — for the rest of the hour, since the
+# counters are in the database and survive a restart. Set them to real values
+# locally when the budget itself is what you are testing.
+EMAIL_INNER_BACKEND = "django.core.mail.backends.console.EmailBackend"
+EMAIL_DAILY_SEND_LIMIT = -1
+EMAIL_RECIPIENT_HOURLY_LIMIT = -1
+EMAIL_RECIPIENT_DAILY_LIMIT = -1
 
 # Disable CSP in development
 CSP_REPORT_ONLY = True

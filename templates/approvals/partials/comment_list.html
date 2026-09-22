@@ -19,7 +19,9 @@
 
             {% if comment.attachment %}
             <div class="mt-2">
-                <img src="{{ comment.attachment.url }}" alt="Attachment" class="max-w-xs rounded-lg border border-stone-200">
+                {# Served by a view, not MEDIA_URL: an internal comment's attachment must not be
+                   fetchable by anyone holding the URL. See PUBLIC_MEDIA_PREFIXES in config/urls.py. #}
+                <img src="{% url 'approvals:comment_attachment' workspace_id=workspace.id post_id=post.id comment_id=comment.id %}" alt="Attachment" class="max-w-xs rounded-lg border border-stone-200">
             </div>
             {% endif %}
 

@@ -72,3 +72,43 @@ class PostInsightsSnapshot(models.Model):
 
     def __str__(self) -> str:
         return f"{self.platform_post_id} · {self.metric_key} · {self.date} = {self.value}"
+
+
+class ProviderQuotaBlock(models.Model):
+    """A platform API quota we know is spent, and when it comes back.
+
+    The grain is the *credential*, not the account. YouTube charges Data API
+    quota to the Google Cloud project behind the OAuth client, so one exhausted
+    project must stop every account that shares it — a per-account breaker would
+    let the second account keep burning a budget the first one already emptied.
+    Per-platform would be too coarse in the other direction: an org that brings
+    its own credentials has its own project and must not be blocked by someone
+    else's exhaustion. ``credential_key`` is a hash of the resolved client_id,
+    never the client_id itself, so the same project maps to the same row without
+    storing a secret.
+
+    ``quota_scope`` separates budgets the same platform meters independently —
+    YouTube's Data API and Analytics API have separate quotas, and blocking the
+    cheap batched Analytics call because the Data API ran dry would throw away
+    the part of the sync that was never the problem. Empty for platforms with a
+    single pool.
+
+    Deliberately not ``apps.publisher.models.RateLimitState``: that table is
+    read by the publish engine as a hard gate on *publishing*, so writing a
+    read-side analytics block into it would silently stop the account posting.
+    """
+
+    platform = models.CharField(max_length=30)
+    credential_key = models.CharField(max_length=64)
+    quota_scope = models.CharField(max_length=20, blank=True, default="")
+    blocked_until = models.DateTimeField()
+    reason = models.TextField(blank=True, default="")
+    tripped_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "analytics_provider_quota_block"
+        unique_together = [("platform", "credential_key", "quota_scope")]
+
+    def __str__(self) -> str:
+        scope = f"/{self.quota_scope}" if self.quota_scope else ""
+        return f"{self.platform}{scope} blocked until {self.blocked_until:%Y-%m-%d %H:%M}"

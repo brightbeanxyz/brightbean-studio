@@ -14,12 +14,29 @@
     <form method="post" action="{% url 'social_accounts:select_account' %}">
         {% csrf_token %}
 
+        <div class="flex items-center justify-between mb-3">
+            <p class="text-xs text-stone-500"><span id="selected-count">0</span> selected</p>
+            <div class="flex items-center gap-3">
+                <button type="button" id="select-all-btn" class="text-xs font-semibold text-orange-600 hover:text-orange-700">Select all publishable</button>
+                <button type="button" id="clear-all-btn" class="text-xs font-semibold text-stone-500 hover:text-stone-700">Clear</button>
+            </div>
+        </div>
+
         <div class="space-y-3 mb-8">
             {% for page in pages %}
-            <label class="flex items-center gap-4 p-4 bg-white rounded-xl border border-stone-200 cursor-pointer transition-all duration-200 hover:shadow-md hover:border-orange-200 has-[:checked]:border-orange-400 has-[:checked]:ring-2 has-[:checked]:ring-orange-100 has-[:checked]:bg-orange-50/30">
+            <label class="flex items-center gap-4 p-4 bg-white rounded-xl border border-stone-200 transition-all duration-200 {% if page.can_publish %}cursor-pointer hover:shadow-md hover:border-orange-200 has-[:checked]:border-orange-400 has-[:checked]:ring-2 has-[:checked]:ring-orange-100 has-[:checked]:bg-orange-50/30{% else %}opacity-60 cursor-not-allowed{% endif %}">
+                {% comment %}
+                Never pre-checked, including for an account that is already
+                connected. Submitting re-runs the full connect for every ticked
+                row — resetting its webhook state and queueing a fresh
+                subscription — so ticking has to stay something the person did
+                on purpose. It also keeps the checkbox meaning one thing:
+                "connect or refresh this", never "this is connected", which
+                unticking could not undo anyway.
+                {% endcomment %}
                 <input type="checkbox" name="selected_pages" value="{{ page.id }}"
-                       {% if page.already_connected %}checked{% endif %}
-                       class="w-4 h-4 rounded border-stone-300 text-orange-500 focus:ring-orange-500 focus:ring-offset-0 cursor-pointer">
+                       {% if not page.can_publish %}disabled{% endif %}
+                       class="w-4 h-4 rounded border-stone-300 text-orange-500 focus:ring-orange-500 focus:ring-offset-0 {% if page.can_publish %}cursor-pointer{% else %}cursor-not-allowed{% endif %}">
 
                 {% if page.picture %}
                 <img src="{{ page.picture }}" alt="{{ page.name }}" class="w-10 h-10 rounded-full object-cover ring-2 ring-stone-100">
@@ -33,6 +50,11 @@
                     <h3 class="text-sm font-semibold text-stone-900 truncate">{{ page.name }}</h3>
                     {% if page.category %}
                     <p class="text-xs text-stone-400">{{ page.category }}</p>
+                    {% endif %}
+                    {% if not page.can_publish %}
+                    <p class="text-xs text-amber-600 mt-0.5">Missing Facebook content publishing access</p>
+                    {% elif page.already_connected %}
+                    <p class="text-xs text-emerald-600 mt-0.5">Already connected &middot; select to refresh</p>
                     {% endif %}
                 </div>
 
@@ -57,7 +79,23 @@
 </div>
 
 <script nonce="{{ request.csp_nonce }}">
-    document.getElementById('connect-btn').closest('form').addEventListener('submit', function(e) {
+    const accountForm = document.getElementById('connect-btn').closest('form');
+    const accountCheckboxes = [...accountForm.querySelectorAll('input[name="selected_pages"]')];
+    const updateSelectedCount = () => {
+        document.getElementById('selected-count').textContent = accountCheckboxes.filter(input => input.checked && !input.disabled).length;
+    };
+    accountCheckboxes.forEach(input => input.addEventListener('change', updateSelectedCount));
+    document.getElementById('select-all-btn').addEventListener('click', () => {
+        accountCheckboxes.forEach(input => { if (!input.disabled) input.checked = true; });
+        updateSelectedCount();
+    });
+    document.getElementById('clear-all-btn').addEventListener('click', () => {
+        accountCheckboxes.forEach(input => { input.checked = false; });
+        updateSelectedCount();
+    });
+    updateSelectedCount();
+
+    accountForm.addEventListener('submit', function(e) {
         const btn = document.getElementById('connect-btn');
         if (btn.disabled) {
             e.preventDefault();

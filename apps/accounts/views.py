@@ -5,7 +5,6 @@ from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
-from PIL import Image
 
 
 def health_check(request):
@@ -110,9 +109,17 @@ def _handle_photo_update(request, user):
         return
 
     # Validate minimum dimensions (180x180)
+    #
+    # PIL is imported here rather than at module scope because config.urls
+    # imports this module for ``health_check``, so a top-level import loaded
+    # Pillow's _imaging extension into every web AND worker process at boot,
+    # whether or not an avatar was ever touched. Matches how the rest of the
+    # codebase imports PIL (apps.media_library.services, apps.intelligence.views).
+    from PIL import Image
+
     try:
-        img = Image.open(avatar)
-        width, height = img.size
+        with Image.open(avatar) as img:
+            width, height = img.size
         if width < 180 or height < 180:
             messages.error(request, "Photo must be at least 180×180 pixels.")
             return

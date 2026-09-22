@@ -13,5 +13,10 @@ urlpatterns = [
     path("approvals/<uuid:post_id>/comments/", views.add_comment, name="add_comment"),
     path("approvals/<uuid:post_id>/comments/<uuid:comment_id>/edit/", views.edit_comment, name="edit_comment"),
     path("approvals/<uuid:post_id>/comments/<uuid:comment_id>/delete/", views.delete_comment, name="delete_comment"),
+    path(
+        "approvals/<uuid:post_id>/comments/<uuid:comment_id>/attachment/",
+        views.comment_attachment,
+        name="comment_attachment",
+    ),
     path("approvals/<uuid:post_id>/versions/", views.version_diff, name="version_diff"),
 ]

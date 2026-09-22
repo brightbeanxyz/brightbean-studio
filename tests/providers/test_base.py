@@ -1,9 +1,12 @@
 """Tests for the provider base class and registry."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from providers import PROVIDER_REGISTRY, get_provider
 from providers.base import SocialProvider
+from providers.exceptions import APIError, RateLimitError
 from providers.types import AuthType, PostType
 
 
@@ -87,6 +90,13 @@ class TestSocialProviderInterface:
         rl = provider.rate_limits
         assert rl.requests_per_hour > 0
 
+    @pytest.mark.parametrize("platform", list(PROVIDER_REGISTRY.keys()))
+    def test_provider_has_a_usable_post_metrics_batch_size(self, platform):
+        """0 would make the chunking loop in ``_sync_account_posts`` not advance."""
+        provider = get_provider(platform)
+        assert isinstance(provider.post_metrics_batch_size, int)
+        assert provider.post_metrics_batch_size >= 1
+
     def test_session_providers_raise_on_get_auth_url(self):
         """Bluesky (session auth) should raise on OAuth methods."""
         provider = get_provider("bluesky")
@@ -154,3 +164,59 @@ class TestProviderMetadata:
     def test_facebook_scopes_include_comment_permission(self):
         p = get_provider("facebook")
         assert "pages_manage_engagement" in p.required_scopes
+
+
+class TestErrorForResponse:
+    """The contract every provider override has to preserve.
+
+    ``apps.social_accounts.error_messages`` and the publish engine's two retry
+    gates both route on these two shapes, so a provider that reclassifies an
+    error into something outside them silently changes retry and reconnect
+    behaviour everywhere.
+    """
+
+    @staticmethod
+    def _response(status: int, *, headers: dict | None = None) -> MagicMock:
+        resp = MagicMock()
+        resp.status_code = status
+        resp.headers = headers or {}
+        resp.text = '{"message": "nope"}'
+        resp.json = MagicMock(return_value={"message": "nope"})
+        return resp
+
+    def test_429_maps_to_rate_limit_error_with_retry_after(self):
+        provider = get_provider("bluesky")
+
+        exc = provider._error_for_response(self._response(429, headers={"Retry-After": "12"}))
+
+        assert isinstance(exc, RateLimitError)
+        assert exc.retry_after == 12
+
+    def test_429_without_header_leaves_retry_after_unknown(self):
+        provider = get_provider("bluesky")
+
+        exc = provider._error_for_response(self._response(429))
+
+        assert isinstance(exc, RateLimitError)
+        assert exc.retry_after is None
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 404, 500, 503])
+    def test_other_errors_map_to_api_error_carrying_status(self, status):
+        provider = get_provider("bluesky")
+
+        exc = provider._error_for_response(self._response(status))
+
+        assert isinstance(exc, APIError)
+        assert exc.status_code == status
+        assert exc.raw_response == {"message": "nope"}
+
+
+class TestGetPostMetricsBatchDefault:
+    def test_default_walks_the_singular_method(self):
+        """Keeps the interface total for the 11 providers with no batch endpoint."""
+        provider = get_provider("bluesky")
+        with patch.object(type(provider), "get_post_metrics", side_effect=lambda _tok, pid: pid) as single:
+            result = provider.get_post_metrics_batch("tok", ["a", "b"])
+
+        assert result == {"a": "a", "b": "b"}
+        assert single.call_count == 2

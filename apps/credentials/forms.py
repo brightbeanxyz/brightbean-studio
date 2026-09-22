@@ -6,8 +6,8 @@ from .models import REQUIRED_CREDENTIAL_KEYS, PlatformCredential, derive_is_conf
 # Human-readable required-key hints, shown under the credentials field in the
 # admin. Mirrors what each provider reads (see providers/*.py).
 _KEY_HINTS = {
-    "facebook": "client_id, client_secret (app_id / app_secret also accepted)",
-    "instagram": "client_id, client_secret (app_id / app_secret also accepted)",
+    "facebook": "client_id, client_secret (app_id / app_secret also accepted), config_id (optional, Login for Business)",
+    "instagram": "client_id, client_secret (app_id / app_secret also accepted), config_id (optional, Login for Business)",
     "instagram_login": "client_id, client_secret (app_id / app_secret also accepted)",
     "threads": "client_id, client_secret (app_id / app_secret also accepted)",
     "pinterest": "client_id, client_secret (app_id / app_secret also accepted)",

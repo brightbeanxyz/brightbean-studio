@@ -14,6 +14,7 @@ from datetime import date as dt_date
 from datetime import timedelta
 from typing import Any, NamedTuple
 
+from django.db import connections
 from django.utils import timezone
 
 from apps.composer.models import PlatformPost
@@ -293,25 +294,27 @@ def account_analytics_bundle(account: SocialAccount, days: int) -> dict[str, Any
     start = end - timedelta(days=2 * days - 1)
     platform_metrics = PLATFORM_METRICS.get(account.platform, [])
 
-    rows = list(
-        AccountInsightsSnapshot.objects.filter(
-            social_account=account,
-            metric_key__in=platform_metrics,
-            date__gte=start,
-            date__lte=end,
-        )
-    )
+    # Four columns, not model instances: AccountInsightsSnapshot carries ``raw``
+    # and ``errors`` JSONFields that Django decodes on hydration and that
+    # nothing below reads. See ``_latest_post_stats`` for the same reasoning at
+    # the scale where it actually hurt.
+    rows = AccountInsightsSnapshot.objects.filter(
+        social_account=account,
+        metric_key__in=platform_metrics,
+        date__gte=start,
+        date__lte=end,
+    ).values_list("metric_key", "date", "value", "captured_at")
     by_metric: dict[str, dict[dt_date, float]] = defaultdict(dict)
     captured_by_metric: dict[str, Any] = {}
     max_captured: Any = None
     metrics_with_account_data: set[str] = set()
-    for r in rows:
-        by_metric[r.metric_key][r.date] = r.value
-        metrics_with_account_data.add(r.metric_key)
-        if r.metric_key not in captured_by_metric or r.captured_at > captured_by_metric[r.metric_key]:
-            captured_by_metric[r.metric_key] = r.captured_at
-        if max_captured is None or r.captured_at > max_captured:
-            max_captured = r.captured_at
+    for metric_key, day, value, captured_at in rows:
+        by_metric[metric_key][day] = value
+        metrics_with_account_data.add(metric_key)
+        if metric_key not in captured_by_metric or captured_at > captured_by_metric[metric_key]:
+            captured_by_metric[metric_key] = captured_at
+        if max_captured is None or captured_at > max_captured:
+            max_captured = captured_at
 
     # Hybrid fallback: for content-attribution metrics, derive a daily series
     # by summing per-post deltas so platforms without ``get_account_metrics``
@@ -566,7 +569,7 @@ def all_posts_for(
 
     posts: list[PlatformPost] = list(qs)
     metrics = post_metrics_for(account.platform)
-    stats_by_post = _latest_post_stats(posts, metrics)
+    stats_by_post = _latest_post_stats([p.id for p in posts], metrics)
 
     rows: list[dict[str, Any]] = []
     for p in posts:
@@ -633,7 +636,7 @@ def post_detail(post: PlatformPost) -> dict[str, Any]:
     """
     account = post.social_account
     metrics = post_metrics_for(account.platform)
-    stats = _latest_post_stats([post], metrics).get(post.id, {})
+    stats = _latest_post_stats([post.id], metrics).get(post.id, {})
     sparklines_by_metric, max_captured = _post_sparklines_with_freshness(post, metrics)
     return {
         "post": post,
@@ -667,46 +670,75 @@ def _label(metric_key: str) -> str:
     return METRICS.get(metric_key, {}).get("label", metric_key.replace("_", " ").title())
 
 
-def _latest_post_stats(posts: Iterable[PlatformPost], metrics: list[str]) -> dict[Any, dict[str, float]]:
-    """For each post, return ``{metric_key: latest value}``."""
-    post_ids = [p.id for p in posts]
+def _latest_post_stats(post_ids: Iterable[Any], metrics: list[str]) -> dict[Any, dict[str, float]]:
+    """For each post id, return ``{metric_key: latest value}``.
+
+    Three columns, never model instances. ``PostInsightsSnapshot`` is one row
+    per (post, metric, day) and carries two JSONFields — ``raw`` is the entire
+    provider response — and Django decodes both eagerly while hydrating a row.
+    Pulling these as models therefore ran a ``json.loads`` over every payload
+    in the table for the account, twice per row, to read three numbers none of
+    which are in the JSON. On an account with 300 posts and 90 days of history
+    that is 216k instances and 432k needless decodes, in a web process with
+    ~60 MB of headroom.
+
+    Where the backend supports it, ``DISTINCT ON`` also does the dedup in
+    Postgres rather than in Python, so the query returns one row per
+    (post, metric) instead of one per day. The ``order_by`` prefix it requires
+    is the ordering this needs anyway.
+
+    That is an optimization, not a requirement: README documents SQLite for
+    local development and small deployments, and SQLite inherits Django's base
+    ``distinct_sql``, which raises ``NotSupportedError`` the moment any field is
+    passed. So the clause is applied only when the backend advertises it, and
+    everything else dedups the same rows in Python. The ``values_list`` above
+    is where nearly all of the saving comes from and it works everywhere.
+    """
+    post_ids = list(post_ids)
     if not post_ids:
         return {}
-    rows = PostInsightsSnapshot.objects.filter(platform_post_id__in=post_ids, metric_key__in=metrics).order_by(
-        "platform_post_id", "metric_key", "-date"
+    rows = (
+        PostInsightsSnapshot.objects.filter(platform_post_id__in=post_ids, metric_key__in=metrics)
+        .order_by("platform_post_id", "metric_key", "-date")
+        .values_list("platform_post_id", "metric_key", "value")
     )
+
     out: dict[Any, dict[str, float]] = defaultdict(dict)
+    if connections[rows.db].features.can_distinct_on_fields:
+        for post_id, metric_key, value in rows.distinct("platform_post_id", "metric_key"):
+            out[post_id][metric_key] = value
+        return out
+
+    # Same ordering, so the first row for each (post, metric) is still the
+    # newest; ``iterator`` keeps the untrimmed result set from being cached.
     seen: set[tuple[Any, str]] = set()
-    for r in rows:
-        key = (r.platform_post_id, r.metric_key)
+    for post_id, metric_key, value in rows.iterator(chunk_size=2000):
+        key = (post_id, metric_key)
         if key in seen:
             continue
         seen.add(key)
-        out[r.platform_post_id][r.metric_key] = r.value
+        out[post_id][metric_key] = value
     return out
 
 
-def _post_sparklines(post: PlatformPost, metrics: list[str]) -> dict[str, list[float]]:
-    """Daily history per metric since publish — for the detail-drawer sparkline."""
-    return _post_sparklines_with_freshness(post, metrics)[0]
-
-
 def _post_sparklines_with_freshness(post: PlatformPost, metrics: list[str]) -> tuple[dict[str, list[float]], Any]:
-    """Same as :func:`_post_sparklines` but also returns the max ``captured_at``.
+    """Daily history per metric since publish, plus the max ``captured_at``.
 
-    Used by :func:`post_detail` so the freshness side-channel
-    (:func:`apps.analytics.freshness.post_freshness`) doesn't need its own
-    ``Max("captured_at")`` aggregate against the same rows.
+    Feeds the detail-drawer sparkline. The freshness value rides along so the
+    side-channel (:func:`apps.analytics.freshness.post_freshness`) doesn't need
+    its own ``Max("captured_at")`` aggregate against the same rows.
     """
-    rows = PostInsightsSnapshot.objects.filter(platform_post=post, metric_key__in=metrics).order_by(
-        "metric_key", "date"
+    rows = (
+        PostInsightsSnapshot.objects.filter(platform_post=post, metric_key__in=metrics)
+        .order_by("metric_key", "date")
+        .values_list("metric_key", "value", "captured_at")
     )
     out: dict[str, list[float]] = defaultdict(list)
     max_captured: Any = None
-    for r in rows:
-        out[r.metric_key].append(r.value)
-        if max_captured is None or r.captured_at > max_captured:
-            max_captured = r.captured_at
+    for metric_key, value, captured_at in rows:
+        out[metric_key].append(value)
+        if max_captured is None or captured_at > max_captured:
+            max_captured = captured_at
     return dict(out), max_captured
 
 

@@ -5,9 +5,11 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
+from django.db.models import F, Q
 from django.template.loader import render_to_string
 from django.utils import timezone
 
+from apps.common.mail import EmailNotSentError, send_or_raise, transactional
 from apps.workspaces.models import Workspace
 
 from .models import Invitation, OrgMembership, WorkspaceMembership
@@ -126,6 +128,21 @@ def create_invitation(org, email, org_role, workspace_assignments, invited_by, *
         if requested_ws_level > inviter_ws_level:
             raise ValueError("You cannot grant a workspace role higher than your own in that workspace.")
 
+    # Revoking an invitation sets expires_at to now, which clears the "already
+    # pending" guard above — so revoke-then-reinvite was a loop that handed out
+    # a fresh send budget every time round. Carrying the count forward and
+    # refusing at the cap closes it; the window keeps a genuinely stale
+    # invitation from blocking the address for good.
+    already_sent = _recent_send_count(org, email)
+    max_sends = getattr(settings, "INVITE_MAX_SENDS", 3)
+    if already_sent >= max_sends:
+        raise ValueError(
+            f"This address has already been emailed {already_sent} times about joining "
+            f"this organization. Check the address with them directly rather than sending it again."
+        )
+
+    _check_org_invite_budget(org)
+
     invitation = Invitation.objects.create(
         organization=org,
         email=email,
@@ -133,10 +150,59 @@ def create_invitation(org, email, org_role, workspace_assignments, invited_by, *
         workspace_assignments=workspace_assignments,
         invited_by=invited_by,
         expires_at=timezone.now() + timedelta(days=INVITE_EXPIRY_DAYS),
+        send_count=already_sent,
     )
 
-    _send_invite_email(invitation)
+    if not _send_invite_email(invitation):
+        # The invitation row is kept on purpose: it is valid, it shows up in the
+        # pending list, and Resend is right there. What must not happen is the
+        # caller being told the email went out. ``last_sent_at`` stays null,
+        # which is the signal the views use.
+        logger.warning("Invitation %s created but the email was not sent", invitation.pk)
+
     return invitation
+
+
+def _recent_send_count(org, email) -> int:
+    """How many times this address has been mailed about this org lately.
+
+    Bounded by the invitation lifetime rather than counting forever: the loop
+    worth stopping happens in minutes, while an invitation that quietly expired
+    months ago should not bar someone from being invited today.
+    """
+    since = timezone.now() - timedelta(days=INVITE_EXPIRY_DAYS)
+    return (
+        Invitation.objects.filter(
+            organization=org,
+            email=email,
+            accepted_at__isnull=True,
+            created_at__gte=since,
+        )
+        .order_by("-created_at")
+        .values_list("send_count", flat=True)
+        .first()
+        or 0
+    )
+
+
+def _check_org_invite_budget(org) -> None:
+    """Stop one organization inviting the world in a day.
+
+    A new signup owns an organization one request after registering, with no
+    verified address behind it — which is what the run of "My Organization"
+    invitations to unrelated strangers in the Resend log looks like. A daily
+    ceiling is the cheapest control that a real team growing quickly will never
+    notice.
+    """
+    from apps.common.mail import reserve_budget
+
+    limit = getattr(settings, "INVITE_MAX_PER_ORG_PER_DAY", 25)
+    day_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    if not reserve_budget("invite_org_day", str(org.id), day_start, limit, fail_open=False):
+        logger.warning("Organization %s hit the daily invitation cap of %d", org.id, limit)
+        raise ValueError(
+            f"This organization has sent its {limit} invitation emails for today. You can send more tomorrow."
+        )
 
 
 def accept_invitation(invitation, user, *, require_email_match=True):
@@ -199,11 +265,43 @@ def accept_invitation(invitation, user, *, require_email_match=True):
 def resend_invitation(invitation):
     """Resend an invitation with a fresh token and expiry.
 
+    Throttled two ways, because this had neither and it showed: the Resend log
+    has the same address invited four times in thirteen seconds and another
+    twelve times in five minutes. A cooldown stops the button being leaned on;
+    the total cap stops a genuine "they never got it" turning into a campaign.
+
+    The checks below exist to produce a message worth reading; the cap and the
+    cooldown are actually *enforced* atomically in ``_reserve_invite_send``,
+    which is the only place that can be sure two requests are not deciding at
+    the same moment.
+
     Raises:
-        ValueError: If the invitation is already accepted.
+        ValueError: If the invitation is already accepted, is inside its
+            cooldown, has been sent as many times as it is allowed, or the
+            email could not be sent.
     """
     if invitation.is_accepted:
         raise ValueError("This invitation has already been accepted.")
+
+    max_sends = getattr(settings, "INVITE_MAX_SENDS", 3)
+    if invitation.send_count >= max_sends:
+        raise ValueError(
+            f"This invitation has already been sent {invitation.send_count} times. "
+            "Check the address with them directly rather than sending it again."
+        )
+
+    cooldown = timedelta(seconds=getattr(settings, "INVITE_RESEND_COOLDOWN_SECONDS", 300))
+    if invitation.last_sent_at and timezone.now() - invitation.last_sent_at < cooldown:
+        wait = cooldown - (timezone.now() - invitation.last_sent_at)
+        raise ValueError(
+            f"This invitation was just sent. You can send it again in {int(wait.total_seconds() // 60) + 1} minute(s)."
+        )
+
+    # A resend is an invitation email like any other, so it comes out of the
+    # same daily allowance. Charging only ``create`` would have made the cap a
+    # third of what it claims: 25 invitations each resent twice is 75 emails
+    # from an organization told it had spent its 25.
+    _check_org_invite_budget(invitation.organization)
 
     import secrets
 
@@ -211,7 +309,12 @@ def resend_invitation(invitation):
     invitation.expires_at = timezone.now() + timedelta(days=INVITE_EXPIRY_DAYS)
     invitation.save(update_fields=["token", "expires_at"])
 
-    _send_invite_email(invitation)
+    if not _send_invite_email(invitation):
+        # Either a competing request took the slot between the checks above and
+        # the atomic reservation, or the send itself was refused. Reporting
+        # success would leave someone waiting for an email that is not coming.
+        raise ValueError("We could not send that invitation right now. Please try again shortly.")
+
     return invitation
 
 
@@ -364,8 +467,64 @@ def update_workspace_assignments(org, user, assignments, *, inviter=None):
             )
 
 
-def _send_invite_email(invitation):
-    """Send the invite email for an invitation."""
+def _reserve_invite_send(invitation):
+    """Claim this invitation's next send slot, atomically.
+
+    Both the cap and the cooldown are expressed as conditions on the UPDATE
+    rather than as an if-statement over values read a moment earlier. Two
+    resend requests arriving together would otherwise both read send_count=2
+    against a maximum of 3, both decide they were fine, and both send.
+
+    Returns a receipt to hand to ``_release_invite_send`` if the email does not
+    go out, or None when the slot was already taken — by the cap, by the
+    cooldown, or by a competing request that got there first.
+    """
+    max_sends = getattr(settings, "INVITE_MAX_SENDS", 3)
+    cooldown = timedelta(seconds=getattr(settings, "INVITE_RESEND_COOLDOWN_SECONDS", 300))
+    now = timezone.now()
+    previous_last_sent_at = invitation.last_sent_at
+
+    claimed = (
+        Invitation.objects.filter(pk=invitation.pk, send_count__lt=max_sends)
+        .filter(Q(last_sent_at__isnull=True) | Q(last_sent_at__lte=now - cooldown))
+        .update(send_count=F("send_count") + 1, last_sent_at=now)
+    )
+    if not claimed:
+        return None
+
+    invitation.send_count += 1
+    invitation.last_sent_at = now
+    return {"previous_last_sent_at": previous_last_sent_at}
+
+
+def _release_invite_send(invitation, receipt) -> None:
+    """Give the slot back when the email did not actually go out.
+
+    A misconfigured mail server, or a send the outbound budget declined, must
+    not cost the recipient one of the few invitations they are allowed — and it
+    must not start the cooldown either, or a failed send would make the person
+    trying to help wait five minutes to try again. So ``last_sent_at`` is put
+    back to what it was, not merely left where the reservation set it.
+    """
+    Invitation.objects.filter(pk=invitation.pk, send_count__gt=0).update(
+        send_count=F("send_count") - 1,
+        last_sent_at=receipt["previous_last_sent_at"],
+    )
+    invitation.send_count = max(0, invitation.send_count - 1)
+    invitation.last_sent_at = receipt["previous_last_sent_at"]
+
+
+def _send_invite_email(invitation) -> bool:
+    """Send the invite email for an invitation. Returns whether it went out.
+
+    The slot is reserved before the send and released if the send fails, so the
+    accounting is atomic without charging for mail nobody received.
+    """
+    receipt = _reserve_invite_send(invitation)
+    if receipt is None:
+        logger.info("Invitation %s has no send slot available", invitation.pk)
+        return False
+
     app_url = getattr(settings, "APP_URL", "http://localhost:8000").rstrip("/")
     accept_url = f"{app_url}/members/invite/{invitation.token}/accept/"
 
@@ -386,10 +545,23 @@ def _send_invite_email(invitation):
         body=text_content,
         from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@localhost"),
         to=[invitation.email],
+        # Someone is waiting on this to get into the product, so it is exempt
+        # from the per-recipient cap (never the global one). The invite flood in
+        # the Resend log is held back by the resend cooldown and the per-org
+        # daily cap, not by the notification cap.
+        headers=transactional(),
     )
     msg.attach_alternative(html_content, "text/html")
 
     try:
-        msg.send(fail_silently=False)
+        send_or_raise(msg)
+    except EmailNotSentError:
+        logger.warning("Invite email to %s was not sent", invitation.email)
+        _release_invite_send(invitation, receipt)
+        return False
     except Exception:
         logger.exception("Failed to send invite email to %s", invitation.email)
+        _release_invite_send(invitation, receipt)
+        return False
+
+    return True

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from datetime import datetime
+from typing import IO
 
 import httpx
 
-from .exceptions import APIError, RateLimitError
+from .exceptions import APIError, ProviderError, RateLimitError
 from .types import (
     AccountMetrics,
     AccountProfile,
@@ -22,6 +24,7 @@ from .types import (
     PostType,
     PublishContent,
     PublishResult,
+    PublishStatus,
     RateLimitConfig,
     ReplyResult,
 )
@@ -39,8 +42,31 @@ class SocialProvider(ABC):
     Per-user OAuth tokens are passed as method arguments.
     """
 
+    # What this instance has spent since the counter was last reset, for
+    # platforms that meter a budget worth tracking. Zero everywhere else, and on
+    # any call that does not touch it — so a caller can always read it, and
+    # reads nothing alarming from a provider that has no such budget.
+    #
+    # It exists because the cost of a call is not visible from its result: a
+    # comment poll that returns three messages may have bought one page or five,
+    # and only the provider knows which. YouTube is the case that needs it —
+    # 10,000 Data API units a day across every connected channel, spent a page
+    # at a time — and without this the first sign of an exhausted budget is a
+    # user reporting their accounts have gone dead. See apps.inbox.tasks.
+    #
+    # Accumulates rather than being reset per call, because one logical poll can
+    # be several calls: the YouTube inbox retries once after an auth failure,
+    # and a per-call counter would report only the retry while the units the
+    # first attempt bought vanished from the tally. Callers reset it once per
+    # unit of work via :meth:`reset_quota_counter`.
+    last_call_quota_units: int = 0
+
     def __init__(self, credentials: dict | None = None):
         self.credentials = credentials or {}
+
+    def reset_quota_counter(self) -> None:
+        """Start a fresh tally for the next unit of work on this instance."""
+        self.last_call_quota_units = 0
 
     # ------------------------------------------------------------------
     # Class-level metadata (abstract properties)
@@ -110,12 +136,32 @@ class SocialProvider(ABC):
     # exchange. Providers that don't set this are never passed a code_verifier.
     uses_pkce: bool = False
 
+    # True when the platform only *accepts* the post here and finishes it
+    # asynchronously, so a successful ``publish_post`` means "handed over", not
+    # "live". The engine keeps these rows in ``publishing`` and settles them from
+    # ``check_publish_status`` instead of marking them published on upload.
+    publish_is_async: bool = False
+
+    # False when the provider publishes purely from ``PublishContent.media_urls``
+    # and never reads ``media_files``. The engine skips the (expensive) download
+    # to local disk for those. Defaults True so a new provider keeps working
+    # until it has been checked.
+    needs_local_media: bool = True
+
     # True when ``get_account_metrics`` actually filters by the ``date_range``
     # argument. Providers whose stats endpoint returns only lifetime totals
     # (TikTok ``/v2/user/info/``) should set this to False so the sync layer
     # doesn't replay the same cumulative values into multiple historical
     # date rows on first sync.
     account_metrics_supports_date_range: bool = True
+
+    # How many post ids a single ``get_post_metrics_batch`` call may carry. 1 —
+    # the default — means the platform has no batch endpoint, so the analytics
+    # sync keeps its one-call-per-post loop and one bad id can't abort the rest
+    # of the account. Raise it only for an endpoint that genuinely takes a list
+    # (YouTube ``videos.list`` takes 50 ids for the same 1 quota unit). Must
+    # never be 0: the chunking loop would not advance.
+    post_metrics_batch_size: int = 1
 
     @property
     def rate_limits(self) -> RateLimitConfig:
@@ -162,6 +208,16 @@ class SocialProvider(ABC):
     def publish_post(self, access_token: str, content: PublishContent) -> PublishResult:
         """Publish content to the platform."""
 
+    def check_publish_status(self, access_token: str, handle: str) -> PublishStatus:
+        """Ask the platform what became of an asynchronous publish.
+
+        ``handle`` is whatever ``publish_post`` returned as
+        ``platform_post_id`` for an ``publish_is_async`` provider (for TikTok, a
+        Content Posting API ``publish_id``). Only implemented where
+        ``publish_is_async`` is True.
+        """
+        raise NotImplementedError(f"{self.platform_name} does not report publish status")
+
     def publish_comment(self, access_token: str, post_id: str, text: str) -> CommentResult:
         """Post a comment on an existing post (e.g. first comment)."""
         raise NotImplementedError(f"{self.platform_name} does not support comments")
@@ -173,6 +229,24 @@ class SocialProvider(ABC):
     def get_post_metrics(self, access_token: str, post_id: str) -> PostMetrics:
         """Fetch engagement metrics for a specific post."""
         raise NotImplementedError(f"{self.platform_name} does not support post metrics")
+
+    def get_post_metrics_batch(self, access_token: str, post_ids: list[str]) -> dict[str, PostMetrics]:
+        """Metrics for several posts in as few API calls as the platform allows.
+
+        Ids the platform omits — deleted, private, never existed — are ABSENT
+        from the result. Callers must read that as "no data for this id", never
+        as zeros, or a deleted video quietly overwrites its own history with a
+        flat line.
+
+        Unlike :meth:`get_post_metrics`, a failure here fails the whole batch.
+        That is what a real batched endpoint does, and pretending otherwise
+        would hide a quota or auth error behind a partial result.
+
+        The default walks ``get_post_metrics`` so the interface stays total for
+        every provider; only platforms that set ``post_metrics_batch_size`` above
+        1 should override it.
+        """
+        return {post_id: self.get_post_metrics(access_token, post_id) for post_id in post_ids}
 
     def get_account_metrics(self, access_token: str, date_range: tuple[datetime, datetime]) -> AccountMetrics:
         """Fetch account-level metrics for a date range."""
@@ -262,6 +336,20 @@ class SocialProvider(ABC):
     # Token management
     # ------------------------------------------------------------------
 
+    def get_granted_scopes(self, access_token: str) -> set[str] | None:
+        """Which of the requested scopes the platform actually granted.
+
+        Meta silently drops permissions it has not approved, or that the user
+        declined, rather than failing the grant — so a connection reports
+        healthy and only breaks later, at publish or insights time, with an
+        opaque platform error. Asking up front turns that into something we can
+        name while the user is still looking at the screen.
+
+        Returns ``None`` when the platform offers no way to ask, which callers
+        must treat as "unknown", never as "nothing granted".
+        """
+        return None
+
     def revoke_token(self, access_token: str) -> bool:
         """Revoke an OAuth token. Returns True if successful."""
         return False
@@ -287,7 +375,7 @@ class SocialProvider(ABC):
         headers: dict | None = None,
         params: dict | None = None,
         json: dict | None = None,
-        data: dict | bytes | None = None,
+        data: dict | bytes | Iterable[bytes] | IO[bytes] | None = None,
         files: dict | None = None,
         timeout: float = REQUEST_TIMEOUT,
     ) -> httpx.Response:
@@ -302,38 +390,60 @@ class SocialProvider(ABC):
             req_headers.update(headers)
 
         with httpx.Client(timeout=timeout) as client:
-            # httpx uses `content` for raw bytes, `data` for form mappings
+            # httpx uses `content` for a request body, `data` for form mappings.
+            # A file object or byte iterator goes to `content` too, and httpx
+            # streams it rather than materializing it — which is the only way a
+            # 60 MB video upload doesn't cost 60 MB of RSS. httpx derives
+            # Content-Length from a real file object, and an explicit
+            # Content-Length passed by the caller still wins (so no stray
+            # Transfer-Encoding: chunked on APIs that reject it, like TikTok's).
             request_kwargs: dict = {
                 "headers": req_headers,
                 "params": params,
                 "json": json,
                 "files": files,
             }
-            if isinstance(data, bytes):
-                request_kwargs["content"] = data
-            else:
+            if isinstance(data, dict) or data is None:
                 request_kwargs["data"] = data
+            else:
+                request_kwargs["content"] = data
             response = client.request(method, url, **request_kwargs)
 
+        if response.status_code >= 400:
+            raise self._error_for_response(response)
+
+        return response
+
+    def _error_for_response(self, response: httpx.Response) -> ProviderError:
+        """Map an error response to the exception this provider wants raised.
+
+        Overriding this is how a provider teaches the stack to tell its error
+        shapes apart — a Google 403 spent on quota is a different fact from a
+        403 refused on scope, and only the provider can read the difference out
+        of the body.
+
+        Contract an override MUST preserve, because
+        ``apps.social_accounts.error_messages`` and the publish engine's retry
+        gates route on it: HTTP 429 raises a :class:`RateLimitError`, and every
+        other 4xx/5xx raises an :class:`APIError` carrying ``status_code``.
+        Anything reclassified has to stay a subclass of one of those two.
+        """
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After")
             logger.error("%s API 429 response: %s", self.platform_name, response.text[:1000])
-            raise RateLimitError(
+            return RateLimitError(
                 f"Rate limit exceeded for {self.platform_name}: {response.text[:500]}",
                 retry_after=int(retry_after) if retry_after else None,
                 platform=self.platform_name,
                 raw_response=self._safe_json(response),
             )
 
-        if response.status_code >= 400:
-            raise APIError(
-                f"{self.platform_name} API error {response.status_code}: {response.text[:500]}",
-                status_code=response.status_code,
-                platform=self.platform_name,
-                raw_response=self._safe_json(response),
-            )
-
-        return response
+        return APIError(
+            f"{self.platform_name} API error {response.status_code}: {response.text[:500]}",
+            status_code=response.status_code,
+            platform=self.platform_name,
+            raw_response=self._safe_json(response),
+        )
 
     @staticmethod
     def _safe_json(response: httpx.Response) -> dict:

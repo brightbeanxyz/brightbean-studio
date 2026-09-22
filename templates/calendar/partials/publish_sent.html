@@ -65,8 +65,10 @@ Shows all published/partially_published platform posts. Loaded via HTMX into #ta
                     {% if pp.status == "failed" and pp.publish_error %}
                     <p class="text-[11px] text-red-500 mt-1 max-w-[220px] truncate" title="{{ pp.publish_error }}">{{ pp.publish_error }}</p>
                     {% endif %}
-                    {# Published, but its first comment never landed — amber, not red:
-                       the post itself went out fine. #}
+                    {% comment %}
+                    Published, but its first comment never landed — amber, not red:
+                    the post itself went out fine.
+                    {% endcomment %}
                     {% if pp.first_comment_status == "failed" %}
                     <p class="text-[11px] text-amber-600 mt-1 max-w-[220px] truncate" title="{{ pp.first_comment_error }}">First comment failed</p>
                     {% endif %}

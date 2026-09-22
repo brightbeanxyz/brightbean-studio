@@ -14,10 +14,20 @@ class NotificationsConfig(AppConfig):
     @staticmethod
     def _register_tasks(sender, **kwargs):
         from apps.common.background import register_recurring_task
-        from apps.notifications.tasks import NOTIFICATION_RETRY_INTERVAL_SECONDS, retry_failed_deliveries
+        from apps.notifications.tasks import (
+            NOTIFICATION_BATCH_INTERVAL_SECONDS,
+            NOTIFICATION_RETRY_INTERVAL_SECONDS,
+            retry_failed_deliveries,
+            send_batched_email_digests,
+        )
 
         register_recurring_task(
             retry_failed_deliveries,
             repeat=NOTIFICATION_RETRY_INTERVAL_SECONDS,
             verbose_name="retry_failed_deliveries",
+        )
+        register_recurring_task(
+            send_batched_email_digests,
+            repeat=NOTIFICATION_BATCH_INTERVAL_SECONDS,
+            verbose_name="send_batched_email_digests",
         )

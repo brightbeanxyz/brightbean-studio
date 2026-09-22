@@ -12,13 +12,15 @@ from datetime import datetime
 from urllib.parse import urlencode
 
 from .base import SocialProvider
-from .exceptions import APIError, OAuthError, PublishError
+from .exceptions import APIError, OAuthError, ProviderError, PublishError
+from .meta_accounts import fetch_me_accounts, page_can_publish
 from .meta_comments import (
     fetch_instagram_comments,
     find_own_instagram_comment,
     resolve_comment_reply_target,
 )
 from .meta_insights import fetch_insights_safe
+from .meta_oauth import facebook_login_params
 from .types import (
     AccountMetrics,
     AccountProfile,
@@ -93,6 +95,11 @@ CONTAINER_POLL_MAX_ATTEMPTS = 60
 class InstagramProvider(SocialProvider):
     """Instagram Graph API provider (via Facebook Graph API v25.0)."""
 
+    # Publishes from hosted URLs only — the platform fetches the media
+    # itself, so ``PublishContent.media_files`` is never read and the engine
+    # can skip downloading the asset to local disk entirely.
+    needs_local_media = False
+
     def __init__(self, credentials: dict | None = None):
         creds = dict(credentials or {})
         # Normalize: accept app_id/app_secret as aliases for client_id/client_secret
@@ -120,7 +127,10 @@ class InstagramProvider(SocialProvider):
 
     @property
     def supported_post_types(self) -> list[PostType]:
-        return [PostType.IMAGE, PostType.CAROUSEL, PostType.REEL, PostType.STORY]
+        # VIDEO is accepted (and published as a Reel) even though Instagram has
+        # no standalone feed video, because an explicit post_type hint can still
+        # deliver it.
+        return [PostType.IMAGE, PostType.VIDEO, PostType.CAROUSEL, PostType.REEL, PostType.STORY]
 
     @property
     def supported_media_types(self) -> list[MediaType]:
@@ -151,13 +161,13 @@ class InstagramProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def get_auth_url(self, redirect_uri: str, state: str, code_verifier: str | None = None) -> str:
-        params = {
-            "client_id": self.credentials["client_id"],
-            "redirect_uri": redirect_uri,
-            "state": state,
-            "scope": ",".join(self.required_scopes),
-            "response_type": "code",
-        }
+        params = facebook_login_params(
+            client_id=self.credentials["client_id"],
+            redirect_uri=redirect_uri,
+            state=state,
+            scopes=self.required_scopes,
+            config_id=str(self.credentials.get("config_id") or "").strip(),
+        )
         return f"{OAUTH_URL}?{urlencode(params)}"
 
     def exchange_code(self, code: str, redirect_uri: str, code_verifier: str | None = None) -> OAuthTokens:
@@ -244,28 +254,19 @@ class InstagramProvider(SocialProvider):
         Brightbean should be the Instagram Business account selected from the
         Facebook Pages the user manages.
         """
-        resp = self._request(
-            "GET",
-            f"{BASE_URL}/me/accounts",
+        raw_pages = fetch_me_accounts(
+            self,
             access_token=access_token,
-            params={
-                "fields": (
-                    "id,name,access_token,category,picture,"
-                    "instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}"
-                ),
-            },
+            base_url=BASE_URL,
+            fields=(
+                "id,name,access_token,category,picture,tasks,"
+                "instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}"
+            ),
+            error_message="Failed to fetch Instagram accounts",
         )
-        data = resp.json()
-        if "error" in data:
-            logger.error("Instagram /me/accounts error: %s", data["error"])
-            raise APIError(
-                f"Failed to fetch Instagram accounts: {data['error'].get('message', 'Unknown error')}",
-                platform=self.platform_name,
-                raw_response=data,
-            )
 
         accounts: list[dict] = []
-        for page in data.get("data", []):
+        for page in raw_pages:
             ig_account = page.get("instagram_business_account")
             if not ig_account:
                 continue
@@ -285,6 +286,8 @@ class InstagramProvider(SocialProvider):
                 "followers_count": ig_account.get("followers_count", 0),
                 "page_id": page.get("id"),
                 "page_name": page.get("name", ""),
+                "tasks": page.get("tasks") or [],
+                "can_publish": page_can_publish(page),
             }
             page_token = page.get("access_token")
             if page_token:
@@ -297,9 +300,17 @@ class InstagramProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def publish_post(self, access_token: str, content: PublishContent) -> PublishResult:
+        if not content.media_urls:
+            raise PublishError(
+                "Instagram requires at least one media item",
+                platform=self.platform_name,
+            )
+
         ig_user_id = content.extra.get("ig_user_id") or self._get_ig_user_id(access_token)
 
-        if content.post_type == PostType.CAROUSEL:
+        # A carousel needs 2-10 children; with a single item Meta rejects the
+        # parent container, so publish it as an ordinary single post instead.
+        if content.post_type == PostType.CAROUSEL and len(content.media_urls) > 1:
             return self._publish_carousel(access_token, ig_user_id, content)
         return self._publish_single(access_token, ig_user_id, content)
 
@@ -310,24 +321,26 @@ class InstagramProvider(SocialProvider):
         if content.text:
             payload["caption"] = content.text
 
-        if content.post_type in (PostType.REEL, PostType.VIDEO):
-            # Instagram no longer supports standalone feed videos: a single
-            # video is published as a Reel. PostType.VIDEO (the engine's
-            # fallback for a lone video asset) must take the REELS path too,
-            # otherwise it falls through to the IMAGE branch and the .mp4 is
-            # sent as image_url ("The image format is not supported").
+        # Route on what the asset *is*, not only on which post types name a
+        # video: any post type carrying a video has to reach a video field, or
+        # the .mp4 goes out as image_url and Instagram rejects it with "The
+        # image format is not supported" (36001).
+        url = content.media_urls[0]
+        is_video = content.is_video(0)
+
+        if content.post_type == PostType.STORY:
+            payload["media_type"] = "STORIES"
+            payload["video_url" if is_video else "image_url"] = url
+        elif is_video or content.post_type in (PostType.REEL, PostType.VIDEO):
+            # Instagram has no standalone feed video: a single video is
+            # published as a Reel. This also catches a lone video that arrived
+            # under some other post type — PostType.VIDEO (the engine's
+            # fallback for one video asset) or a CAROUSEL that ended up with a
+            # single item.
             payload["media_type"] = "REELS"
-            payload["video_url"] = content.media_urls[0]
-        elif content.post_type == PostType.STORY:
-            if content.media_urls and content.media_urls[0].endswith((".mp4", ".mov")):
-                payload["media_type"] = "STORIES"
-                payload["video_url"] = content.media_urls[0]
-            else:
-                payload["media_type"] = "STORIES"
-                payload["image_url"] = content.media_urls[0]
+            payload["video_url"] = url
         else:
-            # Default IMAGE
-            payload["image_url"] = content.media_urls[0]
+            payload["image_url"] = url
 
         # Step 1: create container
         container_id = self._create_container(access_token, ig_user_id, payload)
@@ -342,12 +355,11 @@ class InstagramProvider(SocialProvider):
         """Publish a carousel post with multiple media items."""
         child_ids: list[str] = []
 
-        for url in content.media_urls:
-            is_video = url.lower().endswith((".mp4", ".mov"))
+        for index, url in enumerate(content.media_urls):
             child_payload: dict = {
                 "is_carousel_item": True,
             }
-            if is_video:
+            if content.is_video(index):
                 child_payload["media_type"] = "VIDEO"
                 child_payload["video_url"] = url
             else:
@@ -594,6 +606,53 @@ class InstagramProvider(SocialProvider):
         )
         data = resp.json()
         return ReplyResult(platform_message_id=data.get("id", ""), extra=data)
+
+    def get_granted_scopes(self, access_token: str) -> set[str] | None:
+        """Read the grant back by inspecting the token itself.
+
+        Not ``/me/permissions``: these accounts hold a *Page* token, and ``/me``
+        resolves to whatever the token identifies — the Page, which has no
+        ``permissions`` edge. ``/debug_token`` reports the scopes carried by any
+        token, Page ones included, and is the documented way to ask.
+
+        Needs an app access token to make the call, so a provider built without
+        app credentials reports "unknown" rather than guessing.
+        """
+        client_id = self.credentials.get("client_id")
+        client_secret = self.credentials.get("client_secret")
+        if not client_id or not client_secret:
+            return None
+
+        try:
+            resp = self._request(
+                "GET",
+                f"{BASE_URL}/debug_token",
+                params={
+                    "input_token": access_token,
+                    # Meta's documented app-token form. Never log this.
+                    "access_token": f"{client_id}|{client_secret}",
+                },
+            )
+        except ProviderError:
+            logger.warning("Could not read granted permissions for %s", self.platform_name)
+            return None
+
+        data = resp.json().get("data") or {}
+        scopes = data.get("scopes")
+        if scopes is None:
+            # A token Meta declines to describe is unknown, not unscoped.
+            return None
+        return set(scopes)
+
+    def revoke_token(self, access_token: str) -> bool:
+        """Deliberately a no-op — see ``FacebookProvider.revoke_token``.
+
+        This connection shares the Facebook user's grant, so revoking it would
+        also sever every sibling connection. Left explicit rather than
+        inherited so the next reader does not "fix" it by adding
+        DELETE /me/permissions.
+        """
+        return False
 
     # ------------------------------------------------------------------
     # Webhooks

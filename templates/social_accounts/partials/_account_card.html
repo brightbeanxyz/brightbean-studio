@@ -54,7 +54,20 @@ Usage: {% include "social_accounts/partials/_account_card.html" with account=acc
             <!-- Disconnect confirmation -->
             <div x-show="confirmDisconnect" x-cloak @click.away="confirmDisconnect = false"
                  class="absolute right-4 top-12 z-10 w-64 bg-white rounded-xl shadow-xl border border-stone-200 p-4">
-                <p class="text-sm text-stone-700 mb-3">Disconnect <strong>{{ account.account_name|default:account.account_handle }}</strong>? Historical data will be preserved.</p>
+                <p class="text-sm text-stone-700 mb-2">Disconnect <strong>{{ account.account_name|default:account.account_handle }}</strong>? Historical data will be preserved.</p>
+                {% comment %}
+                Disconnecting drops our copy of the credentials; it cannot
+                revoke the grant, because the only endpoint that would do so
+                revokes this app for the whole person and would sever their
+                other connected accounts. Say so rather than let "Disconnect"
+                imply a revocation it never performs.
+                {% endcomment %}
+                {% if account.keeps_platform_grant_on_disconnect %}
+                <p class="text-xs text-stone-500 mb-3">
+                    This removes the account from BrightBean only. To revoke our access entirely,
+                    remove BrightBean in Facebook &rsaquo; Settings &rsaquo; Apps and Websites.
+                </p>
+                {% endif %}
                 <div class="flex gap-2 justify-end">
                     <button @click="confirmDisconnect = false" class="px-3 py-1.5 text-xs font-semibold text-stone-600 bg-stone-100 rounded-full hover:bg-stone-200 transition-colors cursor-pointer">Cancel</button>
                     <form method="post"
@@ -75,6 +88,22 @@ Usage: {% include "social_accounts/partials/_account_card.html" with account=acc
             </div>
         </div>
     </div>
+
+    {% comment %}
+    Meta drops permissions it has not approved, or that the user declined,
+    without failing the grant — so the connection reports healthy and only
+    breaks later, at publish or insights time, with an opaque platform error.
+    Naming them here turns that into something the user can act on.
+    {% endcomment %}
+    {% if account.missing_scopes %}
+    <div class="mt-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+        <p class="text-xs text-amber-800">
+            <span class="font-semibold">Some features are unavailable.</span>
+            This account was connected without {{ account.missing_scopes|join:", " }}.
+            Anything relying on them will fail until the permission is granted — reconnect to try again.
+        </p>
+    </div>
+    {% endif %}
 
     {% if account.last_error and account.connection_status == "error" %}
     <div class="mt-3 px-3 py-2 bg-red-50 rounded-lg">

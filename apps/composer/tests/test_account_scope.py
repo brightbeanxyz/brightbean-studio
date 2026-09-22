@@ -11,7 +11,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
-from apps.composer.models import PlatformPost, Post
+from apps.composer.models import PlatformPost, Post, PostMedia
+from apps.media_library.models import MediaAsset
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.publisher.models import PublishLog
@@ -264,6 +265,121 @@ class TikTokExtrasSyncTests(AccountScopeTestsBase):
         self.assertIn(response.status_code, (200, 204, 302))
         self.tt_pp.refresh_from_db()
         self.assertEqual(self.tt_pp.platform_extra, {"privacy_level": "SELF_ONLY"})
+
+
+class FacebookVideoSettingsTests(AccountScopeTestsBase):
+    def setUp(self):
+        super().setUp()
+        self.facebook = SocialAccount.objects.create(
+            workspace=self.workspace,
+            platform="facebook",
+            account_platform_id="fb-page-1",
+            account_name="Facebook Page",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        self.facebook_pp = PlatformPost.objects.create(
+            post=self.post,
+            social_account=self.facebook,
+            status=PlatformPost.Status.DRAFT,
+        )
+        self.video = MediaAsset.objects.create(
+            organization=self.org,
+            workspace=self.workspace,
+            uploaded_by=self.user,
+            file="test/facebook-reel.mp4",
+            filename="facebook-reel.mp4",
+            media_type=MediaAsset.MediaType.VIDEO,
+            mime_type="video/mp4",
+        )
+        PostMedia.objects.create(post=self.post, media_asset=self.video)
+
+    def _facebook_payload(self, post_type=None):
+        """A composer submit for the Facebook account.
+
+        The hidden ``facebook_panel_<id>`` marker is what the composer renders
+        for every selected Facebook account, video attached or not; the select
+        itself is only submitted when exactly one video is attached.
+        """
+        account_id = str(self.facebook.id)
+        fields = {f"facebook_panel_{account_id}": "1"}
+        if post_type is not None:
+            fields[f"facebook_post_type_{account_id}"] = post_type
+        return self._payload(
+            selected_accounts=account_id,
+            account_scope=account_id,
+            **fields,
+        )
+
+    def test_facebook_reel_choice_round_trips_into_platform_extra(self):
+        response = self.client.post(self.save_url, data=self._facebook_payload("reel"))
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.facebook_pp.refresh_from_db()
+        self.assertEqual(self.facebook_pp.platform_extra["post_type"], "reel")
+
+    def test_choosing_regular_video_clears_the_hint_rather_than_recording_it(self):
+        """A lone video already infers VIDEO, so the hint would only restate it.
+
+        Recording it could only go wrong: swap the attachment for an image
+        through the media endpoints and a stored "video" would still route the
+        image to Facebook's video endpoint.
+        """
+        self.facebook_pp.platform_extra = {"post_type": "reel", "audience": "public"}
+        self.facebook_pp.save(update_fields=["platform_extra"])
+
+        response = self.client.post(self.save_url, data=self._facebook_payload("video"))
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.facebook_pp.refresh_from_db()
+        self.assertEqual(self.facebook_pp.platform_extra, {"audience": "public"})
+
+    def test_facebook_reel_choice_is_cleared_when_video_is_removed(self):
+        self.facebook_pp.platform_extra = {"post_type": "reel", "audience": "public"}
+        self.facebook_pp.save(update_fields=["platform_extra"])
+        self.post.media_attachments.all().delete()
+
+        response = self.client.post(self.save_url, data=self._facebook_payload())
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.facebook_pp.refresh_from_db()
+        self.assertEqual(self.facebook_pp.platform_extra, {"audience": "public"})
+
+    def test_a_save_without_the_panel_leaves_the_choice_untouched(self):
+        """A save that never rendered the panel must not rewrite its extras.
+
+        Same guarantee the TikTok branch spells out: only the form that showed
+        the control may change what the control controls.
+        """
+        self.facebook_pp.platform_extra = {"post_type": "reel"}
+        self.facebook_pp.save(update_fields=["platform_extra"])
+        account_id = str(self.facebook.id)
+
+        response = self.client.post(
+            self.save_url,
+            data=self._payload(selected_accounts=account_id, account_scope=account_id),
+        )
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.facebook_pp.refresh_from_db()
+        self.assertEqual(self.facebook_pp.platform_extra, {"post_type": "reel"})
+
+    def test_facebook_reel_choice_is_rejected_for_multiple_attachments(self):
+        image = MediaAsset.objects.create(
+            organization=self.org,
+            workspace=self.workspace,
+            uploaded_by=self.user,
+            file="test/facebook-image.jpg",
+            filename="facebook-image.jpg",
+            media_type=MediaAsset.MediaType.IMAGE,
+            mime_type="image/jpeg",
+        )
+        PostMedia.objects.create(post=self.post, media_asset=image, position=1)
+
+        response = self.client.post(self.save_url, data=self._facebook_payload("reel"))
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.facebook_pp.refresh_from_db()
+        self.assertNotIn("post_type", self.facebook_pp.platform_extra)
 
 
 class PinterestBoardSelectionTests(AccountScopeTestsBase):

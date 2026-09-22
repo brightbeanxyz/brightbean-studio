@@ -70,6 +70,14 @@ class SocialAccount(models.Model):
     # a reconnect, and by the user pressing "Try again".
     webhook_retry_count = models.PositiveSmallIntegerField(default=0)
 
+    # Scopes we asked for that the grant came back without. Meta drops
+    # unapproved or declined permissions silently rather than failing the
+    # grant, so without this the account looks healthy and only breaks later at
+    # publish or insights time with an opaque platform error. Empty means
+    # "everything we asked for was granted", or that the platform gives us no
+    # way to ask.
+    missing_scopes = models.JSONField(default=list, blank=True)
+
     # Connection health
     connection_status = models.CharField(
         max_length=20,
@@ -94,6 +102,23 @@ class SocialAccount(models.Model):
     # place of the metric region. Cleared on successful reconnect.
     analytics_needs_reconnect = models.BooleanField(default=False)
 
+    # When the inbox last polled this account, and when it last walked the
+    # account's full history. Both belong here rather than being derived from
+    # InboxMessage.received_at, which answers a different question: an account
+    # that was polled and had nothing new to say leaves no message behind, so
+    # the derived value would say "never polled" and re-poll it every cycle.
+    #
+    # The poll stamp is what lets one 5-minute cycle serve platforms with very
+    # different budgets — see settings.INBOX_PLATFORM_MIN_POLL_SECONDS. The
+    # sweep stamp paces the deep walk that catches a reply on a thread too old
+    # for the routine poll's lookback (providers.youtube.get_messages).
+    inbox_last_polled_at = models.DateTimeField(blank=True, null=True)
+    inbox_last_deep_sweep_at = models.DateTimeField(blank=True, null=True)
+    inbox_initial_backfill_cursor = models.TextField(blank=True, default="")
+    inbox_initial_backfill_started_at = models.DateTimeField(blank=True, null=True)
+    inbox_deep_sweep_cursor = models.TextField(blank=True, default="")
+    inbox_deep_sweep_started_at = models.DateTimeField(blank=True, null=True)
+
     objects = WorkspaceScopedManager()
 
     class Meta:
@@ -113,16 +138,31 @@ class SocialAccount(models.Model):
         """
         return self.account_name or self.account_handle
 
+    def token_expires_within(self, window) -> bool:
+        """Whether the recorded expiry falls inside ``window`` from now.
+
+        An unknown expiry (``token_expires_at is None``) answers False: we
+        cannot judge it, and the platforms where "unknown" should mean "refresh
+        anyway" are named explicitly in ``tasks.EXPIRY_BOOTSTRAP_PLATFORMS``.
+
+        The window is a caller's decision because it means different things at
+        different cadences. A user-triggered publish can afford the generous
+        7-day view. An hourly background loop cannot: a Google access token
+        lives one hour, so *any* window wider than that is permanently true and
+        would spend a refresh call every hour on every account for nothing.
+        """
+        if not self.token_expires_at:
+            return False
+        from django.utils import timezone
+
+        return self.token_expires_at < timezone.now() + window
+
     @property
     def is_token_expiring_soon(self) -> bool:
         """Token expires within 7 days."""
-        if not self.token_expires_at:
-            return False
         from datetime import timedelta
 
-        from django.utils import timezone
-
-        return self.token_expires_at < timezone.now() + timedelta(days=7)
+        return self.token_expires_within(timedelta(days=7))
 
     @property
     def needs_reconnect(self) -> bool:
@@ -131,12 +171,17 @@ class SocialAccount(models.Model):
             self.ConnectionStatus.ERROR,
         )
 
-    def refresh_oauth_token(self, provider) -> str:
+    def refresh_oauth_token(self, provider, *, enqueue_backfill: bool = True) -> str:
         """Refresh this account's OAuth access token via *provider* and persist it.
 
         Returns the new access token. Propagates whatever the provider's
         ``refresh_token`` raises so callers decide between degrading (publish
         engine keeps the old token) and aborting (composer endpoints 502).
+
+        ``enqueue_backfill=False`` is for scheduled analytics refreshes. The
+        token rotation itself is enough for that sync pass; queueing the
+        ``oauth_access_token`` post-save signal as well would start a duplicate
+        full backfill every time an hourly run refreshes a near-expiry token.
         """
         from datetime import timedelta
 
@@ -149,15 +194,25 @@ class SocialAccount(models.Model):
         if new_tokens.expires_in:
             self.token_expires_at = timezone.now() + timedelta(seconds=new_tokens.expires_in)
         self.connection_status = self.ConnectionStatus.CONNECTED
-        self.save(
-            update_fields=[
-                "oauth_access_token",
-                "oauth_refresh_token",
-                "token_expires_at",
-                "connection_status",
-                "updated_at",
-            ]
-        )
+        update_fields = [
+            "oauth_access_token",
+            "oauth_refresh_token",
+            "token_expires_at",
+            "connection_status",
+            "updated_at",
+        ]
+        if enqueue_backfill:
+            self.save(update_fields=update_fields)
+        else:
+            # post_save signals do not receive caller-local keyword arguments.
+            # A short-lived instance flag keeps the token in the normal
+            # update_fields path while telling analytics.signals that this save
+            # is already part of the analytics pass.
+            self._skip_analytics_backfill = True
+            try:
+                self.save(update_fields=update_fields)
+            finally:
+                del self._skip_analytics_backfill
         return new_tokens.access_token
 
     # Platform character limits
@@ -246,6 +301,21 @@ class SocialAccount(models.Model):
     def field_config(self) -> dict:
         """Return field configuration for this platform."""
         return {**self.PLATFORM_FIELD_DEFAULTS, **self.PLATFORM_FIELD_CONFIG.get(self.platform, {})}
+
+    @property
+    def keeps_platform_grant_on_disconnect(self) -> bool:
+        """True when disconnecting here cannot revoke the platform's grant.
+
+        The Facebook-Page flows share one grant across every Page and Instagram
+        account that person connected, so the only endpoint that would revoke
+        it takes all of them down at once — see
+        ``FacebookProvider.revoke_token``. Instagram Login is excluded: its
+        token belongs to the one account, so disconnect does revoke it.
+        """
+        return self.platform in {
+            PlatformCredential.Platform.FACEBOOK,
+            PlatformCredential.Platform.INSTAGRAM,
+        }
 
     def supports_first_comment(self) -> bool:
         """Whether this account can have a first comment posted by the worker.

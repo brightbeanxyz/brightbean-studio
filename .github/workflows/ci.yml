@@ -110,6 +110,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Catches a model change whose migration was never generated. The
+      # companion hazard — a migration that is fine against an empty table but
+      # fails on one with rows — is covered by tests that apply migrations over
+      # seeded data (see apps/inbox/tests/test_reply_lifecycle_migrations.py).
+      - name: makemigrations --check
+        run: python manage.py makemigrations --check --dry-run
+
       - name: pytest
         run: pytest --cov=apps --cov-report=term-missing
 

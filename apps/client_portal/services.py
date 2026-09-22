@@ -11,6 +11,7 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.utils import timezone
 
+from apps.common.mail import send_or_raise, transactional
 from apps.members.models import WorkspaceMembership
 
 from .models import MagicLinkToken
@@ -28,6 +29,11 @@ def generate_magic_link(workspace, client_user, created_by):
 
     Returns:
         The created MagicLinkToken.
+
+    Raises:
+        ValueError: If the user is not a client of this workspace, or the email
+            could not be sent — in which case no new token is left behind and
+            any existing link keeps working.
     """
     # Validate client has client role in workspace
     membership = WorkspaceMembership.objects.filter(
@@ -39,13 +45,20 @@ def generate_magic_link(workspace, client_user, created_by):
     if not membership:
         raise ValueError("User does not have client role in this workspace.")
 
-    # Invalidate any existing non-expired tokens for this user+workspace
-    MagicLinkToken.objects.filter(
-        user=client_user,
-        workspace=workspace,
-        is_consumed=False,
-        expires_at__gt=timezone.now(),
-    ).update(expires_at=timezone.now())
+    # The previously issued tokens are NOT invalidated yet. They used to be
+    # revoked here, before the new link was sent, which meant a send that did
+    # not happen — a refused address, the outbound budget, a broken mail
+    # server — left the client with no way in at all while the manager was told
+    # the link had gone out. The old links are revoked further down, once the
+    # replacement is known to have left.
+    superseded = list(
+        MagicLinkToken.objects.filter(
+            user=client_user,
+            workspace=workspace,
+            is_consumed=False,
+            expires_at__gt=timezone.now(),
+        ).values_list("pk", flat=True)
+    )
 
     # Create new token
     token = MagicLinkToken.objects.create(
@@ -75,13 +88,24 @@ def generate_magic_link(workspace, client_user, created_by):
         body=text_content,
         from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@localhost"),
         to=[client_user.email],
+        # A login link a manager just asked us to send: the recipient is waiting
+        # for it, so the per-recipient notification cap must not eat it.
+        headers=transactional(),
     )
     msg.attach_alternative(html_content, "text/html")
 
     try:
-        msg.send(fail_silently=False)
-    except Exception:
+        send_or_raise(msg)
+    except Exception as exc:
         logger.exception("Failed to send magic link email to %s", client_user.email)
+        # Roll the new token back so we do not leave a link nobody was told
+        # about, and leave the client's existing one working.
+        MagicLinkToken.objects.filter(pk=token.pk).delete()
+        raise ValueError("We could not send that link right now. Please try again shortly.") from exc
+
+    # The replacement is on its way, so the old links can go.
+    if superseded:
+        MagicLinkToken.objects.filter(pk__in=superseded).update(expires_at=timezone.now())
 
     return token
 

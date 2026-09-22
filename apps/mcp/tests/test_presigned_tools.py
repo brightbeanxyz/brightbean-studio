@@ -48,6 +48,7 @@ def _text(body):
 def s3_seam(monkeypatch):
     """Make the presigned tools behave as if S3/R2 storage is configured."""
     monkeypatch.setattr(ml_storage, "is_s3_backend", lambda: True)
+    monkeypatch.setattr(ml_storage, "supports_presigned_post", lambda: True)
     monkeypatch.setattr(
         ml_storage,
         "presign_upload",
@@ -92,11 +93,21 @@ class TestRequestMediaUpload:
         assert pending.finalized_at is None
 
     def test_disabled_on_local_storage(self):
-        # No s3_seam fixture → is_s3_backend() is the real (local) value.
+        # No s3_seam fixture → supports_presigned_post() is the real (local) value.
         user, _ws, _sa = _make_user_with_workspace("req-local@example.com", OWNER)
         _status, body = _call(_client(user), "request_media_upload", {"filename": "clip.mp4", "media_type": "video"})
         assert body["error"]["code"] == INVALID_PARAMS
-        assert "local mode" in body["error"]["message"].lower()
+        assert "presigned upload is not available" in body["error"]["message"].lower()
+
+    def test_disabled_when_the_bucket_has_no_presigned_post(self, monkeypatch):
+        """R2 answers presigned POST with 501, so refuse rather than hand one out."""
+        monkeypatch.setattr(ml_storage, "is_s3_backend", lambda: True)
+        monkeypatch.setattr(ml_storage, "supports_presigned_post", lambda: False)
+        user, _ws, _sa = _make_user_with_workspace("req-nopost@example.com", OWNER)
+
+        _status, body = _call(_client(user), "request_media_upload", {"filename": "clip.mp4", "media_type": "video"})
+
+        assert body["error"]["code"] == INVALID_PARAMS
 
     def test_rejects_disallowed_content_type(self, s3_seam):
         # content_type is pinned into the POST policy and becomes the stored

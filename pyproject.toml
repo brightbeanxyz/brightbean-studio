@@ -28,6 +28,7 @@ ignore = [
 # doesn't apply.
 "apps/api/routers/media.py" = ["B008"]
 "apps/api/routers/analytics.py" = ["B008"]
+"apps/api/routers/inbox.py" = ["B008"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["apps", "config"]

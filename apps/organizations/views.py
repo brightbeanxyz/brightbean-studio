@@ -11,6 +11,7 @@ from django.shortcuts import redirect, render
 from django.utils import timezone as django_tz
 from django.views.decorators.http import require_http_methods
 
+from apps.common.validators import clean_display_name
 from apps.composer.models import PlatformPost, Post, Tag
 from apps.members.decorators import require_org_role
 from apps.members.models import OrgMembership, WorkspaceMembership
@@ -114,8 +115,14 @@ def workspaces_view(request):
 
 
 def _handle_name_update(request, org):
-    """Handle organization name change."""
-    name = request.POST.get("name", "").strip()
+    """Handle organization name change.
+
+    The name is interpolated into the Subject of every invitation this org
+    sends ("You've been invited to join <name> on Brightbean"), so it is
+    cleaned here rather than trusted: control characters out, whitespace
+    collapsed, length bounded.
+    """
+    name = clean_display_name(request.POST.get("name", ""))
     if not name:
         messages.error(request, "Organization name cannot be empty.")
         return

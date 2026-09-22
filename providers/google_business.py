@@ -41,6 +41,11 @@ class GoogleBusinessProvider(SocialProvider):
     - ``location_id`` – Google Business location ID
     """
 
+    # Publishes from hosted URLs only — the platform fetches the media
+    # itself, so ``PublishContent.media_files`` is never read and the engine
+    # can skip downloading the asset to local disk entirely.
+    needs_local_media = False
+
     # ------------------------------------------------------------------
     # Metadata
     # ------------------------------------------------------------------
