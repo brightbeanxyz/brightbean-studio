@@ -186,7 +186,9 @@ def _metodo3r_media_type(path: Path, mime_type: str) -> str:
     return MediaAsset.MediaType.DOCUMENT
 
 
-def _import_metodo3r_media_asset(request: HttpRequest, source_path: str, duration_seconds: int | None) -> MediaAsset | None:
+def _import_metodo3r_media_asset(
+    request: HttpRequest, source_path: str, duration_seconds: int | None
+) -> MediaAsset | None:
     file_path = _resolve_metodo3r_media_path(source_path)
     if file_path is None:
         return None
@@ -211,12 +213,20 @@ def _import_metodo3r_media_asset(request: HttpRequest, source_path: str, duratio
     return asset
 
 
-def _attach_metodo3r_media(request: HttpRequest, post: Post, payload: Metodo3RImportRequest) -> list[MediaAsset]:
-    assets: list[MediaAsset] = []
-    for source_path in [payload.item.video, payload.item.selected_image, *payload.item.alternate_images]:
-        asset = _import_metodo3r_media_asset(request, source_path, payload.item.duration_seconds)
-        if asset is not None:
-            assets.append(asset)
+def _attach_metodo3r_media(
+    request: HttpRequest, post: Post, payload: Metodo3RImportRequest
+) -> tuple[list[MediaAsset], MediaAsset | None]:
+    video_asset = _import_metodo3r_media_asset(request, payload.item.video, payload.item.duration_seconds)
+    cover_asset = None
+    if video_asset is not None and video_asset.media_type == MediaAsset.MediaType.VIDEO:
+        cover_asset = _import_metodo3r_media_asset(request, payload.item.selected_image, None)
+        assets = [video_asset]
+    else:
+        assets = []
+        for source_path in [payload.item.selected_image, *payload.item.alternate_images]:
+            asset = _import_metodo3r_media_asset(request, source_path, payload.item.duration_seconds)
+            if asset is not None:
+                assets.append(asset)
 
     for position, asset in enumerate(assets):
         PostMedia.objects.get_or_create(
@@ -224,7 +234,7 @@ def _attach_metodo3r_media(request: HttpRequest, post: Post, payload: Metodo3RIm
             media_asset=asset,
             defaults={"position": position},
         )
-    return assets
+    return assets, cover_asset
 
 
 def _get_workspace_post(request: HttpRequest, post_id: uuid.UUID) -> Post:
@@ -317,26 +327,35 @@ def import_metodo3r(request, payload: Metodo3RImportRequest):
                 scheduled_at=payload.schedule.scheduled_at if should_schedule else None,
                 proposed_publish_at=None if should_schedule else payload.schedule.scheduled_at,
             )
-            media_assets = _attach_metodo3r_media(request, post, payload)
+            media_assets, cover_asset = _attach_metodo3r_media(request, post, payload)
             for social_account in social_accounts:
+                platform_extra = {
+                    "source": "metodo3r",
+                    "source_project": payload.project,
+                    "source_item_id": payload.item.id,
+                    "source_item_type": payload.item.type,
+                    "video_path": payload.item.video,
+                    "selected_image_path": payload.item.selected_image,
+                    "alternate_image_paths": payload.item.alternate_images,
+                    "media_asset_ids": [str(asset.id) for asset in media_assets],
+                    "duration_seconds": payload.item.duration_seconds,
+                    "timezone": payload.schedule.timezone,
+                    "requested_platforms": payload.schedule.platforms,
+                }
+                if cover_asset is not None:
+                    platform_extra["cover_image_asset_id"] = str(cover_asset.id)
+                if (
+                    media_assets
+                    and media_assets[0].media_type == MediaAsset.MediaType.VIDEO
+                    and social_account.platform in {"instagram", "instagram_login"}
+                ):
+                    platform_extra["post_type"] = "reel"
                 PlatformPost.objects.create(
                     post=post,
                     social_account=social_account,
                     status=PlatformPost.Status.SCHEDULED if should_schedule else PlatformPost.Status.DRAFT,
                     scheduled_at=payload.schedule.scheduled_at if should_schedule else None,
-                    platform_extra={
-                        "source": "metodo3r",
-                        "source_project": payload.project,
-                        "source_item_id": payload.item.id,
-                        "source_item_type": payload.item.type,
-                        "video_path": payload.item.video,
-                        "selected_image_path": payload.item.selected_image,
-                        "alternate_image_paths": payload.item.alternate_images,
-                        "media_asset_ids": [str(asset.id) for asset in media_assets],
-                        "duration_seconds": payload.item.duration_seconds,
-                        "timezone": payload.schedule.timezone,
-                        "requested_platforms": payload.schedule.platforms,
-                    },
+                    platform_extra=platform_extra,
                 )
 
         body = Metodo3RImportResponse(

@@ -167,7 +167,9 @@ class TestMetodo3RImport:
         assert Post.objects.count() == 1
         assert PlatformPost.objects.count() == 1
 
-    def test_import_attaches_local_media_when_import_root_is_configured(self, client_with_token, settings, social_account):
+    def test_import_attaches_local_media_when_import_root_is_configured(
+        self, client_with_token, settings, social_account
+    ):
         social_account.platform = "instagram"
         social_account.save(update_fields=["platform"])
         import_root = django_settings.BASE_DIR / ".tmp_metodo3r_import_test"
@@ -193,18 +195,15 @@ class TestMetodo3RImport:
             assert response.status_code == 201, response.content
             post = Post.objects.get()
             attachments = list(PostMedia.objects.filter(post=post).select_related("media_asset").order_by("position"))
-            assert [attachment.media_asset.filename for attachment in attachments] == [
-                "launch-d01-v02.mp4",
-                "launch-d01-v02.jpg",
-            ]
+            assert [attachment.media_asset.filename for attachment in attachments] == ["launch-d01-v02.mp4"]
             assert attachments[0].media_asset.media_type == MediaAsset.MediaType.VIDEO
             assert attachments[0].media_asset.duration == 27
-            assert attachments[1].media_asset.media_type == MediaAsset.MediaType.IMAGE
             platform_post = PlatformPost.objects.get(post=post)
-            assert platform_post.platform_extra["media_asset_ids"] == [
-                str(attachments[0].media_asset_id),
-                str(attachments[1].media_asset_id),
-            ]
+            assert platform_post.platform_extra["media_asset_ids"] == [str(attachments[0].media_asset_id)]
+            assert platform_post.platform_extra["post_type"] == "reel"
+            cover_asset = MediaAsset.objects.get(id=platform_post.platform_extra["cover_image_asset_id"])
+            assert cover_asset.media_type == MediaAsset.MediaType.IMAGE
+            assert not post.media_attachments.filter(media_asset=cover_asset).exists()
         finally:
             shutil.rmtree(import_root, ignore_errors=True)
 

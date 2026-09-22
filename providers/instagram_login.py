@@ -312,6 +312,8 @@ class InstagramLoginProvider(SocialProvider):
         if content.post_type == PostType.REEL:
             payload["media_type"] = "REELS"
             payload["video_url"] = content.media_urls[0]
+            if content.extra.get("cover_image_url"):
+                payload["cover_url"] = content.extra["cover_image_url"]
         elif content.post_type == PostType.STORY:
             url = content.media_urls[0]
             payload["media_type"] = "STORIES"

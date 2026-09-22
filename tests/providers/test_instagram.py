@@ -8,6 +8,7 @@ from providers.exceptions import APIError
 from providers.instagram import InstagramProvider
 from providers.instagram_login import InstagramLoginProvider
 from providers.meta_comments import INSTAGRAM_COMMENT_FIELD_SETS
+from providers.types import PostType, PublishContent
 
 
 def _resp(data):
@@ -933,3 +934,29 @@ def test_comment_poll_keeps_the_author_when_only_replies_are_rejected(make_provi
     sent = provider._request.call_args_list[1].kwargs["params"]["fields"]
     assert "from{" in sent
     assert "replies" not in sent
+
+
+def test_instagram_login_reel_uses_cover_image_url():
+    provider = InstagramLoginProvider(IG_LOGIN_CREDS)
+    provider._create_container = MagicMock(return_value="container-1")
+    provider._wait_for_container = MagicMock()
+    provider._publish_container = MagicMock(return_value=MagicMock())
+    cover_url = "https://media.example.test/signed-cover.jpg"
+
+    provider.publish_post(
+        "token",
+        PublishContent(
+            media_urls=["https://media.example.test/signed-video.mp4"],
+            post_type=PostType.REEL,
+            extra={"cover_image_url": cover_url},
+        ),
+    )
+
+    provider._create_container.assert_called_once_with(
+        "token",
+        {
+            "media_type": "REELS",
+            "video_url": "https://media.example.test/signed-video.mp4",
+            "cover_url": cover_url,
+        },
+    )
