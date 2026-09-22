@@ -18,8 +18,12 @@ defence against spending DB cycles for unauthorized callers.
 
 from __future__ import annotations
 
+import mimetypes
 import uuid
+from pathlib import Path
 
+from django.conf import settings
+from django.core.files import File
 from django.http import HttpRequest
 from django.shortcuts import get_object_or_404
 from ninja import Router
@@ -35,19 +39,32 @@ from apps.api.middleware import (
 )
 from apps.api.schemas import (
     CreatePostRequest,
+    Metodo3RImportRequest,
+    Metodo3RImportResponse,
     PostResponse,
     ScheduleRequest,
     UpdatePostRequest,
 )
-from apps.composer.models import Post
+from apps.composer.models import PlatformPost, Post, PostMedia
 from apps.composer.services import (
     create_post,
     sync_post_scheduled_at,
     transition_platform_post,
 )
+from apps.media_library.models import MediaAsset
 from apps.social_accounts.models import SocialAccount
 
 router = Router(tags=["posts"])
+
+
+_METODO3R_PLATFORM_ALIASES = {
+    "instagram": ("instagram", "instagram_login"),
+    "youtube_shorts": ("youtube",),
+    "youtube": ("youtube",),
+    "facebook": ("facebook",),
+    "tiktok": ("tiktok",),
+    "linkedin": ("linkedin_company", "linkedin_personal"),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +117,126 @@ def _post_to_response(request: HttpRequest, post: Post) -> PostResponse:
     return PostResponse.from_post(post, include_internal_notes=_can_view_internal_notes(request))
 
 
+def _metodo3r_platform_candidates(platform: str) -> tuple[str, ...]:
+    return _METODO3R_PLATFORM_ALIASES.get(platform, (platform,))
+
+
+def _resolve_metodo3r_accounts(request: HttpRequest, platforms: list[str]) -> list[SocialAccount]:
+    api_key = request.api_key  # type: ignore[attr-defined]
+    allowlisted = list(api_key.social_accounts.select_related("workspace").all())
+    resolved: list[SocialAccount] = []
+    seen_ids: set[uuid.UUID] = set()
+    missing: list[str] = []
+    for platform in platforms:
+        candidates = _metodo3r_platform_candidates(platform)
+        account = next(
+            (
+                social_account
+                for social_account in allowlisted
+                if social_account.workspace_id == api_key.workspace_id and social_account.platform in candidates
+            ),
+            None,
+        )
+        if account is None:
+            missing.append(platform)
+            continue
+        if account.id not in seen_ids:
+            resolved.append(account)
+            seen_ids.add(account.id)
+    if missing:
+        raise HttpError(422, f"No allowlisted SocialAccount found for platform(s): {', '.join(missing)}.")
+    return resolved
+
+
+def _metodo3r_import_root() -> Path | None:
+    root = getattr(settings, "METODO3R_IMPORT_ROOT", "") or ""
+    if not root:
+        return None
+    try:
+        return Path(root).expanduser().resolve()
+    except OSError:
+        return None
+
+
+def _resolve_metodo3r_media_path(path: str) -> Path | None:
+    root = _metodo3r_import_root()
+    if root is None or not path or "://" in path:
+        return None
+    raw_path = Path(path)
+    if raw_path.is_absolute():
+        return None
+    try:
+        candidate = (root / raw_path).resolve()
+        candidate.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
+def _metodo3r_media_type(path: Path, mime_type: str) -> str:
+    suffix = path.suffix.lower()
+    if mime_type.startswith("image/gif") or suffix == ".gif":
+        return MediaAsset.MediaType.GIF
+    if mime_type.startswith("image/"):
+        return MediaAsset.MediaType.IMAGE
+    if mime_type.startswith("video/"):
+        return MediaAsset.MediaType.VIDEO
+    return MediaAsset.MediaType.DOCUMENT
+
+
+def _import_metodo3r_media_asset(
+    request: HttpRequest, source_path: str, duration_seconds: int | None
+) -> MediaAsset | None:
+    file_path = _resolve_metodo3r_media_path(source_path)
+    if file_path is None:
+        return None
+
+    mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    media_type = _metodo3r_media_type(file_path, mime_type)
+    asset = MediaAsset(
+        organization=request.api_key.workspace.organization,  # type: ignore[attr-defined]
+        workspace=request.api_key.workspace,  # type: ignore[attr-defined]
+        uploaded_by=request.user if not request.user.is_anonymous else None,
+        filename=file_path.name,
+        media_type=media_type,
+        mime_type=mime_type,
+        file_size=file_path.stat().st_size,
+        duration=duration_seconds if media_type == MediaAsset.MediaType.VIDEO and duration_seconds else 0,
+        source="metodo3r",
+        source_url=source_path,
+        processing_status=MediaAsset.ProcessingStatus.COMPLETED,
+    )
+    with file_path.open("rb") as handle:
+        asset.file.save(file_path.name, File(handle), save=True)
+    return asset
+
+
+def _attach_metodo3r_media(
+    request: HttpRequest, post: Post, payload: Metodo3RImportRequest
+) -> tuple[list[MediaAsset], MediaAsset | None]:
+    video_asset = _import_metodo3r_media_asset(request, payload.item.video, payload.item.duration_seconds)
+    cover_asset = None
+    if video_asset is not None and video_asset.media_type == MediaAsset.MediaType.VIDEO:
+        cover_asset = _import_metodo3r_media_asset(request, payload.item.selected_image, None)
+        assets = [video_asset]
+    else:
+        assets = []
+        for source_path in [payload.item.selected_image, *payload.item.alternate_images]:
+            asset = _import_metodo3r_media_asset(request, source_path, payload.item.duration_seconds)
+            if asset is not None:
+                assets.append(asset)
+
+    for position, asset in enumerate(assets):
+        PostMedia.objects.get_or_create(
+            post=post,
+            media_asset=asset,
+            defaults={"position": position},
+        )
+    return assets, cover_asset
+
+
 def _get_workspace_post(request: HttpRequest, post_id: uuid.UUID) -> Post:
     """Fetch a Post that belongs to the key's workspace **and** whose every
     ``PlatformPost`` child targets a ``SocialAccount`` in the key's
@@ -137,6 +274,110 @@ def _get_workspace_post(request: HttpRequest, post_id: uuid.UUID) -> Post:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/imports/metodo3r/",
+    response={201: Metodo3RImportResponse, 200: Metodo3RImportResponse},
+    summary="Import a Metodo 3R publication package",
+)
+def import_metodo3r(request, payload: Metodo3RImportRequest):
+    """Bridge Metodo 3R's publication outbox into the editorial composer."""
+    enforce_http_rate_limits(request, is_write=True)
+    _require_perm(request, "create_posts")
+
+    social_accounts = _resolve_metodo3r_accounts(request, payload.schedule.platforms)
+    idempotency_key = payload.idempotency_key or request.headers.get("Idempotency-Key") or None
+    fingerprint = fingerprint_request(request.method or "POST", request.path, payload.dict(by_alias=True))
+    try:
+        disposition, replay_status, replay_body = claim_idempotency_slot(
+            api_key=request.api_key,
+            idempotency_key=idempotency_key,
+            fingerprint=fingerprint,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    if disposition == "replay":
+        return replay_status, replay_body
+    if disposition == "in_flight":
+        raise HttpError(409, "An identical Metodo 3R import is still in flight; retry shortly.")
+
+    from django.db import transaction
+
+    should_schedule = payload.human_gate != "required_before_publish"
+    if should_schedule:
+        _require_perm(request, "publish_directly")
+        for social_account in social_accounts:
+            check_platform_quota(social_account)
+
+    try:
+        with transaction.atomic():
+            post = Post.objects.create(
+                workspace=request.api_key.workspace,
+                author=request.user if not request.user.is_anonymous else None,
+                origin=Post.Origin.IMPORT,
+                title=payload.item.title,
+                caption=payload.schedule.caption,
+                internal_notes=(
+                    f"Imported from Metodo 3R item {payload.item.id}. "
+                    f"Presenter: {payload.presenter}. Video: {payload.item.video}. "
+                    f"Selected image: {payload.item.selected_image}."
+                ),
+                tags=["metodo3r", payload.project, payload.item.type, payload.item.id],
+                scheduled_at=payload.schedule.scheduled_at if should_schedule else None,
+                proposed_publish_at=None if should_schedule else payload.schedule.scheduled_at,
+            )
+            media_assets, cover_asset = _attach_metodo3r_media(request, post, payload)
+            for social_account in social_accounts:
+                platform_extra = {
+                    "source": "metodo3r",
+                    "source_project": payload.project,
+                    "source_item_id": payload.item.id,
+                    "source_item_type": payload.item.type,
+                    "video_path": payload.item.video,
+                    "selected_image_path": payload.item.selected_image,
+                    "alternate_image_paths": payload.item.alternate_images,
+                    "media_asset_ids": [str(asset.id) for asset in media_assets],
+                    "duration_seconds": payload.item.duration_seconds,
+                    "timezone": payload.schedule.timezone,
+                    "requested_platforms": payload.schedule.platforms,
+                }
+                if cover_asset is not None:
+                    platform_extra["cover_image_asset_id"] = str(cover_asset.id)
+                if (
+                    media_assets
+                    and media_assets[0].media_type == MediaAsset.MediaType.VIDEO
+                    and social_account.platform in {"instagram", "instagram_login"}
+                ):
+                    platform_extra["post_type"] = "reel"
+                PlatformPost.objects.create(
+                    post=post,
+                    social_account=social_account,
+                    status=PlatformPost.Status.SCHEDULED if should_schedule else PlatformPost.Status.DRAFT,
+                    scheduled_at=payload.schedule.scheduled_at if should_schedule else None,
+                    platform_extra=platform_extra,
+                )
+
+        body = Metodo3RImportResponse(
+            id=str(post.id),
+            post_id=post.id,
+            status="scheduled" if should_schedule else "draft",
+            imported_platforms=[account.platform for account in social_accounts],
+            proposed_publish_at=post.proposed_publish_at,
+            scheduled_at=post.scheduled_at,
+            status_url=f"/api/v1/posts/{post.id}",
+        )
+        log_audit_entry(request, action="post.import.metodo3r", target_id=post.id, status_code=201)
+        finalize_idempotent_response(
+            api_key=request.api_key,
+            idempotency_key=idempotency_key,
+            status_code=201,
+            body=body.model_dump(mode="json"),
+        )
+    except Exception:
+        release_idempotent_claim(api_key=request.api_key, idempotency_key=idempotency_key)
+        raise
+    return 201, body
 
 
 @router.post("/", response={201: PostResponse, 200: PostResponse}, summary="Create a draft or scheduled post")

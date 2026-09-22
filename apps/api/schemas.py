@@ -16,7 +16,7 @@ import uuid
 from typing import TYPE_CHECKING, Literal
 
 from ninja import Field, Schema
-from pydantic import field_serializer
+from pydantic import ConfigDict, field_serializer
 
 if TYPE_CHECKING:
     from apps.analytics.derive import DerivedMetric
@@ -244,6 +244,51 @@ class UpdatePostRequest(Schema):
 
 class ScheduleRequest(Schema):
     scheduled_at: dt.datetime = Field(..., description="UTC timestamp at which the publisher should fire the post.")
+
+
+class Metodo3RPublicationItem(Schema):
+    id: str = Field(..., max_length=160)
+    type: str = Field(..., max_length=40)
+    title: str = Field(..., max_length=255)
+    video: str = Field(..., max_length=500)
+    selected_image: str = Field(..., alias="selectedImage", max_length=500)
+    alternate_images: list[str] = Field(default_factory=list, alias="alternateImages")
+    qa_notes: list[str] = Field(default_factory=list, alias="qaNotes")
+    duration_seconds: int | None = Field(None, alias="durationSeconds")
+
+
+class Metodo3RSchedule(Schema):
+    platforms: list[str]
+    scheduled_at: dt.datetime = Field(..., alias="scheduledAt")
+    timezone: str = Field(..., max_length=80)
+    caption: str = Field(..., max_length=10_000)
+
+
+class Metodo3RImportRequest(Schema):
+    project: str = Field(..., max_length=160)
+    brand: str = Field(..., max_length=160)
+    presenter: str = Field("", max_length=160)
+    language: str = Field("pt-BR", max_length=20)
+    human_gate: str = Field("required_before_publish", alias="humanGate", max_length=80)
+    item: Metodo3RPublicationItem
+    schedule: Metodo3RSchedule
+    idempotency_key: str | None = Field(None, alias="idempotencyKey", max_length=128)
+
+
+class Metodo3RImportResponse(Schema):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    post_id: uuid.UUID
+    status: str
+    imported_platforms: list[str]
+    proposed_publish_at: dt.datetime | None
+    scheduled_at: dt.datetime | None
+    status_url: str = Field(..., alias="statusUrl")
+
+    @field_serializer("proposed_publish_at", "scheduled_at")
+    def _serialize_dt(self, value: dt.datetime | None) -> str | None:
+        return _serialize_utc_z(value)
 
 
 # ---------------------------------------------------------------------------

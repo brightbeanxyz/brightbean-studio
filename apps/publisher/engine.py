@@ -798,9 +798,11 @@ class PublishEngine:
                 except MediaAsset.DoesNotExist:
                     logger.warning("Thumbnail asset %s not found", thumb_asset_id)
 
-            # Resolve cover_image_asset_id → temp file (Pinterest video pins)
+            # Resolve cover_image_asset_id → temp file and public URL (Pinterest/Instagram video).
             cover_asset_id = extra.pop("cover_image_asset_id", None)
             if cover_asset_id:
+                from apps.media_library.models import MediaAsset
+
                 try:
                     cover_asset = MediaAsset.objects.get(id=cover_asset_id)
                     if cover_asset.file:
@@ -810,6 +812,10 @@ class PublishEngine:
                         temp_files.append(tmp.name)
                         download_to_path(cover_asset.file, tmp.name)
                         extra["cover_image_file"] = tmp.name
+                        cover_url = cover_asset.file.url
+                        if cover_url.startswith("/"):
+                            cover_url = f"{app_url}{cover_url}"
+                        extra["cover_image_url"] = cover_url
                 except MediaAsset.DoesNotExist:
                     logger.warning("Cover image asset %s not found", cover_asset_id)
 

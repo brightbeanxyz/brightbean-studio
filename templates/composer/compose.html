@@ -318,6 +318,7 @@
               data-no-error-toast
               class="flex flex-col flex-1 min-h-0">
             <input type="hidden" name="selected_accounts" :value="selectedAccounts.join(',')">
+            {% if initial_origin %}<input type="hidden" name="origin" value="{{ initial_origin }}">{% endif %}
             {% if account_scope %}
             <!-- Composer opened scoped to one account (?account=) — save endpoints
                  must not delete/transition platform posts outside this scope. -->

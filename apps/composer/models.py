@@ -226,6 +226,13 @@ class Post(models.Model):
     rendering and backwards compatibility with existing templates.
     """
 
+    class Origin(models.TextChoices):
+        MANUAL = "manual", "Manual"
+        AI = "ai", "AI generated"
+        IMPORT = "import", "Imported"
+        TEMPLATE = "template", "Template"
+        PLAN = "plan", "Editorial plan"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace = models.ForeignKey(
         "workspaces.Workspace",
@@ -239,6 +246,15 @@ class Post(models.Model):
         blank=True,
         related_name="authored_posts",
     )
+
+    origin = models.CharField(max_length=12, choices=Origin.choices, default=Origin.MANUAL, db_index=True)
+    brand = models.ForeignKey(
+        "brands.BrandProfile", on_delete=models.SET_NULL, null=True, blank=True, related_name="posts"
+    )
+    campaign = models.ForeignKey(
+        "content_intelligence.Campaign", on_delete=models.SET_NULL, null=True, blank=True, related_name="posts"
+    )
+    archived_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     # Content
     title = models.CharField(max_length=255, blank=True, default="")
@@ -273,6 +289,7 @@ class Post(models.Model):
     class Meta:
         db_table = "composer_post"
         ordering = ["-created_at"]
+        indexes = [models.Index(fields=["workspace", "origin", "archived_at"], name="composer_post_library_idx")]
 
     def __str__(self):
         snippet = (self.caption[:50] + "...") if len(self.caption) > 50 else self.caption

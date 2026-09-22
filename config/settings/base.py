@@ -13,6 +13,7 @@ env = environ.Env(
     EMAIL_BACKEND_TYPE=(str, "smtp"),
     SENTRY_DSN=(str, ""),
     REDIS_URL=(str, ""),
+    METODO3R_IMPORT_ROOT=(str, ""),
 )
 
 environ.Env.read_env(BASE_DIR / ".env", overwrite=False)
@@ -21,6 +22,7 @@ SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
 ALLOWED_HOSTS = env("ALLOWED_HOSTS")
 APP_URL = env("APP_URL")
+METODO3R_IMPORT_ROOT = env("METODO3R_IMPORT_ROOT")
 
 # Application definition
 
@@ -54,6 +56,8 @@ LOCAL_APPS = [
     "apps.organizations",
     "apps.workspaces",
     "apps.members",
+    "apps.brands",
+    "apps.content_intelligence",
     "apps.settings_manager",
     "apps.credentials",
     "apps.social_accounts",
@@ -696,3 +700,11 @@ if INTELLIGENCE_ENABLED:
                 f"localhost / 127.0.0.1 dev tunnels) — current value would "
                 f"leak Intelligence API keys in transit."
             )
+AI_PROVIDER = env("AI_PROVIDER", default="")
+AI_MODEL = env("AI_MODEL", default="")
+OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
+ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
+GEMINI_API_KEY = env("GEMINI_API_KEY", default="")
+OPENROUTER_API_KEY = env("OPENROUTER_API_KEY", default="")
+AGNES_API_KEY = env("AGNES_API_KEY", default="")
+OLLAMA_BASE_URL = env("OLLAMA_BASE_URL", default="http://localhost:11434")
