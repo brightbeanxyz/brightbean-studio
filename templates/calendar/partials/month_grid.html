@@ -80,9 +80,12 @@ Enhanced with: holidays, custom events, category colors, recurring badges.
             {% endfor %}
 
             {% if day.overflow > 0 %}
-            <div class="text-[10px] font-semibold text-stone-400 pl-1 mt-0.5">
+            {# The cell only fits three chips; the day view lists every post. #}
+            <a href="{% url 'calendar:calendar' workspace_id=workspace.id %}?mode=calendar&view=day&date={{ day.date|date:'Y-m-d' }}"
+               class="block text-[10px] font-semibold text-stone-400 hover:text-orange-600 pl-1 mt-0.5 no-underline"
+               title="Show all {{ day.total_posts }} posts">
                 +{{ day.overflow }} more
-            </div>
+            </a>
             {% endif %}
         </div>
         {% endfor %}
