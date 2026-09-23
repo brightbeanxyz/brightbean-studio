@@ -987,6 +987,7 @@ def save_post(request, workspace_id, post_id=None):
         # Queueing assigns real per-platform slots below — drop any proposal.
         post.proposed_publish_at = None
         post.save()
+        _attach_pending_session_media(request, workspace, post)
         # Ensure PlatformPost rows exist for every selected account before the
         # queue service writes per-platform scheduled_at values.
         _sync_platform_posts(request, post, workspace, initial_status="draft")
@@ -1028,6 +1029,7 @@ def save_post(request, workspace_id, post_id=None):
         # Queueing assigns real per-platform slots below — drop any proposal.
         post.proposed_publish_at = None
         post.save()
+        _attach_pending_session_media(request, workspace, post)
         _sync_platform_posts(request, post, workspace, initial_status="draft")
         try:
             # One transaction across every queue (see add_to_queue above).
@@ -1051,6 +1053,7 @@ def save_post(request, workspace_id, post_id=None):
         # Save post first so it has a PK, then delegate to approval service
         _capture_proposed_publish_at(post, post_id, workspace, form, clear_when_blank=False)
         post.save()
+        _attach_pending_session_media(request, workspace, post)
         # Sync platform posts before submitting
         _sync_platform_posts(request, post, workspace, initial_status="draft")
         _save_version(post, request.user)
@@ -1070,6 +1073,7 @@ def save_post(request, workspace_id, post_id=None):
         # Resubmit after changes requested or rejection
         _capture_proposed_publish_at(post, post_id, workspace, form, clear_when_blank=False)
         post.save()
+        _attach_pending_session_media(request, workspace, post)
         _sync_platform_posts(request, post, workspace, initial_status="draft")
         _save_version(post, request.user)
         from apps.approvals.services import resubmit_post
@@ -1092,25 +1096,7 @@ def save_post(request, workspace_id, post_id=None):
     # children are left as-is, new children default to draft via initial_status.
 
     post.save()
-
-    # Attach pending session media for new posts
-    if not post_id:
-        from apps.media_library.models import MediaAsset as _MediaAsset
-
-        session_key = f"pending_media_{workspace.id}"
-        pending_ids = request.session.get(session_key, [])
-        if pending_ids:
-            for idx, asset_id in enumerate(pending_ids):
-                try:
-                    asset = _MediaAsset.objects.get(id=asset_id, workspace=workspace)
-                    PostMedia.objects.get_or_create(
-                        post=post,
-                        media_asset=asset,
-                        defaults={"position": idx},
-                    )
-                except _MediaAsset.DoesNotExist:
-                    continue
-            del request.session[session_key]
+    _attach_pending_session_media(request, workspace, post)
 
     # Sync any new tags to the Tag model
     _sync_tags_to_model(workspace, post.tags)
@@ -1303,25 +1289,7 @@ def autosave(request, workspace_id, post_id=None):
     post.tags = parse_and_truncate_tag_string(request.POST.get("tags", ""))
 
     post.save()
-
-    # Attach pending session media when creating a new post
-    if is_new:
-        from apps.media_library.models import MediaAsset
-
-        session_key = f"pending_media_{workspace.id}"
-        pending_ids = request.session.get(session_key, [])
-        if pending_ids:
-            for idx, asset_id in enumerate(pending_ids):
-                try:
-                    asset = MediaAsset.objects.get(id=asset_id, workspace=workspace)
-                    PostMedia.objects.get_or_create(
-                        post=post,
-                        media_asset=asset,
-                        defaults={"position": idx},
-                    )
-                except MediaAsset.DoesNotExist:
-                    continue
-            del request.session[session_key]
+    _attach_pending_session_media(request, workspace, post)
 
     # Sync platform selections
     selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
@@ -2188,6 +2156,34 @@ def attach_pending_media(request, workspace_id):
     return response
 
 
+def _attach_pending_session_media(request, workspace, post):
+    """Move session-pending media onto ``post``, after its existing attachments.
+
+    An upload that started before autosave created the post still lands on
+    the post-less endpoint and is queued in the session. Every save must
+    drain that queue — not only the one that creates the post — or the file
+    is silently dropped and the post publishes without it.
+    """
+    from apps.media_library.models import MediaAsset
+
+    session_key = f"pending_media_{workspace.id}"
+    pending_ids = request.session.get(session_key, [])
+    if not pending_ids:
+        return
+    existing_pos = post.media_attachments.aggregate(models.Max("position"))["position__max"] or 0
+    for idx, pid in enumerate(pending_ids):
+        try:
+            pending_asset = MediaAsset.objects.get(id=pid, workspace=workspace)
+        except MediaAsset.DoesNotExist:
+            continue
+        PostMedia.objects.get_or_create(
+            post=post,
+            media_asset=pending_asset,
+            defaults={"position": existing_pos + idx + 1},
+        )
+    del request.session[session_key]
+
+
 def _attach_asset_for_composer(request, workspace, asset, post=None):
     """Attach an asset to a post, or queue it in the pending-media session.
 
@@ -2196,25 +2192,10 @@ def _attach_asset_for_composer(request, workspace, asset, post=None):
     post and updated the upload URL), then appends the asset at the next
     position. Returns the PostMedia attachment, or None on the pending path.
     """
-    from apps.media_library.models import MediaAsset
-
     session_key = f"pending_media_{workspace.id}"
 
     if post is not None:
-        pending_ids = request.session.get(session_key, [])
-        if pending_ids:
-            existing_pos = post.media_attachments.aggregate(models.Max("position"))["position__max"] or 0
-            for idx, pid in enumerate(pending_ids):
-                try:
-                    pending_asset = MediaAsset.objects.get(id=pid, workspace=workspace)
-                    PostMedia.objects.get_or_create(
-                        post=post,
-                        media_asset=pending_asset,
-                        defaults={"position": existing_pos + idx + 1},
-                    )
-                except MediaAsset.DoesNotExist:
-                    continue
-            del request.session[session_key]
+        _attach_pending_session_media(request, workspace, post)
 
         max_pos = post.media_attachments.aggregate(models.Max("position"))["position__max"]
         position = (max_pos or 0) + 1
