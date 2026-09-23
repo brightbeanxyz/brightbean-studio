@@ -218,6 +218,10 @@ SITE_ID = 1
 # django-allauth
 ACCOUNT_LOGIN_METHODS = {"email"}
 ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*"]
+# Set ACCOUNT_ALLOW_SIGNUP=false on a public single-operator deployment so nobody else can
+# register (and connect their own pages through this server's platform app credentials).
+ACCOUNT_ALLOW_SIGNUP = env.bool("ACCOUNT_ALLOW_SIGNUP", default=True)
+ACCOUNT_ADAPTER = "apps.accounts.adapters.AccountAdapter"
 ACCOUNT_EMAIL_VERIFICATION = "none"
 ACCOUNT_EMAIL_SUBJECT_PREFIX = ""
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None

@@ -1,10 +1,23 @@
+from allauth.account.adapter import DefaultAccountAdapter
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
+from django.conf import settings
 
 from apps.accounts.models import OAuthConnection
 
 
+class AccountAdapter(DefaultAccountAdapter):
+    """Closes email signup when ACCOUNT_ALLOW_SIGNUP is false."""
+
+    def is_open_for_signup(self, request):
+        return settings.ACCOUNT_ALLOW_SIGNUP
+
+
 class SocialAccountAdapter(DefaultSocialAccountAdapter):
     """Custom adapter that syncs Google social logins to OAuthConnection."""
+
+    def is_open_for_signup(self, request, sociallogin):
+        """New Google signups follow the same switch; existing users can still log in."""
+        return settings.ACCOUNT_ALLOW_SIGNUP
 
     def populate_user(self, request, sociallogin, data):
         """Set user.name from Google profile (custom User model has 'name', not first/last)."""
