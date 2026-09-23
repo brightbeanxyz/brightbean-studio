@@ -40,6 +40,16 @@ logger = logging.getLogger(__name__)
 MESSAGES_PER_PAGE = 50
 
 
+def _filter_values(request, name):
+    """Non-blank values of a multi-value filter param.
+
+    A select's "All ..." option submits an empty string, which must mean
+    "no filter" rather than "match the empty value" — otherwise switching back
+    to "All platforms" empties the list.
+    """
+    return [value for value in request.GET.getlist(name) if value]
+
+
 def _detail_context(workspace, message):
     """Build the full context needed for the message detail panel."""
     sla_config = InboxSLAConfig.objects.filter(workspace=workspace, is_active=True).first()
@@ -106,19 +116,19 @@ def inbox_feed(request, workspace_id):
         qs = qs.filter(assigned_to__isnull=True)
 
     # Filters
-    platforms = request.GET.getlist("platform")
+    platforms = _filter_values(request, "platform")
     if platforms:
         qs = qs.filter(social_account__platform__in=platforms)
 
-    accounts = request.GET.getlist("account")
+    accounts = _filter_values(request, "account")
     if accounts:
         qs = qs.filter(social_account_id__in=accounts)
 
-    types = request.GET.getlist("type")
+    types = _filter_values(request, "type")
     if types:
         qs = qs.filter(message_type__in=types)
 
-    statuses = request.GET.getlist("status")
+    statuses = _filter_values(request, "status")
     if statuses:
         qs = qs.filter(status__in=statuses)
 
@@ -126,7 +136,7 @@ def inbox_feed(request, workspace_id):
     if assigned:
         qs = qs.filter(assigned_to__isnull=True) if assigned == "unassigned" else qs.filter(assigned_to_id=assigned)
 
-    sentiments = request.GET.getlist("sentiment")
+    sentiments = _filter_values(request, "sentiment")
     if sentiments:
         qs = qs.filter(sentiment__in=sentiments)
 
