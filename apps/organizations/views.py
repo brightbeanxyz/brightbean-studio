@@ -12,7 +12,7 @@ from django.utils import timezone as django_tz
 from django.views.decorators.http import require_http_methods
 
 from apps.common.validators import clean_display_name
-from apps.composer.models import PlatformPost, Post, Tag
+from apps.composer.models import PUBLISH_MOMENT, PlatformPost, Post, Tag
 from apps.members.decorators import require_org_role
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
@@ -255,13 +255,12 @@ def cross_workspace_calendar(request):
     all_tags = sorted(set(Tag.objects.filter(workspace__in=filtered_workspaces).values_list("name", flat=True)))
 
     # Base PlatformPost queryset with filters - each chip is one PP.
-    from django.db.models.functions import Coalesce
 
     base_pps = (
         PlatformPost.objects.filter(post__workspace__in=filtered_workspaces)
         .select_related("post__workspace", "post__author", "social_account")
         .prefetch_related("post__media_attachments__media_asset")
-        .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
+        .annotate(effective_at=PUBLISH_MOMENT)
     )
 
     # Channel filter

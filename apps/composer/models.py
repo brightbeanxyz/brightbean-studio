@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.common.managers import WorkspaceScopedManager
@@ -326,6 +327,15 @@ class Post(models.Model):
     def platform_posts_summary(self):
         """Summary of target platforms."""
         return list(self.platform_posts.values_list("social_account__platform", flat=True))
+
+
+#: When a ``PlatformPost`` is due to publish: its own ``scheduled_at``, else the
+#: parent post's (the fallback the field itself documents). The publisher's due
+#: query, the calendar, the org dashboard and the per-account publish budget all
+#: have to agree on this, so they annotate with this one expression instead of
+#: each spelling it out. A row where both are NULL has no moment and never
+#: publishes: ``effective_at__lte=now`` does not match NULL.
+PUBLISH_MOMENT = Coalesce("scheduled_at", "post__scheduled_at")
 
 
 class PlatformPost(models.Model):

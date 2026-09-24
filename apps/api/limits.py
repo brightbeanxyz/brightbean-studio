@@ -3,8 +3,10 @@
 Two orthogonal concerns live here:
 
 1. ``PLATFORM_DAILY_POST_LIMIT`` — channel-aligned caps on how many
-   scheduled-or-published PlatformPost rows an API key may create per
-   ``SocialAccount`` per rolling 24h window. Numbers come from each
+   PlatformPost rows may be *published* per ``SocialAccount`` in any
+   rolling 24h window. The window is anchored on the row's publish time
+   (``scheduled_at``), not on when the row was written, because that is
+   what the platform itself counts. Numbers come from each
    platform's own developer docs (May 2026); see ``docs/agent-api.md``
    for the source links. The publisher's own ``RateLimitState`` tracks
    the *outgoing* upstream platform quota separately — these layers
@@ -20,6 +22,8 @@ on ``tier`` without parsing free text.
 from __future__ import annotations
 
 import datetime as dt
+import uuid
+from collections.abc import Collection
 
 from django.conf import settings
 from django.core.cache import cache as _cache
@@ -29,7 +33,7 @@ from django_ratelimit.core import is_ratelimited
 from ninja.errors import HttpError
 
 from apps.api_keys.models import ApiKey
-from apps.composer.models import PlatformPost
+from apps.composer.models import PUBLISH_MOMENT, PlatformPost
 from apps.social_accounts.models import SocialAccount
 
 # ---------------------------------------------------------------------------
@@ -96,62 +100,95 @@ def resolve_platform_limit(social_account: SocialAccount) -> int:
 QUOTA_CONSUMING_STATUSES = frozenset({"scheduled", "publishing", "published", "failed"})
 
 
-def count_recent_creations(social_account: SocialAccount, *, window_hours: int = 24) -> int:
-    """Count PlatformPost rows in the platform-budget-consuming states.
+def count_publishes_in_window(
+    social_account: SocialAccount,
+    target: dt.datetime,
+    *,
+    window_hours: int = 24,
+    exclude_ids: Collection[uuid.UUID] = (),
+) -> int:
+    """Rows already spending this account's publish budget for the 24 h ending at ``target``.
 
-    Filtered to ``QUOTA_CONSUMING_STATUSES`` and to rows whose
-    ``updated_at`` falls inside the window. Codex review flagged that
-    the previous ``created_at`` filter let an agent bypass the cap by
-    creating drafts (which don't count) and then scheduling them more
-    than 24 h later — the newly quota-consuming rows had a stale
-    ``created_at`` outside the window and slipped through.
+    The platform's cap is on *published* posts per rolling 24 h. The previous
+    implementation counted rows by ``updated_at``, i.e. by when the row was
+    written, which made a month-long schedule loaded in one sitting look like a
+    burst: 41 posts spread over three weeks spent zero of Instagram's real
+    budget and still tripped the local counter on the 26th (Creusa Joias and
+    Folhas & Frutos, September 2026, both fixed by hand in production).
 
-    ``updated_at`` is bumped by ``transition_platform_post`` whenever
-    the status changes (including the moment a draft enters scheduled),
-    so it is a faithful approximation of "when did this row consume a
-    platform slot". Edits that touch other fields also bump it; the
-    over-counting is conservative — agents hit the cap slightly earlier
-    than the platform's own count, which is the safe direction.
+    Anchoring on the publish moment answers the question the platform asks:
+    when this post fires, how many others on this account will have fired in
+    the preceding 24 h? ``PUBLISH_MOMENT`` is the same expression the publisher
+    polls with, so a row this counts is exactly a row that will go out: one
+    with neither its own time nor the post's never matches
+    ``effective_at__lte=now`` and never publishes, so it spends no budget here
+    either.
     """
-    cutoff = timezone.now() - dt.timedelta(hours=window_hours)
-    return PlatformPost.objects.filter(
+    start = target - dt.timedelta(hours=window_hours)
+    rows = PlatformPost.objects.filter(
         social_account=social_account,
-        updated_at__gte=cutoff,
         status__in=QUOTA_CONSUMING_STATUSES,
-    ).count()
+    )
+    if exclude_ids:
+        # Rows that are being moved INTO this window must not be counted
+        # against themselves: re-timing a post inside a full window is a no-op
+        # for the platform's budget, and counting it would refuse the move.
+        rows = rows.exclude(id__in=exclude_ids)
+    return (
+        rows.annotate(publish_moment=PUBLISH_MOMENT)
+        .filter(publish_moment__gt=start, publish_moment__lte=target)
+        .count()
+    )
 
 
-def check_platform_quota(social_account: SocialAccount) -> None:
-    """Raise an ``HttpError(429, ...)`` if the per-account cap is reached.
+def check_platform_quota(
+    social_account: SocialAccount,
+    publish_at: dt.datetime,
+    *,
+    exclude_ids: Collection[uuid.UUID] = (),
+) -> None:
+    """Raise an ``HttpError(429, ...)`` if the account's publish budget is full.
 
-    Call this immediately before creating a ``PlatformPost`` row in any
-    write endpoint. The 24h-rolling check is a single indexed count, so
-    it's cheap enough to run on every write.
+    Call this immediately before creating, scheduling or RE-TIMING a
+    ``PlatformPost`` row. ``publish_at`` is required on purpose: a default of
+    "now" would let the next write endpoint someone adds count the wrong window
+    silently and pass review. A publish-now path passes ``timezone.now()`` at
+    the call site, where the reader can see it.
+
+    The count is one query per account. It filters on the ``social_account``
+    FK and annotates ``PUBLISH_MOMENT``, which spans the join to
+    ``composer_post``, so the ``(status, scheduled_at)`` index does not serve
+    it on its own; what keeps it cheap is the per-account row count.
     """
     limit = resolve_platform_limit(social_account)
-    used = count_recent_creations(social_account)
+    target = publish_at
+    used = count_publishes_in_window(social_account, target, exclude_ids=exclude_ids)
     if used >= limit:
-        # Compute when the oldest quota-consuming row ages out, so the
-        # client gets an honest Retry-After rather than guessing. Match
-        # the same filter as count_recent_creations to keep the two
-        # numbers internally consistent.
-        # Match the same filter as ``count_recent_creations`` so the
-        # two numbers stay internally consistent; computing the oldest
-        # quota-consuming ``updated_at`` lets ``retry_after`` reflect
-        # when the bucket will next free up.
+        # The oldest row inside the window is the one whose 24 h expires first,
+        # so ``oldest + 24h`` is the earliest publish time that fits. Same
+        # filter as ``count_publishes_in_window`` so the two numbers stay
+        # internally consistent.
+        window_start = target - dt.timedelta(hours=24)
         oldest = (
             PlatformPost.objects.filter(
                 social_account=social_account,
-                updated_at__gte=timezone.now() - dt.timedelta(hours=24),
                 status__in=QUOTA_CONSUMING_STATUSES,
             )
-            .order_by("updated_at")
-            .values_list("updated_at", flat=True)
+            .exclude(id__in=exclude_ids)
+            .annotate(publish_moment=PUBLISH_MOMENT)
+            .filter(publish_moment__gt=window_start, publish_moment__lte=target)
+            .order_by("publish_moment")
+            .values_list("publish_moment", flat=True)
             .first()
         )
-        retry_after_seconds = int((oldest + dt.timedelta(hours=24) - timezone.now()).total_seconds()) if oldest else 60
-        # 1s floor so the client doesn't hammer us at the boundary.
-        retry_after_seconds = max(retry_after_seconds, 1)
+        # ``retry_after`` keeps its wire meaning, seconds from now until the
+        # window has room. For a post aimed at a future slot that doubles as
+        # "how much later this post has to go out". ``oldest`` is None only
+        # when the window is empty and the limit is 0, i.e. an account
+        # deliberately blocked by its override: there is no later time that
+        # helps, so the floor stands in for "not from waiting".
+        free_at = (oldest + dt.timedelta(hours=24)) if oldest else None
+        retry_after_seconds = max(int((free_at - timezone.now()).total_seconds()), 1) if free_at else 1
         raise HttpError(
             429,
             _format_quota_message(

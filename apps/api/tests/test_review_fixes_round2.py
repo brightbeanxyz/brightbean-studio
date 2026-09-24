@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from apps.api.limits import (
     PLATFORM_DAILY_POST_LIMIT,
-    count_recent_creations,
+    count_publishes_in_window,
     resolve_platform_limit,
 )
 from apps.api_keys import services
@@ -303,22 +303,42 @@ class TestCancelClearsParentSchedule:
 @pytest.mark.django_db
 class TestQuotaCountsRecentTransitions:
     def test_old_draft_freshly_scheduled_counts_against_quota(self, social_account, workspace):
-        """Codex P3 regression: an agent could create 100 LinkedIn drafts
-        on day 1, wait > 24h, then schedule them all — the quota check
-        used to look at ``created_at`` (> 24h ago, outside window) and
-        let every row through.
+        """Codex P3 regression: an agent could create 100 drafts on day 1, wait
+        > 24h, then schedule them all — the quota check used to look at
+        ``created_at`` (> 24h ago, outside the window) and let every row
+        through.
+
+        The counter is anchored on the publish moment now, so the age of the
+        draft stopped mattering in either direction: what decides is when the
+        rows are aimed at. Scheduled into one window, they are all counted, and
+        that is the guard this test was written for.
         """
-        # Simulate a draft created 25h ago.
-        old_post = Post.objects.create(workspace=workspace, caption="old")
-        pp = PlatformPost.objects.create(post=old_post, social_account=social_account, status="draft")
+        target = timezone.now() + timedelta(hours=3)
         old_time = timezone.now() - timedelta(hours=25)
-        PlatformPost.objects.filter(pk=pp.pk).update(created_at=old_time, updated_at=old_time)
-        # Now flip to scheduled today (mirrors what the schedule route
-        # would do via ``transition_platform_post``).
+        for i in range(3):
+            old_post = Post.objects.create(workspace=workspace, caption=f"old {i}")
+            pp = PlatformPost.objects.create(post=old_post, social_account=social_account, status="draft")
+            PlatformPost.objects.filter(pk=pp.pk).update(created_at=old_time, updated_at=old_time)
+            # Flip to scheduled today, into the same evening (mirrors what the
+            # schedule route does via ``transition_platform_post``).
+            PlatformPost.objects.filter(pk=pp.pk).update(
+                status="scheduled", scheduled_at=target - timedelta(minutes=i), updated_at=timezone.now()
+            )
+
+        assert count_publishes_in_window(social_account, target) == 3
+
+    def test_a_row_that_can_never_publish_spends_no_budget(self, social_account, workspace):
+        """A ``scheduled`` row with no time on itself and none on its post has
+        no publish moment: ``_get_due_platform_posts`` filters
+        ``effective_at__lte=now`` and NULL never matches, so the publisher
+        ignores it forever. Charging it against the cap would refuse real posts
+        on behalf of one that cannot go out.
+        """
+        post = Post.objects.create(workspace=workspace, caption="timeless")
+        pp = PlatformPost.objects.create(post=post, social_account=social_account, status="draft")
         PlatformPost.objects.filter(pk=pp.pk).update(status="scheduled", updated_at=timezone.now())
 
-        # The single newly-scheduled row must be counted.
-        assert count_recent_creations(social_account) == 1
+        assert count_publishes_in_window(social_account, timezone.now()) == 0
 
 
 # ===========================================================================
