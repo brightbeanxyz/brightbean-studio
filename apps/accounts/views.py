@@ -1,10 +1,10 @@
 from django.contrib import messages
 from django.contrib.auth import logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_http_methods, require_POST
 
 
 def health_check(request):
@@ -86,7 +86,10 @@ def _handle_photo_update(request, user):
     if request.POST.get("delete_photo") == "1":
         if user.avatar:
             user.avatar.delete(save=False)
-        user.save()
+        # Named fields only: this instance was loaded at the start of the
+        # request, and a full save would write back any column another request
+        # changed meanwhile (e.g. review_banner_dismissed_at).
+        user.save(update_fields=["avatar", "updated_at"])
         messages.success(request, "Photo removed.")
         return
 
@@ -134,7 +137,7 @@ def _handle_photo_update(request, user):
         user.avatar.delete(save=False)
 
     user.avatar = avatar
-    user.save()
+    user.save(update_fields=["avatar", "updated_at"])
     messages.success(request, "Photo updated.")
 
 
@@ -177,7 +180,7 @@ def _handle_password_update(request, user):
         return
 
     user.set_password(password)
-    user.save()
+    user.save(update_fields=["password", "updated_at"])
     update_session_auth_hash(request, user)
     messages.success(request, "Password changed.")
 
@@ -240,3 +243,12 @@ def accept_terms(request):
 def logout_view(request):
     logout(request)
     return redirect("account_login")
+
+
+@login_required
+@require_POST
+def dismiss_review_banner(request):
+    """Hide the sidebar's Trustpilot card until the next login."""
+    request.user.review_banner_dismissed_at = timezone.now()
+    request.user.save(update_fields=["review_banner_dismissed_at"])
+    return HttpResponse(status=204)

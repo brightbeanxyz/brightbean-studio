@@ -42,6 +42,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Terms of Service acceptance (null = not yet accepted)
     tos_accepted_at = models.DateTimeField(blank=True, null=True)
 
+    # When the sidebar's Trustpilot card was last closed. It stays hidden until
+    # the next login moves last_login past this. Kept here rather than in the
+    # session because SESSION_SAVE_EVERY_REQUEST lets any request in flight
+    # (the notification poll, an autosave) write its stale copy back over it.
+    review_banner_dismissed_at = models.DateTimeField(blank=True, null=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
