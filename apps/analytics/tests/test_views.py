@@ -231,11 +231,42 @@ def test_youtube_dashboard_labels_the_metrics_we_calculate(owner_client, workspa
 
     assert response.context["engagement"]["formula"] == "(Likes + Comments + Shares) ÷ Views"
     assert "Calculated by BrightBean" in body
-    assert "(Likes + Comments + Shares) ÷ Views. Not a YouTube metric." in body
+    assert "(Likes + Comments + Shares) ÷ Views. Not reported by YouTube." in body
     # Watch time and Avg view %: both are our average of YouTube's daily figures.
     assert body.count("Daily average · calculated by BrightBean") == 2
     assert 'title="Change vs. the previous 7 days, calculated by BrightBean"' in body
+    # Every figure came from YouTube's account-level analytics: nothing estimated.
+    assert "Estimated by BrightBean" not in body
     assert response.context["calculated_note"] == (
-        "Figures come from YouTube. The engagement rate, daily averages and % changes vs. the previous period "
-        "are calculated by BrightBean and are not YouTube metrics."
+        "Underlying data comes from YouTube. The engagement rate, daily averages and % changes vs. the previous "
+        "period are calculated by BrightBean, not reported by YouTube."
     )
+
+
+@pytest.mark.django_db
+def test_youtube_views_built_from_video_counts_are_labelled_estimates(owner_client, workspace):
+    """Without account-level YouTube Analytics rows, the dashboard sums per-video
+    count changes itself. Those are our estimates, not YouTube's figures."""
+    from apps.analytics.models import PostInsightsSnapshot
+    from apps.composer.models import PlatformPost, Post
+
+    account = _account(workspace, "youtube", "Tube")
+    platform_post = PlatformPost.objects.create(
+        post=Post.objects.create(workspace=workspace, caption="video"),
+        social_account=account,
+        status=PlatformPost.Status.PUBLISHED,
+        published_at=timezone.now() - timedelta(days=60),
+        platform_post_id="video-1",
+    )
+    today = timezone.now().date()
+    for offset, views in ((3, 100), (1, 160)):
+        PostInsightsSnapshot.objects.create(
+            platform_post=platform_post, metric_key="views", date=today - timedelta(days=offset), value=views
+        )
+
+    response = owner_client.get(_account_url(workspace, account) + "?range=7")
+    body = response.content.decode()
+
+    assert "Estimated by BrightBean from per-video counts" in body
+    assert "estimates built from per-video counts" in response.context["calculated_note"]
+    assert response.context["chart"]["derived"].estimated is True

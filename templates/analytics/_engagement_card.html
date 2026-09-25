@@ -8,12 +8,12 @@
             </div>
             <div style="display: flex; align-items: flex-end; gap: 12px;">
                 <span style="font-size: 2.5rem; font-weight: 700; letter-spacing: -0.02em; color: var(--text-primary); line-height: 0.95;">{{ engagement.rate.value|fmt_metric:"percent" }}</span>
-                <span class="a-delta {{ engagement.rate.delta|delta_color }}" style="font-size: 12.5px; padding: 3px 9px;" title="Change vs. the previous {{ days }} days, calculated by BrightBean">{{ engagement.rate.delta|fmt_signed }}</span>
+                {% include "analytics/_delta_chip.html" with delta=engagement.rate.delta large=True %}
             </div>
         </div>
         <div>
             {% sparkline engagement.rate.series primary_color 180 40 %}
-            <div class="a-calc-note" style="margin-top: 6px;">{{ engagement.formula }}. Not a {{ active_account.get_platform_display }} metric.</div>
+            <div class="a-calc-note" style="margin-top: 6px;">{% if engagement.formula %}{{ engagement.formula }}. Not reported by {{ platform_name }}.{% else %}Not enough data to calculate yet.{% endif %}</div>
         </div>
     </div>
 
@@ -25,8 +25,9 @@
             <div style="font-size: 0.6875rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">{{ p.label }}</div>
             <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 6px;">
                 <span class="a-mono" style="font-size: 1.05rem; font-weight: 700; color: var(--text-primary);">{{ p.derived.value|fmt_metric:p.derived.kind }}</span>
-                <span class="a-delta {{ p.derived.delta|delta_color }}" title="Change vs. the previous {{ days }} days, calculated by BrightBean">{{ p.derived.delta|fmt_signed }}</span>
+                {% include "analytics/_delta_chip.html" with delta=p.derived.delta %}
             </div>
+            {% if p.derived.estimated %}<div class="a-calc-note" style="margin-top: 4px;">Estimated by BrightBean</div>{% endif %}
         </div>
         {% endfor %}
     </div>

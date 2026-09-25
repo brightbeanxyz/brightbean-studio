@@ -253,3 +253,116 @@ def test_latest_post_stats_agrees_across_both_dedup_paths(facebook_account, monk
     without_distinct_on = _latest_post_stats(ids, ["likes", "comments"])
 
     assert with_distinct_on == without_distinct_on
+
+
+def _bundle(series_map, *, estimated=()):
+    return {
+        "series_map": series_map,
+        "present_map": {m: [True] * len(v) for m, v in series_map.items()},
+        "estimated_metrics": set(estimated),
+        "max_captured_at": None,
+    }
+
+
+def test_engagement_formula_names_the_denominator_the_rate_used():
+    from apps.analytics.services import engagement_card
+
+    account = SocialAccount(platform="youtube", follower_count=200)
+    series = {"views": [100.0], "likes": [8.0], "comments": [2.0], "shares": [1.0]}
+
+    card = engagement_card(account, 1, bundle=_bundle(series))
+
+    assert card["formula"] == "(Likes + Comments + Shares) ÷ Views"
+
+
+def test_engagement_formula_on_the_follower_fallback_says_subscribers_on_youtube():
+    from apps.analytics.services import engagement_card
+
+    series = {"views": [0.0], "likes": [8.0], "comments": [2.0], "shares": [1.0]}
+
+    youtube = engagement_card(SocialAccount(platform="youtube", follower_count=200), 1, bundle=_bundle(series))
+    tiktok = engagement_card(SocialAccount(platform="tiktok", follower_count=200), 1, bundle=_bundle(series))
+
+    assert youtube["formula"] == "(Likes + Comments + Shares) ÷ Subscribers"
+    assert tiktok["formula"] == "(Likes + Comments + Shares) ÷ Followers"
+
+
+def test_engagement_formula_is_none_when_there_is_nothing_to_divide_by():
+    from apps.analytics.services import engagement_card
+
+    series = {"views": [0.0], "likes": [8.0], "comments": [2.0], "shares": [1.0]}
+
+    card = engagement_card(SocialAccount(platform="youtube", follower_count=0), 1, bundle=_bundle(series))
+
+    assert card["formula"] is None
+    assert card["rate"].value == 0.0
+
+
+def test_engagement_formula_with_a_single_part_has_no_parentheses():
+    from apps.analytics.services import engagement_card
+
+    card = engagement_card(
+        SocialAccount(platform="google_business"),
+        1,
+        bundle=_bundle({"impressions": [100.0], "clicks": [5.0]}),
+    )
+
+    assert card["formula"] == "Link clicks ÷ Impressions"
+
+
+def test_engagement_rate_built_from_estimated_parts_is_marked_estimated():
+    from apps.analytics.services import engagement_card
+
+    series = {"views": [100.0], "likes": [8.0], "comments": [2.0], "shares": [1.0]}
+
+    card = engagement_card(SocialAccount(platform="youtube"), 1, bundle=_bundle(series, estimated={"likes"}))
+
+    assert card["rate"].estimated is True
+    assert [p["derived"].estimated for p in card["parts"]] == [True, False, False]
+
+
+def test_calculated_note_with_only_the_change_chips():
+    from apps.analytics.services import calculated_metrics_note
+
+    note = calculated_metrics_note(SocialAccount(platform="bluesky"), cards=[], engagement=None)
+
+    assert note == (
+        "Underlying data comes from Bluesky. The % changes vs. the previous period are calculated by "
+        "BrightBean, not reported by Bluesky."
+    )
+
+
+def test_calculated_note_names_estimates_and_follower_growth():
+    from apps.analytics.derive import DerivedMetric
+    from apps.analytics.services import calculated_metrics_note
+
+    estimated = DerivedMetric(value=1.0, delta=0.0, series=[], kind="count", estimated=True)
+
+    note = calculated_metrics_note(
+        SocialAccount(platform="instagram_login"),
+        cards=[{"derived": estimated}],
+        engagement=None,
+        growth=estimated,
+    )
+
+    assert note == (
+        "Underlying data comes from Instagram. The estimates built from per-post counts, follower growth and "
+        "% changes vs. the previous period are calculated by BrightBean, not reported by Instagram."
+    )
+
+
+@pytest.mark.django_db
+def test_account_bundle_marks_post_fallback_metrics_as_estimated(facebook_account):
+    from apps.analytics.models import AccountInsightsSnapshot, PostInsightsSnapshot
+    from apps.analytics.services import account_analytics_bundle
+
+    today = timezone.now().date()
+    AccountInsightsSnapshot.objects.create(social_account=facebook_account, metric_key="reach", date=today, value=50)
+    platform_post = _published_platform_post(facebook_account)
+    PostInsightsSnapshot.objects.create(platform_post=platform_post, metric_key="views", date=today, value=10)
+
+    bundle = account_analytics_bundle(facebook_account, 7)
+
+    assert bundle["estimated_metrics"] == {"views"}
+    assert bundle["present_map"]["reach"][-1] is True
+    assert bundle["present_map"]["reach"][-2] is False

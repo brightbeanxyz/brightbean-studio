@@ -4,10 +4,11 @@
         <div style="flex-shrink: 0;">
             <div style="display: flex; align-items: center; gap: 8px; color: var(--text-secondary); margin-bottom: 6px; white-space: nowrap;">
                 <span style="font-size: 0.8125rem; font-weight: 600;">{{ chart.label }} · last {{ days }} days</span>
+                {% if chart.derived.estimated %}<span class="a-calc-tag" title="Estimated by BrightBean from per-{{ content_noun }} counts">Estimated by BrightBean</span>{% endif %}
             </div>
             <div style="display: flex; align-items: center; gap: 12px;">
                 <span style="font-size: 2.25rem; font-weight: 700; letter-spacing: -0.02em; color: var(--text-primary); line-height: 1;">{{ chart.derived.value|fmt_metric:chart.derived.kind }}</span>
-                <span class="a-delta {{ chart.derived.delta|delta_color }}" style="font-size: 12.5px; padding: 3px 9px;" title="Change vs. the previous {{ days }} days, calculated by BrightBean">{{ chart.derived.delta|fmt_signed }}</span>
+                {% include "analytics/_delta_chip.html" with delta=chart.derived.delta large=True %}
             </div>
         </div>
         <div style="display: flex; flex-wrap: wrap; gap: 6px;">
