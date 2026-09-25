@@ -859,7 +859,7 @@ class TestDisconnectView:
             "social_accounts:disconnect",
             kwargs={"workspace_id": workspace.id, "account_id": account.id},
         )
-        with patch("apps.social_accounts.views._get_provider_for_platform") as mock:
+        with patch("providers.get_provider") as mock:
             mock_provider = MagicMock()
             mock_provider.revoke_token.return_value = True
             mock.return_value = mock_provider
@@ -867,6 +867,73 @@ class TestDisconnectView:
 
         assert response.status_code == 302
         assert SocialAccount.objects.filter(pk=account.pk).count() == 0
+
+    def test_youtube_revokes_the_grant_with_the_refresh_token(self, authenticated_client, workspace):
+        """Google refuses an expired access token, and ours lives an hour, so
+        revoking with it would usually leave the grant live."""
+        account = SocialAccount.objects.create(
+            workspace=workspace,
+            platform="youtube",
+            account_platform_id="UC123",
+            account_name="Test Channel",
+            oauth_access_token="stale-access-token",
+            oauth_refresh_token="refresh-token",
+        )
+        url = reverse(
+            "social_accounts:disconnect",
+            kwargs={"workspace_id": workspace.id, "account_id": account.id},
+        )
+        with (
+            patch("apps.social_accounts.views.unsubscribe_account_webhooks"),
+            patch("providers.get_provider") as mock,
+        ):
+            response = authenticated_client.post(url)
+
+        assert response.status_code == 302
+        mock.return_value.revoke_token.assert_called_once_with("refresh-token")
+        assert not SocialAccount.objects.filter(pk=account.pk).exists()
+
+    def test_mastodon_revokes_on_the_accounts_own_instance(self, authenticated_client, workspace):
+        """A Mastodon grant lives on the account's instance, under that
+        instance's app registration; the org's credentials carry neither."""
+        from apps.social_accounts.models import MastodonAppRegistration
+
+        MastodonAppRegistration.objects.create(
+            instance_url="https://mastodon.example",
+            client_id="masto-client-id",
+            client_secret="masto-client-secret",
+        )
+        account = SocialAccount.objects.create(
+            workspace=workspace,
+            platform="mastodon",
+            account_platform_id="42",
+            account_name="Test Masto",
+            instance_url="https://mastodon.example",
+            oauth_access_token="masto-token",
+        )
+        url = reverse(
+            "social_accounts:disconnect",
+            kwargs={"workspace_id": workspace.id, "account_id": account.id},
+        )
+        # is_safe_url is patched to keep the resolver's SSRF check off the network.
+        with (
+            patch("apps.common.validators.is_safe_url", return_value=True),
+            patch("apps.social_accounts.views.unsubscribe_account_webhooks"),
+            patch("providers.mastodon.MastodonProvider._request") as request,
+        ):
+            response = authenticated_client.post(url)
+
+        assert response.status_code == 302
+        request.assert_called_once_with(
+            "POST",
+            "https://mastodon.example/oauth/revoke",
+            data={
+                "client_id": "masto-client-id",
+                "client_secret": "masto-client-secret",
+                "token": "masto-token",
+            },
+        )
+        assert not SocialAccount.objects.filter(pk=account.pk).exists()
 
     def test_disconnect_requires_post(self, authenticated_client, workspace):
         account = SocialAccount.objects.create(
@@ -881,6 +948,48 @@ class TestDisconnectView:
         )
         response = authenticated_client.get(url)
         assert response.status_code == 405
+
+
+@pytest.mark.django_db
+class TestDisconnectConfirmation:
+    """The confirmation has to say what disconnect does: the privacy policy
+    promises it, and platform reviewers read one against the other."""
+
+    def _card_text(self, client, workspace, platform):
+        SocialAccount.objects.create(
+            workspace=workspace,
+            platform=platform,
+            account_platform_id="1",
+            account_name="Test Channel",
+        )
+        response = client.get(reverse("social_accounts:list", kwargs={"workspace_id": workspace.id}))
+        assert response.status_code == 200
+        return " ".join(response.content.decode().split())
+
+    def test_youtube_says_access_is_revoked_and_data_deleted(self, authenticated_client, workspace):
+        text = self._card_text(authenticated_client, workspace, "youtube")
+
+        assert "Disconnect <strong>Test Channel</strong>?" in text
+        assert "This revokes BrightBean's access to the account." in text
+        assert "Its analytics, inbox messages and posts made only for it are deleted from BrightBean." in text
+        assert "Posts shared with other channels stay." in text
+        assert "Historical data will be preserved" not in text
+        assert "removes the account from BrightBean only" not in text
+
+    def test_facebook_says_the_grant_is_kept(self, authenticated_client, workspace):
+        text = self._card_text(authenticated_client, workspace, "facebook")
+
+        assert "This removes the account from BrightBean only." in text
+        assert "Facebook &rsaquo; Settings &rsaquo; Apps and Websites" in text
+        assert "deleted from BrightBean" in text
+        assert "revokes BrightBean's access" not in text
+
+    def test_a_platform_without_revocation_does_not_claim_it(self, authenticated_client, workspace):
+        text = self._card_text(authenticated_client, workspace, "pinterest")
+
+        assert "remove BrightBean in your Pinterest settings" in text
+        assert "deleted from BrightBean" in text
+        assert "revokes BrightBean's access" not in text
 
 
 @pytest.mark.django_db

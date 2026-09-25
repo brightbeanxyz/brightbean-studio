@@ -847,11 +847,16 @@ def disconnect(request, workspace_id, account_id):
     if account.oauth_access_token:
         unsubscribe_account_webhooks(account)
 
-    # Try to revoke token
+    # Try to revoke token. The account's own credentials, not just the org's:
+    # a Mastodon grant lives on the account's instance, under that instance's
+    # app registration, and revoking without them calls an empty base URL.
     try:
-        provider = _get_provider_for_platform(account.platform, request.org.id)
-        if account.oauth_access_token:
-            provider.revoke_token(account.oauth_access_token)
+        from apps.publisher.engine import _resolve_publish_credentials
+        from providers import get_provider
+
+        provider = get_provider(account.platform, _resolve_publish_credentials(account))
+        if account.revocation_token:
+            provider.revoke_token(account.revocation_token)
     except Exception:
         logger.warning(
             "Failed to revoke token for %s, proceeding with disconnect",

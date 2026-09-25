@@ -317,6 +317,47 @@ class SocialAccount(models.Model):
             PlatformCredential.Platform.INSTAGRAM,
         }
 
+    @property
+    def revokes_platform_grant_on_disconnect(self) -> bool:
+        """True when disconnecting also revokes our access on the platform.
+
+        The disconnect confirmation promises exactly this, so it lists only the
+        providers whose ``revoke_token`` calls a revocation endpoint with the
+        token disconnect hands it. Left out, besides the Facebook-Page flows:
+        Pinterest, Threads and DEV.to have no revocation call, and Bluesky's
+        ``deleteSession`` wants the refresh JWT rather than the access JWT it
+        gets — and the app password outlives any session regardless.
+        """
+        return self.platform in {
+            PlatformCredential.Platform.YOUTUBE,
+            PlatformCredential.Platform.GOOGLE_BUSINESS,
+            PlatformCredential.Platform.TIKTOK,
+            PlatformCredential.Platform.LINKEDIN_PERSONAL,
+            PlatformCredential.Platform.LINKEDIN_COMPANY,
+            PlatformCredential.Platform.MASTODON,
+            PlatformCredential.Platform.INSTAGRAM_LOGIN,
+        }
+
+    @property
+    def revocation_token(self) -> str:
+        """The token disconnect should hand the provider's ``revoke_token``.
+
+        Google refuses to revoke an expired access token, and ours lives an
+        hour, so by the time someone disconnects it is usually dead and the
+        grant would survive. The refresh token revokes the same grant and
+        outlives it.
+        """
+        if (
+            self.platform
+            in {
+                PlatformCredential.Platform.YOUTUBE,
+                PlatformCredential.Platform.GOOGLE_BUSINESS,
+            }
+            and self.oauth_refresh_token
+        ):
+            return self.oauth_refresh_token
+        return self.oauth_access_token
+
     def supports_first_comment(self) -> bool:
         """Whether this account can have a first comment posted by the worker.
 
