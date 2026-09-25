@@ -21,7 +21,7 @@ from apps.composer.models import PlatformPost
 from apps.social_accounts.models import SocialAccount
 
 from .constants import NO_ANALYTICS_PLATFORMS
-from .derive import DerivedMetric, derive, engagement_rate, kind_of
+from .derive import DerivedMetric, derive, engagement_denominator, engagement_rate, kind_of
 from .metrics import (
     ACCOUNT_ONLY,
     METRICS,
@@ -382,6 +382,8 @@ def engagement_card(
     Returns a dict with:
       - ``rate``: DerivedMetric for the rate headline + sparkline
       - ``parts``: list of {metric, label, derived} for the 2x2 sub-grid
+      - ``formula``: how we calculate the rate, e.g. "(Likes + Comments) ÷ Views".
+        The rate is our metric, not the platform's, and the card says so.
 
     Pass ``series_map`` to reuse an already-fetched
     :func:`account_analytics_bundle` result.
@@ -402,7 +404,37 @@ def engagement_card(
         for m in PLATFORM_METRICS.get(account.platform, [])
         if m in ENGAGEMENT_PARTS
     ]
-    return {"rate": rate, "parts": parts}
+    denominator = engagement_denominator(series_map, days)
+    if denominator:
+        denominator_label = _label(denominator)
+    else:
+        denominator_label = "Subscribers" if account.platform == "youtube" else "Followers"
+    numerator = " + ".join(p["label"] for p in parts)
+    formula = f"({numerator}) ÷ {denominator_label}" if len(parts) > 1 else f"{numerator} ÷ {denominator_label}"
+    return {"rate": rate, "parts": parts, "formula": formula}
+
+
+def calculated_metrics_note(
+    account: SocialAccount,
+    cards: list[dict[str, Any]],
+    engagement: dict[str, Any] | None,
+) -> str:
+    """One line under the KPI row naming what on the page we calculated.
+
+    YouTube's developer policies let us show metrics we derive from API data
+    only if they are clearly labelled as ours, not the platform's. The cards
+    carry their own labels; this line covers the % change chips, which appear
+    on every card and have no room for one.
+    """
+    platform = account.get_platform_display()
+    calculated = []
+    if engagement:
+        calculated.append("engagement rate")
+    if any(card["derived"].averaged for card in cards):
+        calculated.append("daily averages")
+    calculated.append("% changes vs. the previous period")
+    listed = calculated[0] if len(calculated) == 1 else ", ".join(calculated[:-1]) + " and " + calculated[-1]
+    return f"Figures come from {platform}. The {listed} are calculated by BrightBean and are not {platform} metrics."
 
 
 def hero_chart_metrics(account: SocialAccount) -> list[str]:

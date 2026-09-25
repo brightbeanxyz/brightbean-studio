@@ -7,7 +7,7 @@
             </div>
             <div style="display: flex; align-items: center; gap: 12px;">
                 <span style="font-size: 2.25rem; font-weight: 700; letter-spacing: -0.02em; color: var(--text-primary); line-height: 1;">{{ chart.derived.value|fmt_metric:chart.derived.kind }}</span>
-                <span class="a-delta {{ chart.derived.delta|delta_color }}" style="font-size: 12.5px; padding: 3px 9px;">{{ chart.derived.delta|fmt_signed }}</span>
+                <span class="a-delta {{ chart.derived.delta|delta_color }}" style="font-size: 12.5px; padding: 3px 9px;" title="Change vs. the previous {{ days }} days, calculated by BrightBean">{{ chart.derived.delta|fmt_signed }}</span>
             </div>
         </div>
         <div style="display: flex; flex-wrap: wrap; gap: 6px;">

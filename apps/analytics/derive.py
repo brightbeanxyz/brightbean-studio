@@ -22,6 +22,10 @@ class DerivedMetric:
     delta: float  # % change vs previous equal-length period
     series: list[float]  # daily values for the *current* period
     kind: str  # "count" | "percent" | "minutes"
+    # True when ``value`` is our average of the platform's daily figures rather
+    # than a figure the platform reports. YouTube's policies require such
+    # derived metrics to be labelled as ours, so the cards key off this.
+    averaged: bool = False
 
 
 def calculate_engagement_rate(engagements: float, views: float | None = None, reach: float | None = None) -> float:
@@ -54,7 +58,8 @@ def derive(values_by_day: list[float], days: int, kind: str) -> DerivedMetric:
     be meaningless).
     """
     cur, prev = _split(values_by_day, days)
-    if kind in ("percent", "minutes"):
+    averaged = kind in ("percent", "minutes")
+    if averaged:
         cur_val = sum(cur) / len(cur) if cur else 0.0
         prev_val = sum(prev) / len(prev) if prev else 0.0
     else:
@@ -66,6 +71,18 @@ def derive(values_by_day: list[float], days: int, kind: str) -> DerivedMetric:
         delta=round(delta, 1),
         series=[float(v) for v in cur],
         kind=kind,
+        averaged=averaged,
+    )
+
+
+def engagement_denominator(series_by_metric: dict[str, list[float]], days: int) -> str | None:
+    """The metric the engagement rate divides by: the first of
+    ``ENGAGEMENT_DENOMINATORS`` with data in the current window, or ``None``
+    when the rate falls back to the follower count.
+    """
+    return next(
+        (d for d in ENGAGEMENT_DENOMINATORS if d in series_by_metric and sum(series_by_metric.get(d, [])[-days:]) > 0),
+        None,
     )
 
 
@@ -85,10 +102,7 @@ def engagement_rate(
     daily denom is available; otherwise the daily numerator only.
     """
     parts_keys = [k for k in series_by_metric if k in ENGAGEMENT_PARTS]
-    denom_key = next(
-        (d for d in ENGAGEMENT_DENOMINATORS if d in series_by_metric and sum(series_by_metric.get(d, [])[-days:]) > 0),
-        None,
-    )
+    denom_key = engagement_denominator(series_by_metric, days)
 
     # Keep the full 2*days window through ``_split`` so the previous-period
     # numerator and denominator are both populated for the delta calc. The

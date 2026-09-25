@@ -228,6 +228,7 @@ def analytics_account(request: HttpRequest, workspace_id, account_id) -> HttpRes
             "follower_growth": follower_g,
             "hero_cards": hero_cards,
             "engagement": engagement,
+            "calculated_note": services.calculated_metrics_note(account, hero_cards, engagement),
             "chart": chart,
             "chart_series_json": json.dumps([round(v, 4) for v in chart["derived"].series]),
             "chart_labels_json": json.dumps(chart["labels"]),
