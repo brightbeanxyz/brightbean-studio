@@ -114,8 +114,9 @@ class QuotaExceededError(RateLimitError):
     ``resets_at`` is when the window rolls over, when the platform's quota has a
     knowable boundary (YouTube's resets at midnight US/Pacific). ``quota_scope``
     names *which* pool ran dry for platforms that meter more than one — YouTube
-    charges the Data API and the Analytics API against separate budgets, and
-    conflating them would stop the cheap call because the expensive one failed.
+    charges the Data API, the Analytics API and video uploads against separate
+    budgets, and conflating them would stop the cheap call because the
+    expensive one failed.
     """
 
     def __init__(

@@ -144,8 +144,8 @@ class TestCheckSocialAccountHealth:
     def test_a_live_quota_block_skips_the_probe_entirely(self, mock_get_provider, connected_account):
         """A probe that can only fail still costs a unit from the spent budget.
 
-        On YouTube that budget is the same one publishing and reconnecting draw
-        on, so the check competes with the recovery it exists to detect.
+        On YouTube that budget is the same one reconnecting draws on, so the
+        check competes with the recovery it exists to detect.
         """
         from apps.common.quota import credential_key, read_scope, trip_quota_block
 

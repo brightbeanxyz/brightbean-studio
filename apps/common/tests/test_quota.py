@@ -6,7 +6,7 @@ through its callers in ``apps/analytics/tests/test_tasks.py`` and
 can assert for itself: whether a block is loud enough for anyone to notice.
 
 That distinction is the whole reason this file exists. A spent daily budget
-means a platform is gone for the rest of the day — publishing, analytics and
+means a platform is gone for the rest of the day — analytics, the inbox and
 reconnecting included — and the first time it happened nobody found out until a
 user wrote in. A five-minute throttle is the breaker doing its job. Logging
 both identically means either the daily case is missed or the throttle case
@@ -15,6 +15,7 @@ trains everyone to ignore it.
 
 import logging
 from datetime import timedelta
+from unittest.mock import MagicMock
 
 import pytest
 from django.utils import timezone
@@ -28,6 +29,7 @@ from apps.common.quota import (
     trip_quota_block,
 )
 from providers.exceptions import QuotaExceededError
+from providers.youtube import API_BASE, UPLOAD_BASE, YouTubeProvider
 
 
 class TestCredentialKey:
@@ -168,3 +170,55 @@ class TestTripFromException:
 
         blocked = quota_blocked_until("tiktok", key, "")
         assert blocked > timezone.now() + timedelta(hours=2)
+
+
+def _youtube_quota_refusal(url: str) -> QuotaExceededError:
+    """The exception the real provider raises for a spent budget at ``url``.
+
+    Built by the provider rather than by hand so these tests fail if its scope
+    classification drifts, not only if the breaker's keying does.
+    """
+    body = {"error": {"code": 403, "errors": [{"reason": "quotaExceeded", "domain": "youtube.quota"}]}}
+    response = MagicMock(status_code=403, url=url, headers={}, text="")
+    response.json = MagicMock(return_value=body)
+    exc = YouTubeProvider()._error_for_response(response)
+    assert isinstance(exc, QuotaExceededError)
+    return exc
+
+
+@pytest.mark.django_db
+class TestYouTubeUploadBucket:
+    """Since June 2026 ``videos.insert`` has a bucket of its own: 100 calls a day.
+
+    The regular 10,000-unit pool the inbox, analytics sync and health check
+    share is a separate budget. Google refuses both with the same
+    ``quotaExceeded`` body, so which one ran dry lives only in the scope the
+    provider reads off the request — and a block filed under the wrong one
+    stops, for the rest of the day, calls that still have budget.
+    """
+
+    def test_a_spent_upload_bucket_leaves_the_regular_pool_open(self):
+        key = credential_key({"client_id": "shared"})
+        exc = _youtube_quota_refusal(f"{UPLOAD_BASE}/videos?uploadType=resumable&part=snippet,status")
+
+        trip_from_exception("youtube", key, exc)
+
+        assert quota_blocked_until("youtube", key, "upload") is not None
+        # Every scope the inbox, health check and analytics sync resolve.
+        assert quota_blocked_until("youtube", key, read_scope("youtube")) is None
+        for scope in scopes_for("youtube"):
+            assert quota_blocked_until("youtube", key, scope) is None
+
+    def test_a_spent_regular_pool_leaves_uploads_open(self):
+        key = credential_key({"client_id": "shared"})
+        exc = _youtube_quota_refusal(f"{API_BASE}/commentThreads?part=snippet,replies")
+
+        trip_from_exception("youtube", key, exc)
+
+        assert quota_blocked_until("youtube", key, read_scope("youtube")) is not None
+        assert quota_blocked_until("youtube", key, "upload") is None
+
+    def test_no_reader_resolves_to_the_upload_scope(self):
+        """Nothing that polls or syncs may read the upload bucket's block."""
+        assert "upload" not in scopes_for("youtube")
+        assert read_scope("youtube") != "upload"

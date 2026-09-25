@@ -568,8 +568,9 @@ PUBLISHER_MAX_CONCURRENT_PLATFORM_PUBLISHES = env.int("PUBLISHER_MAX_CONCURRENT_
 # different in kind: its Data API grants 10,000 units a DAY to the whole OAuth
 # client, shared by every connected channel, and a comment poll costs a unit per
 # page. Ten channels at the 5-minute cadence spend the day's budget before noon
-# — and when it is gone, publishing, analytics and even reconnecting an account
-# stop until midnight US/Pacific. So YouTube gets its own floor.
+# — and when it is gone, analytics, reconnecting an account, and the thumbnails
+# and first comments of new videos stop until midnight US/Pacific. (Uploads
+# carry on: ``videos.insert`` has its own bucket.) So YouTube gets its own floor.
 #
 # This is enforced per account against ``inbox_last_polled_at`` rather than by
 # slowing the cycle, because the cycle serves every platform at once. (It also

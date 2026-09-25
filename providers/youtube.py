@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 
@@ -42,6 +42,13 @@ REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 API_BASE = "https://www.googleapis.com/youtube/v3"
 UPLOAD_BASE = "https://www.googleapis.com/upload/youtube/v3"
 ANALYTICS_BASE = "https://youtubeanalytics.googleapis.com/v2"
+
+# ``videos.insert``: both the resumable-session POST and the PUT that carries
+# the bytes, whose Location URL keeps this path and adds an ``upload_id``.
+# Matched on the path rather than the whole upload host, because
+# ``thumbnails.set`` lives under ``/upload/`` too but is charged to the regular
+# pool.
+_VIDEOS_INSERT_PATH = urlsplit(f"{UPLOAD_BASE}/videos").path
 
 # YouTube Analytics caps a ``filters=video==<id>,<id>,...`` list at 500 IDs
 # per request. Larger inputs to :meth:`YouTubeProvider.get_post_analytics`
@@ -83,6 +90,28 @@ _MAX_COMMENT_PAGES = 5
 # deep enough that anything past it is history no comment poll should be
 # reconstructing.
 _MAX_DEEP_COMMENT_PAGES = 50
+
+
+def _quota_scope_for(url: str) -> str:
+    """Which of YouTube's separately metered budgets a request to ``url`` spends.
+
+    Read off the request because the response cannot say: Google refuses a
+    spent budget with the same ``quotaExceeded`` / ``youtube.quota`` whichever
+    one it is. The request can — only the Analytics host spends the Analytics
+    quota, and only ``videos.insert`` spends the upload bucket.
+
+    Each is kept apart because a block is keyed on this name, and a refusal
+    filed under the wrong one stops calls that still have budget: the
+    Analytics sync because the Data API ran dry, or the inbox, analytics and
+    health checks for the rest of the day because 100 uploads went out.
+
+    ``search.list`` has its own bucket too, but nothing here calls it.
+    """
+    if url.startswith(ANALYTICS_BASE):
+        return "analytics"
+    if urlsplit(url).path.rstrip("/") == _VIDEOS_INSERT_PATH:
+        return "upload"
+    return "data"
 
 
 class YouTubeMessageBatch(list[InboxMessage]):
@@ -140,11 +169,19 @@ class YouTubeProvider(SocialProvider):
 
     @property
     def rate_limits(self) -> RateLimitConfig:
+        # Since 2026-06-01 the Data API meters three daily budgets, each per
+        # Google Cloud project (so shared by every channel on this deployment)
+        # and each reset at midnight US/Pacific: ``videos.insert`` and
+        # ``search.list`` get 100 calls apiece at 1 unit a call, and every other
+        # method shares the regular 10,000 units. An upload therefore no longer
+        # spends the pool the inbox, analytics and health check live on — its
+        # custom thumbnail (``thumbnails.set``, 50 units) and first comment
+        # (``commentThreads.insert``, 50) still do.
         return RateLimitConfig(
             requests_per_hour=600,
             requests_per_day=10000,
-            publish_per_day=6,
-            extra={"quota_units_per_day": 10000, "upload_cost_units": 1600},
+            publish_per_day=100,
+            extra={"quota_units_per_day": 10000, "videos_insert_per_day": 100, "search_list_per_day": 100},
         )
 
     # ------------------------------------------------------------------
@@ -403,9 +440,11 @@ class YouTubeProvider(SocialProvider):
         connected to this deployment, not each one. So walking a channel's
         entire comment history on a poll that repeats all day is the one thing
         this must not do: ten channels deep-paging every five minutes spend the
-        day's budget before noon, and then *everything* YouTube stops —
-        publishing, analytics, and reconnecting the accounts alike — until the
-        quota rolls over at midnight US/Pacific.
+        day's budget before noon, and then nearly everything YouTube stops —
+        the inbox, analytics, reconnecting the accounts, and the thumbnail and
+        first comment on each new video — until the quota rolls over at
+        midnight US/Pacific. Only the upload itself carries on, because
+        ``videos.insert`` draws on a bucket of its own.
 
         A normal poll therefore stops early. ``order=time`` returns threads
         newest first, so once a page ends older than ``since`` there is nothing
@@ -634,15 +673,11 @@ class YouTubeProvider(SocialProvider):
         body = self._safe_json(response)
         reasons = google_error_reasons(body)
         now = now or datetime.now(UTC)
-        # The Data API and the Analytics API are metered separately, so record
-        # which budget ran dry — blocking the cheap batched Analytics call
-        # because the Data API is exhausted throws away the one part of the
-        # sync that was never the problem.
-        scope = "analytics" if str(response.url).startswith(ANALYTICS_BASE) else "data"
+        scope = _quota_scope_for(str(response.url))
 
         if reasons & QUOTA_REASONS:
             return QuotaExceededError(
-                f"{self.platform_name} daily quota exhausted ({scope} API)",
+                f"{self.platform_name} daily quota exhausted ({scope} quota)",
                 resets_at=next_google_quota_reset(now),
                 quota_scope=scope,
                 status_code=response.status_code,
@@ -652,7 +687,7 @@ class YouTubeProvider(SocialProvider):
 
         if reasons & THROTTLE_REASONS:
             return QuotaExceededError(
-                f"{self.platform_name} request rate throttled ({scope} API)",
+                f"{self.platform_name} request rate throttled ({scope} quota)",
                 resets_at=now + _THROTTLE_COOLDOWN,
                 quota_scope=scope,
                 status_code=response.status_code,
