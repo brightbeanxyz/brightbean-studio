@@ -79,8 +79,8 @@ def check_social_account_health(account_id: str):
     # A block already recorded means the platform has told us it will refuse
     # until the window rolls over. Probing anyway spends a unit from the very
     # budget that is exhausted — and on YouTube that budget is also what
-    # publishing and reconnecting draw on, so the probe competes with the
-    # recovery it is trying to detect.
+    # reconnecting draws on, so the probe competes with the recovery it is
+    # trying to detect.
     #
     # Skipped rather than returned early: a refresh may have just rotated this
     # account's token, and that belongs in the save below whether or not we got

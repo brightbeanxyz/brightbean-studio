@@ -1080,7 +1080,7 @@ The backend system responsible for sending posts to social media platforms at th
   - Facebook: 200 API calls per hour per user token. 4,800 posts per 24 hours per page.
   - LinkedIn: 100 API calls per day per member for posting. Company pages: 100 shares per day.
   - TikTok: Varies by app review tier. Default: 5 videos per day.
-  - YouTube: 10,000 quota units per day (video upload = 1,600 units).
+  - YouTube: per Google Cloud project, reset at midnight US/Pacific: 100 `videos.insert` (upload) calls and 100 `search.list` calls per day, each in its own bucket at 1 unit per call, plus 10,000 units per day for every other method (custom thumbnail and comment = 50 units each).
   - Pinterest: 1,000 API calls per hour.
   - Bluesky: 5,000 actions per hour, 35,000 per day per account.
   - Mastodon: Varies by instance. Typical: 300 posts per 3 hours.

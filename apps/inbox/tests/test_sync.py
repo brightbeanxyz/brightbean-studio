@@ -385,8 +385,8 @@ def test_a_comment_backlog_is_silent_on_an_account_that_already_has_dms(connecte
 # Quota discipline
 #
 # YouTube's Data API grants 10,000 units a DAY to the whole OAuth client, so
-# what the inbox spends is taken from the same pool publishing, analytics and
-# reconnecting draw on. Every test below pins one of the three things that stop
+# what the inbox spends is taken from the same pool analytics and reconnecting
+# draw on (uploads have a bucket of their own). Every test below pins one of the three things that stop
 # this poller spending it: the breaker, the per-platform floor, and the sweep
 # that makes the floor affordable.
 # ---------------------------------------------------------------------------

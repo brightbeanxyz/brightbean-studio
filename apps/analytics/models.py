@@ -90,8 +90,9 @@ class ProviderQuotaBlock(models.Model):
     ``quota_scope`` separates budgets the same platform meters independently —
     YouTube's Data API and Analytics API have separate quotas, and blocking the
     cheap batched Analytics call because the Data API ran dry would throw away
-    the part of the sync that was never the problem. Empty for platforms with a
-    single pool.
+    the part of the sync that was never the problem. ``videos.insert`` has a
+    third, "upload", since YouTube gave it its own bucket. Empty for platforms
+    with a single pool.
 
     Deliberately not ``apps.publisher.models.RateLimitState``: that table is
     read by the publish engine as a hard gate on *publishing*, so writing a

@@ -8,9 +8,12 @@ The breaker turns one platform answer into a decision every caller respects.
 
 It lives here, not under one app, because the budget being spent is not one
 app's: YouTube meters its Data API per OAuth *client*, so the analytics sync,
-the inbox poll and the health check all draw on the same 10,000 units a day.
-A breaker only one of them consulted would watch the other two spend the budget
-it was guarding. The ``ProviderQuotaBlock`` row stays in ``apps.analytics``
+the inbox poll and the health check all draw on the same regular pool of 10,000
+units a day. A breaker only one of them consulted would watch the other two
+spend the budget it was guarding. Uploads are not in that pool: since June 2026
+``videos.insert`` has a bucket of its own (see ``_PLATFORM_SCOPES``), so video
+publishing neither spends the budget these three share nor stops when it runs
+out. The ``ProviderQuotaBlock`` row stays in ``apps.analytics``
 (imported lazily below) because moving a table earns a migration and buys
 nothing — what needed to be shared is the decision, not the storage.
 
@@ -41,11 +44,21 @@ _UNKNOWN_CREDENTIAL = "unknown"
 # How each platform's budgets are named, and the single source for it.
 #
 # A platform that meters one pool uses "" — the empty scope is not a missing
-# value, it is that platform's only budget. YouTube meters two, and conflating
-# them would stop the cheap Data API call because the expensive Analytics one
-# ran dry. Every caller must resolve the scope the same way or the breaker
-# splits in two: one side writes a row the other never looks up, and both keep
-# calling an API that has already refused.
+# value, it is that platform's only budget. YouTube meters two that the readers
+# here use, and conflating them would stop the cheap Data API call because the
+# expensive Analytics one ran dry. Every caller must resolve the scope the same
+# way or the breaker splits in two: one side writes a row the other never looks
+# up, and both keep calling an API that has already refused.
+#
+# YouTube has a third budget, which is deliberately absent from this map:
+# ``videos.insert`` draws on its own bucket of 100 calls a day, so the provider
+# files an upload's refusal under "upload". Nothing here reads that scope, so
+# a spent upload bucket cannot block the inbox, analytics or health check, and
+# a spent regular pool cannot block an upload. Filed under "data", as it was
+# until the provider learned of the split, a refusal recorded here would stop
+# all three for the rest of the day over a budget none of them spends. The
+# publisher does not consult the breaker at all: it reschedules each post for
+# its exception's ``resets_at``.
 _PLATFORM_SCOPES: dict[str, tuple[str, str]] = {
     "youtube": ("analytics", "data"),
 }

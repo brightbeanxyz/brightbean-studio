@@ -263,7 +263,7 @@ class InboxSyncEngine:
         # The platform has already said "not until later". Polling anyway spends
         # a request to be refused and — on YouTube, where the budget is shared
         # across every account on this deployment — takes the refusal out of the
-        # same pool that publishing and reconnecting need.
+        # same pool that reconnecting and a new video's first comment need.
         credential = quota.credential_key(getattr(provider, "credentials", None))
         # ``read_scope`` rather than a literal: a platform that meters one pool
         # names it "", and hardcoding "data" here wrote a row the analytics sync

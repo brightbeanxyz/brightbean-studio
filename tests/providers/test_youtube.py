@@ -14,6 +14,7 @@ from providers.youtube import (
     _MAX_DEEP_COMMENT_PAGES,
     ANALYTICS_BASE,
     API_BASE,
+    UPLOAD_BASE,
     YouTubeProvider,
 )
 
@@ -283,6 +284,47 @@ class TestErrorClassification:
         exc = YouTubeProvider()._error_for_response(self._error(403, self._QUOTA_BODY, url=f"{ANALYTICS_BASE}/reports"))
 
         assert exc.quota_scope == "analytics"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            # The resumable-session POST that publish_post opens with.
+            f"{UPLOAD_BASE}/videos?uploadType=resumable&part=snippet,status",
+            # The PUT to the session's Location, which keeps the path.
+            f"{UPLOAD_BASE}/videos?uploadType=resumable&part=snippet,status&upload_id=xa298sd_f",
+        ],
+    )
+    def test_videos_insert_quota_uses_its_own_upload_scope(self, url):
+        """``videos.insert`` has had a bucket of its own since June 2026.
+
+        The body is the same ``quotaExceeded`` / ``youtube.quota`` the regular
+        pool sends, so only the request can say which ran dry. Filed under
+        "data", 100 uploads would block the inbox, analytics and health checks
+        for the rest of the day with 10,000 units still unspent.
+        """
+        now = datetime(2026, 9, 17, 18, 0, tzinfo=UTC)
+
+        exc = YouTubeProvider()._error_for_response(self._error(403, self._QUOTA_BODY, url=url), now=now)
+
+        assert isinstance(exc, QuotaExceededError)
+        assert exc.quota_scope == "upload"
+        # The buckets roll over together at Pacific midnight.
+        assert exc.resets_at == next_google_quota_reset(now)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            # ``videos.list`` — the same resource name, not the upload host.
+            f"{API_BASE}/videos?part=statistics&id=a,b",
+            # On the upload host, but charged 50 units to the regular pool.
+            f"{UPLOAD_BASE}/thumbnails/set?videoId=abc&uploadType=media",
+            f"{API_BASE}/commentThreads?part=snippet",
+        ],
+    )
+    def test_everything_else_stays_on_the_regular_data_pool(self, url):
+        exc = YouTubeProvider()._error_for_response(self._error(403, self._QUOTA_BODY, url=url))
+
+        assert exc.quota_scope == "data"
 
     def test_rate_limit_exceeded_gets_a_short_cooldown_not_a_day(self):
         """A per-second throttle must not cost the rest of the day's syncing."""
