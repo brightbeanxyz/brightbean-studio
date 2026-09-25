@@ -270,3 +270,5 @@ def test_youtube_views_built_from_video_counts_are_labelled_estimates(owner_clie
     assert "Estimated by BrightBean from per-video counts" in body
     assert "estimates built from per-video counts" in response.context["calculated_note"]
     assert response.context["chart"]["derived"].estimated is True
+    # Today has no snapshot yet: a gap in the chart, not a drop to zero views.
+    assert response.context["chart_series_json"].endswith("null]")

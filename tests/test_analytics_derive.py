@@ -114,3 +114,27 @@ def test_engagement_rate_sparkline_on_the_follower_fallback_is_a_rate():
 
     assert metric.value == 15.0
     assert metric.series == [5.0, 10.0]
+
+
+def test_derive_series_shows_unreported_days_as_gaps_matching_the_average():
+    """The sparkline must agree with the value: a day the average skipped is
+    drawn as a gap (None), not as a drop to 0."""
+    rate = derive([50.0, 0.0, 50.0, 0.0], days=4, kind="percent", present=[True, False, True, False])
+    minutes = derive([30.0, 0.0, 30.0, 0.0], days=4, kind="minutes", present=[True, False, True, False])
+    views = derive([10.0, 0.0, 10.0, 0.0], days=4, kind="count", present=[True, False, True, False])
+
+    assert rate.series == [50.0, None, 50.0, None]
+    # A quiet day inside the window is a real 0; only the trailing run is unreported.
+    assert minutes.series == [30.0, 0.0, 30.0, None]
+    assert views.series == [10.0, 0.0, 10.0, None]
+    assert views.value == 20.0
+
+
+def test_engagement_rate_sparkline_leaves_unreported_days_as_gaps():
+    series = {"views": [100.0, 100.0, 0.0], "likes": [10.0, 5.0, 0.0]}
+    present = {"views": [True, True, False], "likes": [True, True, False]}
+
+    metric = engagement_rate(series, days=3, present_by_metric=present)
+
+    assert metric.series == [10.0, 5.0, None]
+    assert metric.value == 7.5

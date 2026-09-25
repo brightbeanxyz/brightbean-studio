@@ -366,3 +366,36 @@ def test_account_bundle_marks_post_fallback_metrics_as_estimated(facebook_accoun
     assert bundle["estimated_metrics"] == {"views"}
     assert bundle["present_map"]["reach"][-1] is True
     assert bundle["present_map"]["reach"][-2] is False
+
+
+@pytest.mark.django_db
+def test_account_bundle_counts_a_zero_delta_fallback_day_as_reported(facebook_account):
+    """A post snapshot that didn't change is a measured quiet day. Only days
+    with no snapshot at all may be treated as not reported yet."""
+    from apps.analytics.models import PostInsightsSnapshot
+    from apps.analytics.services import account_analytics_bundle
+
+    platform_post = _published_platform_post(facebook_account)
+    platform_post.published_at = timezone.now() - timedelta(days=60)
+    platform_post.save(update_fields=["published_at"])
+    today = timezone.now().date()
+    for offset, views in ((3, 100), (2, 130), (1, 130)):
+        PostInsightsSnapshot.objects.create(
+            platform_post=platform_post, metric_key="views", date=today - timedelta(days=offset), value=views
+        )
+
+    bundle = account_analytics_bundle(facebook_account, 7)
+
+    # Days: ..., today-3 (anchor, nothing measured), today-2 (+30), today-1 (+0), today (no snapshot).
+    assert bundle["series_map"]["views"][-3:] == [30.0, 0.0, 0.0]
+    assert bundle["present_map"]["views"][-4:] == [False, True, True, False]
+
+
+def test_sparkline_draws_unreported_days_as_a_gap():
+    from apps.analytics.templatetags.analytics_extras import sparkline
+
+    svg = sparkline([1.0, 2.0, None, 3.0, 4.0])
+
+    # Two separate runs of line, not one line dipping to zero.
+    assert svg.count("M") == 4  # two line subpaths + two fill subpaths
+    assert sparkline([None, None]) == ""

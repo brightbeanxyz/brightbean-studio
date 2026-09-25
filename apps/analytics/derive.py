@@ -23,7 +23,9 @@ class DerivedMetric:
 
     value: float
     delta: float  # % change vs previous equal-length period
-    series: list[float]  # daily values for the *current* period
+    # Daily values for the *current* period; ``None`` for a day with no
+    # reported value yet (see ``_reported_days``), which charts draw as a gap.
+    series: list[float | None]
     kind: str  # "count" | "percent" | "minutes"
     # How BrightBean produced ``value`` when the platform didn't report it as
     # shown. YouTube's developer policies allow metrics derived from API data
@@ -58,24 +60,37 @@ def _split(values: list[float], days: int) -> tuple[list[float], list[float]]:
     return cur, prev
 
 
+def _reported_days(present: list[bool], kind: str) -> list[bool]:
+    """Which days count as reported, for both the value and the sparkline.
+
+    For a rate (percent) a day without data has no value at all. For a daily
+    quantity (count, minutes) a quiet day inside the window really is 0, but
+    the days after the last report haven't arrived yet (YouTube Analytics
+    lags 2-3 days), so only that trailing run is unreported.
+    """
+    if kind == "percent":
+        return list(present)
+    last = max((i for i, is_present in enumerate(present) if is_present), default=-1)
+    return [i <= last for i in range(len(present))]
+
+
+def _with_gaps(values: list[float], reported: list[bool] | None) -> list[float | None]:
+    if reported is None:
+        return [float(v) for v in values]
+    return [float(v) if ok else None for v, ok in zip(values, reported, strict=False)]
+
+
 def _window_value(values: list[float], present: list[bool] | None, kind: str) -> float:
     """Sum a window of counts, or average a window of percent / minutes.
 
-    ``present`` marks the days that actually have a reported value; the
-    series itself is zero-filled, so without it a day with no data yet counts
-    as a real zero. For a rate (percent) a day without data has no value, so
-    it is skipped. For a daily quantity (minutes) a quiet day really is 0, but
-    the days after the last report haven't arrived yet (YouTube Analytics lags
-    2-3 days), so the window ends at the last reported day.
+    ``present`` marks the days that actually have a value; the series itself
+    is zero-filled, so without it a day with no data yet would count as a real
+    zero. Averages use only the days :func:`_reported_days` counts as reported.
     """
     if kind not in AVERAGED_KINDS:
         return float(sum(values))
     if present is not None:
-        if kind == "percent":
-            values = [v for v, is_present in zip(values, present, strict=False) if is_present]
-        else:
-            last = max((i for i, is_present in enumerate(present) if is_present), default=-1)
-            values = values[: last + 1]
+        values = [v for v, ok in zip(values, _reported_days(present, kind), strict=False) if ok]
     return sum(values) / len(values) if values else 0.0
 
 
@@ -103,7 +118,7 @@ def derive(
     return DerivedMetric(
         value=cur_val,
         delta=round(delta, 1),
-        series=[float(v) for v in cur],
+        series=_with_gaps(cur, _reported_days(cur_present, kind) if cur_present is not None else None),
         kind=kind,
         averaged=kind in AVERAGED_KINDS,
         estimated=estimated,
@@ -114,6 +129,8 @@ def engagement_rate(
     series_by_metric: dict[str, list[float]],
     days: int,
     fallback_followers: int = 0,
+    *,
+    present_by_metric: dict[str, list[bool]] | None = None,
 ) -> DerivedMetric:
     """Compute derived engagement rate per the design's formula.
 
@@ -126,6 +143,8 @@ def engagement_rate(
 
     The sparkline is per-day with the same denominator: ``sum(parts_day_i) /
     denom_day_i * 100``, or ``/ fallback_followers`` on the follower fallback.
+    With ``present_by_metric``, days after the last report of the metrics it
+    divides are ``None`` (not reported yet) rather than a plunge to 0%.
     """
     parts_keys = [k for k in series_by_metric if k in ENGAGEMENT_PARTS]
     denom_key = next(
@@ -164,10 +183,20 @@ def engagement_rate(
     delta = ((rate_cur - rate_prev) / rate_prev) * 100 if rate_prev else 0.0
 
     # Sparkline = CURRENT window only.
-    sparkline = [
+    sparkline: list[float | None] = [
         (part / denom) * 100 if denom > 0 else 0.0
         for part, denom in zip(parts_cur_window, denom_cur_window[-len(parts_cur_window) :], strict=False)
     ]
+    if present_by_metric is not None and sparkline:
+        # A rate is reported once what it divides is: the denominator, or on
+        # the follower fallback any of the parts.
+        basis = [denom_key] if denom_key else parts_keys
+        masks = [present_by_metric[k][-days:] for k in basis if k in present_by_metric]
+        if masks:
+            present = [any(day) for day in zip(*masks, strict=False)]
+            present = [False] * (len(sparkline) - len(present)) + present
+            reported = _reported_days(present[-len(sparkline) :], "count")
+            sparkline = [v if ok else None for v, ok in zip(sparkline, reported, strict=False)]
 
     return DerivedMetric(
         value=round(rate_cur, 2),

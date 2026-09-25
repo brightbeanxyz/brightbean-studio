@@ -285,10 +285,11 @@ class TestAccountAnalytics:
         assert r.status_code == 200
         body = r.json()
         assert body["analytics_available"] is True
-        # Hero metrics still listed (per platform catalog) but with zero values.
+        # Hero metrics still listed (per platform catalog) but with zero values,
+        # and every day unreported (null) rather than a reported zero.
         for metric in body["hero_metrics"]:
             assert metric["value"] == 0
-            assert metric["series"] == [] or all(v == 0 for v in metric["series"])
+            assert all(v is None for v in metric["series"])
         assert body["captured_at"] is None
         # First-poll ETA: shortly from now (we asked for +5 min).
         assert body["next_sync_eta"] is not None

@@ -148,9 +148,13 @@ def _post_summed_series_for_metric(
     page consistent with the per-post drawer for platforms that ship without
     an account-level analytics API.
 
-    Returns ``(daily_totals, max_captured_at)``. The caller folds
-    ``max_captured_at`` into the bundle's freshness signal so a fallback-only
-    YouTube/TikTok response doesn't report "no data yet".
+    Returns ``(daily_totals, max_captured_at, observed_days)``. The caller
+    folds ``max_captured_at`` into the bundle's freshness signal so a
+    fallback-only YouTube/TikTok response doesn't report "no data yet".
+    ``observed_days`` are the days we actually measured, including days
+    whose delta was zero (which ``daily_totals`` leaves out): a quiet day is
+    a real 0, while a day with no snapshot yet is missing, and the averages
+    and sparklines treat the two differently.
 
     Three correctness rules in the iteration:
       * The query is bounded to ``[start, end]`` for performance. The first
@@ -192,6 +196,7 @@ def _post_summed_series_for_metric(
         )
     )
     out: dict[dt_date, float] = defaultdict(float)
+    observed: set[dt_date] = set()
     max_captured: Any = None
     current_post_id: Any = None
     prev_value = 0.0
@@ -229,12 +234,14 @@ def _post_summed_series_for_metric(
                     d += timedelta(days=1)
             prev_value = v
             continue
+        observed.add(day)
         delta = v - prev_value
         if delta <= 0:
             continue
         prev_value = v
         out[day] += delta
-    return dict(out), max_captured
+    observed.update(out)
+    return dict(out), max_captured, observed
 
 
 def account_analytics_bundle(account: SocialAccount, days: int) -> dict[str, Any]:
@@ -269,11 +276,14 @@ def account_analytics_bundle(account: SocialAccount, days: int) -> dict[str, Any
         date__lte=end,
     ).values_list("metric_key", "date", "value", "captured_at")
     by_metric: dict[str, dict[dt_date, float]] = defaultdict(dict)
+    # Days with a real value, including a fallback day whose delta was zero.
+    present_days: dict[str, set[dt_date]] = defaultdict(set)
     captured_by_metric: dict[str, Any] = {}
     max_captured: Any = None
     metrics_with_account_data: set[str] = set()
     for metric_key, day, value, captured_at in rows:
         by_metric[metric_key][day] = value
+        present_days[metric_key].add(day)
         metrics_with_account_data.add(metric_key)
         if metric_key not in captured_by_metric or captured_at > captured_by_metric[metric_key]:
             captured_by_metric[metric_key] = captured_at
@@ -293,8 +303,8 @@ def account_analytics_bundle(account: SocialAccount, days: int) -> dict[str, Any
     for m in platform_metrics:
         if not _supports_post_fallback(m):
             continue
-        daily, fallback_captured = _post_summed_series_for_metric(account, m, start, end)
-        if not daily:
+        daily, fallback_captured, observed = _post_summed_series_for_metric(account, m, start, end)
+        if not observed:
             continue
         account_captured = captured_by_metric.get(m)
         should_use_fallback = m not in metrics_with_account_data or (
@@ -302,13 +312,14 @@ def account_analytics_bundle(account: SocialAccount, days: int) -> dict[str, Any
         )
         if should_use_fallback:
             by_metric[m].update(daily)
+            present_days[m].update(observed)
             estimated_metrics.add(m)
             if fallback_captured is not None and (max_captured is None or fallback_captured > max_captured):
                 max_captured = fallback_captured
 
     window = [start + timedelta(days=i) for i in range(2 * days)]
     series_map = {m: [by_metric[m].get(day, 0.0) for day in window] for m in platform_metrics}
-    present_map = {m: [day in by_metric[m] for day in window] for m in platform_metrics}
+    present_map = {m: [day in present_days[m] for day in window] for m in platform_metrics}
     return {
         "series_map": series_map,
         "present_map": present_map,
@@ -383,7 +394,12 @@ def engagement_card(
         return None
     if bundle is None:
         bundle = account_analytics_bundle(account, days)
-    rate = engagement_rate(bundle["series_map"], days, fallback_followers=account.follower_count)
+    rate = engagement_rate(
+        bundle["series_map"],
+        days,
+        fallback_followers=account.follower_count,
+        present_by_metric=bundle["present_map"],
+    )
     parts = [
         {"metric": m, "label": _label(m), "derived": _derive_metric(bundle, m, days)}
         for m in PLATFORM_METRICS.get(account.platform, [])

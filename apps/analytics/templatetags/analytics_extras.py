@@ -51,24 +51,39 @@ def fmt_signed(value) -> str:
 
 @register.simple_tag
 def sparkline(values, color: str = "var(--primary)", width: int = 160, height: int = 36):
-    """Render an inline SVG sparkline. ``values`` is a list of numbers."""
-    if not values:
+    """Render an inline SVG sparkline. ``values`` is a list of numbers.
+
+    ``None`` is a day with no reported value yet: it keeps its horizontal slot
+    but draws nothing, so unreported days read as a gap rather than a drop to 0.
+    """
+    vals = [None if v is None else float(v) for v in values or []]
+    known = [v for v in vals if v is not None]
+    if not known:
         return ""
-    vals = [float(v) for v in values]
     n = len(vals)
-    vmin, vmax = min(vals), max(vals)
+    vmin, vmax = min(known), max(known)
     rng = (vmax - vmin) or 1.0
-    # Map each value to (x, y) within the viewBox.
+    # Map each value to (x, y) within the viewBox, splitting at gaps.
     pad = 2
     inner_w = max(1, width - 2 * pad)
     inner_h = max(1, height - 2 * pad)
-    pts = []
+    segments: list[list[tuple[float, float]]] = [[]]
     for i, v in enumerate(vals):
+        if v is None:
+            if segments[-1]:
+                segments.append([])
+            continue
         x = pad + (i * inner_w / max(1, n - 1) if n > 1 else inner_w / 2)
         y = pad + inner_h - ((v - vmin) / rng) * inner_h
-        pts.append((x, y))
-    path_d = " ".join(f"{'M' if i == 0 else 'L'}{x:.1f},{y:.1f}" for i, (x, y) in enumerate(pts))
-    fill_d = path_d + f" L{pts[-1][0]:.1f},{height - pad} L{pts[0][0]:.1f},{height - pad} Z"
+        segments[-1].append((x, y))
+    lines, fills = [], []
+    for pts in (seg for seg in segments if seg):
+        # A lone point gets a hair-length stroke so its round cap shows as a dot.
+        line = " ".join(f"{'M' if i == 0 else 'L'}{x:.1f},{y:.1f}" for i, (x, y) in enumerate(pts))
+        lines.append(line if len(pts) > 1 else f"{line} l0.01,0")
+        fills.append(f"{line} L{pts[-1][0]:.1f},{height - pad} L{pts[0][0]:.1f},{height - pad} Z")
+    path_d = " ".join(lines)
+    fill_d = " ".join(fills)
     svg = (
         f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
         f'preserveAspectRatio="none" style="display:block">'

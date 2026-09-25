@@ -233,7 +233,8 @@ def analytics_account(request: HttpRequest, workspace_id, account_id) -> HttpRes
                 account, cards=hero_cards, engagement=engagement, chart=chart, growth=follower_g
             ),
             "chart": chart,
-            "chart_series_json": json.dumps([round(v, 4) for v in chart["derived"].series]),
+            # ``null`` for days not reported yet: Chart.js draws those as a gap.
+            "chart_series_json": json.dumps([None if v is None else round(v, 4) for v in chart["derived"].series]),
             "chart_labels_json": json.dumps(chart["labels"]),
             "table": table,
         }

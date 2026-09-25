@@ -474,9 +474,12 @@ class DerivedMetricResponse(Schema):
             "``0.0`` when there is no prior baseline."
         ),
     )
-    series: list[float] = Field(
+    series: list[float | None] = Field(
         default_factory=list,
-        description="Daily values for the current window, oldest first.",
+        description=(
+            "Daily values for the current window, oldest first. ``null`` for a day the platform "
+            "hasn't reported yet (for example YouTube Analytics' 2-3 day lag), which is not a zero."
+        ),
     )
     calculated_by_brightbean: bool = Field(
         False,
