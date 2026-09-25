@@ -330,7 +330,7 @@ def _schedule_post(args: dict, context: dict[str, Any]) -> dict:
     # raises ``HttpError(429,...)`` which we re-shape into a JSON-RPC
     # error so MCP clients see structured feedback rather than HTTP.
     try:
-        check_platform_quota(sa)
+        check_platform_quota(sa, scheduled_at)
     except HttpError as exc:
         raise JsonRpcError(
             INVALID_PARAMS,
@@ -600,7 +600,7 @@ def _schedule_draft(args: dict, context: dict[str, Any]) -> dict:
     # anything — over-quota fails the whole call with no partial commit.
     for pp in drafts:
         try:
-            check_platform_quota(pp.social_account)
+            check_platform_quota(pp.social_account, scheduled_at)
         except HttpError as exc:
             raise JsonRpcError(
                 INVALID_PARAMS,

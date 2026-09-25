@@ -24,7 +24,7 @@ from apps.calendar.services import (
 )
 from apps.calendar.tasks import generate_recurring_posts
 from apps.calendar.views import _day_view_data
-from apps.composer.models import PlatformPost, Post
+from apps.composer.models import PUBLISH_MOMENT, PlatformPost, Post
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.social_accounts.models import SocialAccount
@@ -545,7 +545,6 @@ class RepairPublishedScheduledAtTests(TestCase):
         published child back to its past published_at drops Post.scheduled_at
         into the past, which would make the sibling instantly due.
         """
-        from django.db.models.functions import Coalesce
 
         sibling_account = SocialAccount.objects.create(
             workspace=self.workspace,
@@ -587,7 +586,7 @@ class RepairPublishedScheduledAtTests(TestCase):
         self.assertEqual(sibling.scheduled_at, self.next_week)
         due_ids = set(
             PlatformPost.objects.filter(status=PlatformPost.Status.SCHEDULED)
-            .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
+            .annotate(effective_at=PUBLISH_MOMENT)
             .filter(effective_at__lte=timezone.now())
             .values_list("id", flat=True)
         )
@@ -994,11 +993,10 @@ class SlotOccupancyQueueTests(TestCase):
         self.assertEqual(pp_b.scheduled_at, c[1])  # neighbour untouched
 
         # Drafted child is not swept up by the publisher's due query.
-        from django.db.models.functions import Coalesce
 
         due = set(
             PlatformPost.objects.filter(status=PlatformPost.Status.SCHEDULED)
-            .annotate(eff=Coalesce("scheduled_at", "post__scheduled_at"))
+            .annotate(eff=PUBLISH_MOMENT)
             .filter(eff__lte=timezone.now())
             .values_list("id", flat=True)
         )

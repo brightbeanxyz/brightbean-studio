@@ -27,11 +27,10 @@ from background_task import background
 from django.conf import settings
 from django.db import transaction
 from django.db.models import F
-from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.common.db import in_worker_thread, release_idle_connection
-from apps.composer.models import PlatformPost
+from apps.composer.models import PUBLISH_MOMENT, PlatformPost
 from apps.credentials.models import resolve_platform_credentials
 from apps.media_library.storage import download_to_path
 from apps.social_accounts.error_messages import (
@@ -397,13 +396,13 @@ class PublishEngine:
         return published_count
 
     def _get_due_platform_posts(self):
-        """Find PlatformPosts due for publishing, using Coalesce fallback."""
+        """Find PlatformPosts due for publishing, using the PUBLISH_MOMENT fallback."""
         now = timezone.now()
         return list(
             PlatformPost.objects.filter(
                 status=PlatformPost.Status.SCHEDULED,
             )
-            .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
+            .annotate(effective_at=PUBLISH_MOMENT)
             .filter(effective_at__lte=now)
             # A row parked on a retry backoff is still SCHEDULED with a
             # scheduled_at in the past, so without this it came straight back on

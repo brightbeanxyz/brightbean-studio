@@ -14,7 +14,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.common.validators import is_valid_hex_color
-from apps.composer.models import ContentCategory, PlatformPost, Post
+from apps.composer.models import PUBLISH_MOMENT, ContentCategory, PlatformPost, Post
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
@@ -176,7 +176,6 @@ def _get_filtered_platform_posts(workspace, request):
     Each row carries an ``effective_at`` annotation that falls back to
     ``post.scheduled_at`` when the PlatformPost has no per-platform override.
     """
-    from django.db.models.functions import Coalesce
 
     qs = (
         PlatformPost.objects.filter(post__workspace_id=workspace.id)
@@ -185,7 +184,7 @@ def _get_filtered_platform_posts(workspace, request):
         # would fire its own media_attachments + media_asset queries (N+1) on
         # every month/week/day render.
         .prefetch_related("post__media_attachments__media_asset")
-        .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
+        .annotate(effective_at=PUBLISH_MOMENT)
     )
 
     # Status filter — editorial status now lives on the PlatformPost itself,
@@ -479,7 +478,6 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
     Used both by `calendar_view` (initial server render) and the four
     `publish_tab_*` HTMX endpoints so the rendering paths stay in sync.
     """
-    from django.db.models.functions import Coalesce
 
     if tab not in _TAB_TEMPLATES:
         tab = "queue"
@@ -505,7 +503,7 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
             PlatformPost.objects.filter(post__workspace_id=workspace.id, status="scheduled")
             .select_related("post__author", "social_account")
             .prefetch_related("post__media_attachments__media_asset")
-            .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
+            .annotate(effective_at=PUBLISH_MOMENT)
             .order_by("effective_at", "-post__created_at")
         )
         platform_posts = _apply_pp_publish_filters(platform_posts, request)
@@ -1250,7 +1248,6 @@ def bulk_platform_action(request, workspace_id):
     """
     from django.db import transaction
     from django.db.models import F
-    from django.db.models.functions import Coalesce
     from django.utils import timezone as _tz
 
     from apps.composer.services import sync_post_scheduled_at
@@ -1278,7 +1275,7 @@ def bulk_platform_action(request, workspace_id):
     pps = list(
         PlatformPost.objects.filter(id__in=pp_ids, post__workspace=workspace)
         .select_related("post")
-        .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
+        .annotate(effective_at=PUBLISH_MOMENT)
         .order_by(F("effective_at").asc(nulls_last=True), "post__created_at", "id")
     )
     can_edit_others = perms.get("edit_others_posts", False)

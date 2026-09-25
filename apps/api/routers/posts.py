@@ -221,8 +221,12 @@ def create(request, payload: CreatePostRequest):
     # ``check_platform_quota`` so creating drafts cannot exhaust the
     # platform's posting cap.
     if payload.action == "schedule":
+        # Not None here: the 422 above rejects schedule-without-a-time before
+        # the claim. Stated for the type checker, which is the whole point of
+        # ``publish_at`` being a required argument.
+        assert payload.scheduled_at is not None
         try:
-            check_platform_quota(social_account)
+            check_platform_quota(social_account, payload.scheduled_at)
         except HttpError:
             release_idempotent_claim(api_key=request.api_key, idempotency_key=idempotency_key)
             raise
@@ -342,6 +346,20 @@ def update(request, post_id: uuid.UUID, payload: UpdatePostRequest):
         if missing:
             raise HttpError(422, f"Media asset(s) not in workspace: {missing}")
 
+    # Re-timing moves the row's publish moment, and that moment IS the quota
+    # anchor, so without a check here a PATCH fills a window the create route
+    # would have refused: a month of posts, walked onto the same evening one
+    # PATCH at a time, never meets the cap. The rows being moved are excluded
+    # from their own count, since sliding a post inside a window it already
+    # occupies costs the platform nothing.
+    retimed = [pp for pp in post.platform_posts.select_related("social_account") if pp.status == "scheduled"]
+    if payload.scheduled_at is not None and retimed:
+        by_account: dict = {}
+        for pp in retimed:
+            by_account.setdefault(pp.social_account, []).append(pp.id)
+        for account, moved_ids in by_account.items():
+            check_platform_quota(account, payload.scheduled_at, exclude_ids=moved_ids)
+
     with transaction.atomic():
         update_fields: list[str] = []
         if payload.caption is not None:
@@ -418,7 +436,7 @@ def schedule(request, post_id: uuid.UUID, payload: ScheduleRequest):
     # we touch any state. Doing the checks first means an over-quota
     # account fails the whole route with 429 — no partial commit.
     for pp in drafts:
-        check_platform_quota(pp.social_account)
+        check_platform_quota(pp.social_account, payload.scheduled_at)
 
     # Wrap the per-child transitions in a single outer atomic so a
     # mid-loop ValueError rolls back any earlier ``scheduled`` commits.
