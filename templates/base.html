@@ -29,7 +29,8 @@
         html.sidebar-is-collapsed .sidebar-initial .sidebar-section-label-wrap,
         html.sidebar-is-collapsed .sidebar-initial .sidebar-badge { display: none; }
         html.sidebar-is-collapsed .sidebar-initial .sidebar-new-label,
-        html.sidebar-is-collapsed .sidebar-initial .sidebar-connect-channels { display: none; }
+        html.sidebar-is-collapsed .sidebar-initial .sidebar-connect-channels,
+        html.sidebar-is-collapsed .sidebar-initial .sidebar-review-banner { display: none; }
         /* Collapsed child overrides before Alpine */
         html.sidebar-is-collapsed .sidebar-initial .sidebar-ws-btn { justify-content: center; padding-left: 0; padding-right: 0; gap: 0; }
         html.sidebar-is-collapsed .sidebar-initial .sidebar-new-wrap { padding-left: 0.5rem; padding-right: 0.5rem; }
@@ -765,6 +766,10 @@
                 {% endif %}
                 {% endblock %}
             </nav>
+
+            {% if show_review_banner %}
+            {% include "partials/_review_banner.html" %}
+            {% endif %}
 
             <!-- Organization footer -->
             <div class="sidebar-org-footer border-t border-stone-100 relative px-3 py-3" x-data="{ orgMenuOpen: false }"
