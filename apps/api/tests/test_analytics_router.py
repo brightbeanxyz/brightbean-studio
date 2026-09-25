@@ -260,6 +260,21 @@ class TestAccountAnalytics:
         assert body["follower_growth"] is not None
         assert body["follower_growth"]["key"] == "followers"
 
+    def test_marks_what_brightbean_calculated(self, client_with_token, instagram_account):
+        """YouTube's policies require derived metrics to be labelled as ours
+        wherever they're shown, and agents render this payload to users."""
+        _seed_account_snapshots(instagram_account, days=30)
+        body = client_with_token.get(f"/api/v1/analytics/accounts/{instagram_account.id}?days=30").json()
+
+        rate = body["engagement"]["rate"]
+        assert rate["calculated_by_brightbean"] is True
+        assert body["engagement"]["formula"] == "(Likes + Comments + Saves + Shares) ÷ Views"
+        # Account-level counts are the platform's own figures.
+        assert all(m["calculated_by_brightbean"] is False for m in body["hero_metrics"])
+        # Growth from follower totals is our difference, not a reported metric.
+        assert body["follower_growth"]["estimated"] is True
+        assert body["follower_growth"]["calculated_by_brightbean"] is True
+
         # Freshness fields populated for an account with snapshots.
         assert body["captured_at"] is not None
         assert body["next_sync_eta"] is not None
@@ -270,10 +285,11 @@ class TestAccountAnalytics:
         assert r.status_code == 200
         body = r.json()
         assert body["analytics_available"] is True
-        # Hero metrics still listed (per platform catalog) but with zero values.
+        # Hero metrics still listed (per platform catalog) but with zero values,
+        # and every day unreported (null) rather than a reported zero.
         for metric in body["hero_metrics"]:
             assert metric["value"] == 0
-            assert metric["series"] == [] or all(v == 0 for v in metric["series"])
+            assert all(v is None for v in metric["series"])
         assert body["captured_at"] is None
         # First-poll ETA: shortly from now (we asked for +5 min).
         assert body["next_sync_eta"] is not None

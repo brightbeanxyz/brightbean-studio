@@ -6,11 +6,14 @@ the queryset feeding the switcher, so a connected Instagram (Direct) account
 simply wasn't there and nothing anywhere said why.
 """
 
+from datetime import timedelta
+
 import pytest
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.analytics.models import AccountInsightsSnapshot
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.social_accounts.models import AnalyticsPlatformConfig, SocialAccount
@@ -198,3 +201,74 @@ def test_pages_never_leak_raw_template_tags(owner_client, workspace, platform):
 
     assert "{#" not in body
     assert "{%" not in body
+
+
+@pytest.mark.django_db
+def test_youtube_dashboard_labels_the_metrics_we_calculate(owner_client, workspace):
+    """YouTube's developer policies allow metrics derived from API data only when
+    they are clearly labelled as ours. The engagement rate, the averaged cards
+    and the % change chips are all calculated by us, so each must say so."""
+    account = _account(workspace, "youtube", "Tube")
+    today = timezone.now().date()
+    for offset in range(14):
+        for metric, value in {
+            "views": 100,
+            "likes": 8,
+            "comments": 2,
+            "shares": 1,
+            "watch_time": 30,
+            "avg_view_pct": 45,
+        }.items():
+            AccountInsightsSnapshot.objects.create(
+                social_account=account,
+                metric_key=metric,
+                date=today - timedelta(days=offset),
+                value=value,
+            )
+
+    response = owner_client.get(_account_url(workspace, account) + "?range=7")
+    body = response.content.decode()
+
+    assert response.context["engagement"]["formula"] == "(Likes + Comments + Shares) ÷ Views"
+    assert "Calculated by BrightBean" in body
+    assert "(Likes + Comments + Shares) ÷ Views. Not reported by YouTube." in body
+    # Watch time and Avg view %: both are our average of YouTube's daily figures.
+    assert body.count("Daily average · calculated by BrightBean") == 2
+    assert 'title="Change vs. the previous 7 days, calculated by BrightBean"' in body
+    # Every figure came from YouTube's account-level analytics: nothing estimated.
+    assert "Estimated by BrightBean" not in body
+    assert response.context["calculated_note"] == (
+        "Underlying data comes from YouTube. The engagement rate, daily averages and % changes vs. the previous "
+        "period are calculated by BrightBean, not reported by YouTube."
+    )
+
+
+@pytest.mark.django_db
+def test_youtube_views_built_from_video_counts_are_labelled_estimates(owner_client, workspace):
+    """Without account-level YouTube Analytics rows, the dashboard sums per-video
+    count changes itself. Those are our estimates, not YouTube's figures."""
+    from apps.analytics.models import PostInsightsSnapshot
+    from apps.composer.models import PlatformPost, Post
+
+    account = _account(workspace, "youtube", "Tube")
+    platform_post = PlatformPost.objects.create(
+        post=Post.objects.create(workspace=workspace, caption="video"),
+        social_account=account,
+        status=PlatformPost.Status.PUBLISHED,
+        published_at=timezone.now() - timedelta(days=60),
+        platform_post_id="video-1",
+    )
+    today = timezone.now().date()
+    for offset, views in ((3, 100), (1, 160)):
+        PostInsightsSnapshot.objects.create(
+            platform_post=platform_post, metric_key="views", date=today - timedelta(days=offset), value=views
+        )
+
+    response = owner_client.get(_account_url(workspace, account) + "?range=7")
+    body = response.content.decode()
+
+    assert "Estimated by BrightBean from per-video counts" in body
+    assert "estimates built from per-video counts" in response.context["calculated_note"]
+    assert response.context["chart"]["derived"].estimated is True
+    # Today has no snapshot yet: a gap in the chart, not a drop to zero views.
+    assert response.context["chart_series_json"].endswith("null]")

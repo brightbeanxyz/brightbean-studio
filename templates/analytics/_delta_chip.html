@@ -1,0 +1,1 @@
+{% load analytics_extras %}{# % change vs. the previous period. Always our calculation, so the hover says so. Pass large=True for the headline size. #}<span class="a-delta {{ delta|delta_color }}"{% if large %} style="font-size: 12.5px; padding: 3px 9px;"{% endif %} title="Change vs. the previous {{ days }} days, calculated by BrightBean">{{ delta|fmt_signed }}</span>

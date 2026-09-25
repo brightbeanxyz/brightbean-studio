@@ -39,6 +39,12 @@
                 <div class="a-eng-card">{% include "analytics/_engagement_card.html" with engagement=engagement %}</div>
             {% endif %}
         </div>
+        {% if calculated_note %}
+            <p class="a-calc-note" style="display: flex; align-items: flex-start; gap: 6px; margin-top: -8px;">
+                <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" style="flex-shrink: 0; margin-top: 1px;" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                <span>{{ calculated_note }}</span>
+            </p>
+        {% endif %}
 
         {# Hero trend chart #}
         <div class="a-card" style="padding: 20px;">

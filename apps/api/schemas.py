@@ -452,7 +452,7 @@ class DerivedMetricResponse(Schema):
     """A single derived metric over a rolling window.
 
     Mirrors ``apps.analytics.derive.DerivedMetric`` but with a stable wire
-    shape: agents can rely on every metric carrying the same five fields.
+    shape: agents can rely on every metric carrying the same fields.
     The dataclass itself isn't a Pydantic model, so we route through
     :meth:`from_derived` rather than letting Ninja convert it implicitly.
     """
@@ -464,20 +464,47 @@ class DerivedMetricResponse(Schema):
         ...,
         description=(
             "Aggregate value over the current window. Sum for ``count`` metrics, "
-            "average for ``percent`` and ``minutes`` (since those are already daily rates)."
+            "average of the days with data for ``percent`` and ``minutes`` (since those are already daily rates)."
         ),
     )
     delta: float = Field(
         ...,
-        description="Percent change vs. the previous equal-length window. ``0.0`` when there is no prior baseline.",
+        description=(
+            "Percent change vs. the previous equal-length window, calculated by BrightBean. "
+            "``0.0`` when there is no prior baseline."
+        ),
     )
-    series: list[float] = Field(
+    series: list[float | None] = Field(
         default_factory=list,
-        description="Daily values for the current window, oldest first.",
+        description=(
+            "Daily values for the current window, oldest first. ``null`` for a day the platform "
+            "hasn't reported yet (for example YouTube Analytics' 2-3 day lag), which is not a zero."
+        ),
+    )
+    calculated_by_brightbean: bool = Field(
+        False,
+        description=(
+            "``true`` when BrightBean calculated ``value`` rather than the platform reporting it: the "
+            "engagement rate, daily averages, and estimates. YouTube's developer policies require such "
+            "metrics to be labelled as calculated by BrightBean, not by the platform, wherever they are shown."
+        ),
+    )
+    averaged: bool = Field(False, description="``value`` is BrightBean's average of the platform's daily figures.")
+    estimated: bool = Field(
+        False,
+        description=(
+            "``value`` was estimated by BrightBean from other counts — summed per-post deltas when the "
+            "platform's account-level analytics weren't available or were older, or differences between "
+            "follower totals."
+        ),
     )
 
     @classmethod
-    def from_derived(cls, key: str, label: str, derived: DerivedMetric) -> DerivedMetricResponse:
+    def from_derived(
+        cls, key: str, label: str, derived: DerivedMetric, *, calculated: bool = False
+    ) -> DerivedMetricResponse:
+        """``calculated`` marks a value BrightBean always computes (the
+        engagement rate), on top of what ``derived`` records about itself."""
         return cls(
             key=key,
             label=label,
@@ -485,17 +512,30 @@ class DerivedMetricResponse(Schema):
             value=derived.value,
             delta=derived.delta,
             series=list(derived.series),
+            calculated_by_brightbean=calculated or derived.averaged or derived.estimated,
+            averaged=derived.averaged,
+            estimated=derived.estimated,
         )
 
 
 class EngagementCardResponse(Schema):
     rate: DerivedMetricResponse = Field(
         ...,
-        description="Engagement rate = sum(parts) / denom * 100. The denom is the first available of ``reach, impressions, views, plays``.",
+        description=(
+            "Engagement rate = sum(parts) / denom * 100, calculated by BrightBean. The denom is the "
+            "first of ``views, reach, impressions, plays`` with data, falling back to the follower count."
+        ),
     )
     parts: list[DerivedMetricResponse] = Field(
         default_factory=list,
         description="The component metrics that feed the rate's numerator (likes, comments, shares, …).",
+    )
+    formula: str | None = Field(
+        None,
+        description=(
+            "How the rate was calculated, e.g. ``(Likes + Comments + Shares) ÷ Views``. "
+            "``null`` when there was nothing to divide by yet."
+        ),
     )
 
 

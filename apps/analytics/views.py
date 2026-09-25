@@ -167,6 +167,9 @@ def analytics_account(request: HttpRequest, workspace_id, account_id) -> HttpRes
         "range_choices": RANGE_CHOICES,
         "primary_color": primary_color,
         "platform_color": PLATFORM_COLOR.get(account.platform, "var(--primary)"),
+        # Copy for the "calculated by BrightBean" labels on derived metrics.
+        "platform_name": services.platform_name(account),
+        "content_noun": services.content_noun(account),
         "is_fresh": is_fresh,
         # An unavailable platform gets its own reconnect instructions inside
         # the empty state, so suppressing the scope banner here keeps one set
@@ -199,20 +202,18 @@ def analytics_account(request: HttpRequest, workspace_id, account_id) -> HttpRes
     if is_fresh:
         return render(request, "analytics/index.html", context)
 
-    # Compute the bundle once and thread series_map into every consumer —
-    # the post-level fallback inside the bundle is the dominant cost, and
-    # calling these helpers without ``series_map`` re-runs it 3-4 times per
-    # render.
+    # Compute the bundle once and thread it into every consumer — the
+    # post-level fallback inside the bundle is the dominant cost, and calling
+    # these helpers without ``bundle`` re-runs it 3-4 times per render.
     bundle = services.account_analytics_bundle(account, days)
-    series_map = bundle["series_map"]
-    follower_g = services.follower_growth(account, days, series_map=series_map)
-    hero_cards = services.hero_cards(account, days, series_map=series_map)
-    engagement = services.engagement_card(account, days, series_map=series_map)
+    follower_g = services.follower_growth(account, days, bundle=bundle)
+    hero_cards = services.hero_cards(account, days, bundle=bundle)
+    engagement = services.engagement_card(account, days, bundle=bundle)
     chart = services.hero_chart_data(
         account,
         days,
         metric=request.GET.get("chart_metric"),
-        series_map=series_map,
+        bundle=bundle,
     )
     table = services.all_posts_for(
         account,
@@ -228,8 +229,12 @@ def analytics_account(request: HttpRequest, workspace_id, account_id) -> HttpRes
             "follower_growth": follower_g,
             "hero_cards": hero_cards,
             "engagement": engagement,
+            "calculated_note": services.calculated_metrics_note(
+                account, cards=hero_cards, engagement=engagement, chart=chart, growth=follower_g
+            ),
             "chart": chart,
-            "chart_series_json": json.dumps([round(v, 4) for v in chart["derived"].series]),
+            # ``null`` for days not reported yet: Chart.js draws those as a gap.
+            "chart_series_json": json.dumps([None if v is None else round(v, 4) for v in chart["derived"].series]),
             "chart_labels_json": json.dumps(chart["labels"]),
             "table": table,
         }
