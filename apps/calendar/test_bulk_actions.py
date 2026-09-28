@@ -599,3 +599,26 @@ class ReschedulePermissionTests(BulkActionBase):
         self.assertEqual(response.status_code, 400)
         pp.refresh_from_db()
         self.assertEqual(pp.status, "published")
+
+
+class MonthOverflowLinkTests(BulkActionBase):
+    """A month cell shows three chips; the rest must stay reachable."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.owner)
+
+    def test_more_count_links_to_that_days_view(self):
+        day = timezone.now().date() + timedelta(days=2)
+        when = datetime.combine(day, datetime.min.time(), tzinfo=UTC) + timedelta(hours=12)
+        for i in range(5):
+            self._pp("scheduled", scheduled_at=when + timedelta(minutes=i))
+
+        response = self.client.get(
+            reverse("calendar:calendar", kwargs={"workspace_id": self.workspace.id}),
+            {"mode": "calendar", "view": "month", "date": day.isoformat(), "tz": "UTC"},
+        )
+
+        html = response.content.decode()
+        self.assertIn("+2 more", html)
+        self.assertIn(f"view=day&date={day.isoformat()}", html)
