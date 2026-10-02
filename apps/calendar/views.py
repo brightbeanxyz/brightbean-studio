@@ -120,6 +120,14 @@ def _get_channel_filters(request):
     return out
 
 
+def _valid_uuid(value):
+    try:
+        uuid.UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return True
+
+
 def _get_filtered_posts(workspace, request):
     """Apply calendar filters from query params."""
     qs = (
@@ -148,6 +156,14 @@ def _get_filtered_posts(workspace, request):
     categories = request.GET.getlist("category")
     if categories:
         qs = qs.filter(category_id__in=categories)
+
+    brand = request.GET.get("brand")
+    if brand:
+        qs = qs.filter(brand_id=brand) if _valid_uuid(brand) else qs.none()
+
+    campaign = request.GET.get("campaign")
+    if campaign:
+        qs = qs.filter(campaign_id=campaign) if _valid_uuid(campaign) else qs.none()
 
     # Tag filter (OR - match posts containing any selected tag)
     tags = request.GET.getlist("tag")
@@ -213,6 +229,14 @@ def _get_filtered_platform_posts(workspace, request):
     categories = request.GET.getlist("category")
     if categories:
         qs = qs.filter(post__category_id__in=categories)
+
+    brand = request.GET.get("brand")
+    if brand:
+        qs = qs.filter(post__brand_id=brand) if _valid_uuid(brand) else qs.none()
+
+    campaign = request.GET.get("campaign")
+    if campaign:
+        qs = qs.filter(post__campaign_id=campaign) if _valid_uuid(campaign) else qs.none()
 
     # Tag filter (OR)
     tags = request.GET.getlist("tag")
@@ -374,6 +398,12 @@ def _publish_tab_counts(workspace, request):
     tag = request.GET.get("tag")
     if tag:
         approvals = approvals.filter(tags__contains=[tag])
+    brand = request.GET.get("brand")
+    if brand:
+        approvals = approvals.filter(brand_id=brand) if _valid_uuid(brand) else approvals.none()
+    campaign = request.GET.get("campaign")
+    if campaign:
+        approvals = approvals.filter(campaign_id=campaign) if _valid_uuid(campaign) else approvals.none()
 
     return {
         "queue_count": _pp(status="scheduled"),
@@ -442,6 +472,14 @@ def _apply_pp_publish_filters(qs, request):
     tag = request.GET.get("tag")
     if tag:
         qs = qs.filter(post__tags__contains=[tag])
+
+    brand = request.GET.get("brand")
+    if brand:
+        qs = qs.filter(post__brand_id=brand) if _valid_uuid(brand) else qs.none()
+
+    campaign = request.GET.get("campaign")
+    if campaign:
+        qs = qs.filter(post__campaign_id=campaign) if _valid_uuid(campaign) else qs.none()
 
     return qs
 
@@ -573,6 +611,12 @@ def _get_tab_context(request, workspace, tab: str) -> dict:
     tag = request.GET.get("tag")
     if tag:
         posts_qs = posts_qs.filter(tags__contains=[tag])
+    brand = request.GET.get("brand")
+    if brand:
+        posts_qs = posts_qs.filter(brand_id=brand) if _valid_uuid(brand) else posts_qs.none()
+    campaign = request.GET.get("campaign")
+    if campaign:
+        posts_qs = posts_qs.filter(campaign_id=campaign) if _valid_uuid(campaign) else posts_qs.none()
 
     posts = list(posts_qs[:200])
 
@@ -679,6 +723,12 @@ def calendar_view(request, workspace_id):
     # Categories for filter
     categories = ContentCategory.objects.for_workspace(workspace.id)
 
+    from apps.brands.models import BrandProfile
+    from apps.content_intelligence.models import Campaign
+
+    brands = BrandProfile.objects.filter(workspace=workspace).order_by("name")
+    campaigns = Campaign.objects.filter(workspace=workspace).select_related("brand").order_by("name")
+
     # Active filters
     active_filters = {
         "statuses": request.GET.getlist("status"),
@@ -686,6 +736,8 @@ def calendar_view(request, workspace_id):
         "authors": request.GET.getlist("author"),
         "categories": request.GET.getlist("category"),
         "tags": request.GET.getlist("tag"),
+        "brand": request.GET.get("brand", ""),
+        "campaign": request.GET.get("campaign", ""),
     }
 
     show_holidays = request.GET.get("holidays") == "1"
@@ -723,6 +775,8 @@ def calendar_view(request, workspace_id):
         "social_accounts": social_accounts,
         "authors": authors,
         "categories": categories,
+        "brands": brands,
+        "campaigns": campaigns,
         "active_filters": active_filters,
         "status_choices": Post.Status.choices,
         "show_holidays": show_holidays,

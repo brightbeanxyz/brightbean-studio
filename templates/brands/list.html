@@ -1,0 +1,44 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Brands - {{ workspace.name }} - Brightbean{% endblock %}
+{% block content %}
+<div class="max-w-5xl">
+    <div class="flex items-center justify-between mb-8">
+        <div>
+            <h2 class="text-xl font-semibold" style="color: var(--text-primary);">Brand Profiles</h2>
+            <p class="text-sm mt-1" style="color: var(--text-secondary);">Brand context used by future editorial and AI workflows.</p>
+        </div>
+        {% if can_manage_brands %}
+        <a href="{% url 'brands:create' workspace_id=workspace.id %}" class="px-5 py-2 text-sm font-semibold rounded-full" style="background: var(--primary); color: white;">New Brand</a>
+        {% endif %}
+    </div>
+    <div class="space-y-3">
+        {% for brand in brands %}
+        <div class="rounded-xl p-5 flex items-start justify-between" style="border: 1px solid var(--border); background: var(--surface-0);">
+            <div>
+                <div class="flex items-center gap-2">
+                    <h3 class="font-semibold" style="color: var(--text-primary);">{{ brand.name }}</h3>
+                    {% if not brand.is_active %}<span class="text-xs px-2 py-0.5 rounded-full" style="background: var(--neutral-100);">Inactive</span>{% endif %}
+                </div>
+                <p class="text-sm mt-1" style="color: var(--text-secondary);">{{ brand.industry|default:"Industry not set" }} · {{ brand.primary_language }}</p>
+                {% if brand.positioning %}<p class="text-sm mt-2 max-w-2xl" style="color: var(--text-secondary);">{{ brand.positioning|truncatechars:180 }}</p>{% endif %}
+                {% if brand.content_pillars %}
+                <div class="flex flex-wrap gap-1 mt-3">
+                    {% for pillar in brand.content_pillars %}<span class="text-xs px-2 py-1 rounded-full" style="background: var(--neutral-100); color: var(--text-secondary);">{{ pillar }}</span>{% endfor %}
+                </div>
+                {% endif %}
+            </div>
+            <div class="flex gap-4">
+                <a href="{% url 'content_intelligence:strategy' workspace_id=workspace.id brand_id=brand.id %}" class="text-sm font-medium" style="color: var(--primary);">Strategy &amp; plans</a>
+                <a href="{% url 'content_intelligence:generate' workspace_id=workspace.id brand_id=brand.id %}" class="text-sm font-medium" style="color: var(--primary);">Generate draft</a>
+                {% if can_manage_brands %}<a href="{% url 'brands:edit' workspace_id=workspace.id brand_id=brand.id %}" class="text-sm font-medium" style="color: var(--primary);">Edit</a>{% endif %}
+            </div>
+        </div>
+        {% empty %}
+        <div class="rounded-xl p-10 text-center" style="border: 1px dashed var(--border);">
+            <p class="font-medium" style="color: var(--text-primary);">No Brand Profiles yet</p>
+            <p class="text-sm mt-1" style="color: var(--text-secondary);">Create one to define voice, audience, positioning and objectives.</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

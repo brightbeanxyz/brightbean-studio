@@ -16,8 +16,10 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.brands.models import BrandProfile
 from apps.calendar.models import Queue, QueueEntry
 from apps.composer.models import PlatformPost, Post
+from apps.content_intelligence.models import Campaign
 from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.organizations.models import Organization
 from apps.social_accounts.models import SocialAccount
@@ -440,6 +442,61 @@ class PublishTabCountTests(BulkActionBase):
         )
 
         self.assertEqual(response.context["queue_count"], 2)
+
+
+class EditorialCalendarFilterTests(BulkActionBase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.owner)
+        self.brand = BrandProfile.objects.create(workspace=self.workspace, name="Brand A")
+        self.other_brand = BrandProfile.objects.create(workspace=self.workspace, name="Brand B")
+        self.campaign = Campaign.objects.create(workspace=self.workspace, brand=self.brand, name="Launch")
+        self.other_campaign = Campaign.objects.create(
+            workspace=self.workspace, brand=self.other_brand, name="Evergreen"
+        )
+
+    def test_calendar_filters_posts_by_brand_and_campaign(self):
+        wanted = Post.objects.create(
+            workspace=self.workspace, author=self.owner, title="Wanted", brand=self.brand,
+            campaign=self.campaign, scheduled_at=timezone.now()
+        )
+        hidden = Post.objects.create(
+            workspace=self.workspace, author=self.owner, title="Hidden", brand=self.other_brand,
+            campaign=self.other_campaign, scheduled_at=timezone.now()
+        )
+        self._pp("scheduled", scheduled_at=timezone.now(), post=wanted)
+        self._pp("scheduled", scheduled_at=timezone.now(), post=hidden)
+        response = self.client.get(
+            reverse("calendar:calendar", kwargs={"workspace_id": self.workspace.id}),
+            {"mode": "calendar", "view": "day", "brand": self.brand.id, "campaign": self.campaign.id},
+        )
+        html = response.content.decode()
+        self.assertIn("Wanted", html)
+        self.assertNotIn("Hidden", html)
+
+    def test_publish_list_and_counts_use_campaign_filter(self):
+        wanted = Post.objects.create(
+            workspace=self.workspace, author=self.owner, title="Campaign draft", campaign=self.campaign
+        )
+        hidden = Post.objects.create(
+            workspace=self.workspace, author=self.owner, title="Other draft", campaign=self.other_campaign
+        )
+        self._pp("draft", post=wanted)
+        self._pp("draft", post=hidden)
+        response = self.client.get(
+            reverse("calendar:publish_tab_drafts", kwargs={"workspace_id": self.workspace.id}),
+            {"campaign": self.campaign.id}, HTTP_HX_REQUEST="true",
+        )
+        self.assertContains(response, "Campaign draft")
+        self.assertNotContains(response, "Other draft")
+        self.assertEqual(response.context["drafts_count"], 1)
+
+    def test_invalid_brand_filter_is_safe_and_empty(self):
+        response = self.client.get(
+            reverse("calendar:calendar", kwargs={"workspace_id": self.workspace.id}),
+            {"mode": "calendar", "view": "month", "brand": "not-a-uuid"},
+        )
+        self.assertEqual(response.status_code, 200)
 
 
 class TodayInViewTimezoneTests(BulkActionBase):

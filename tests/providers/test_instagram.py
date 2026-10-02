@@ -1266,3 +1266,21 @@ def test_video_is_a_declared_post_type(provider_cls):
     """An explicit post_type hint can still hand the provider VIDEO, so the
     declared contract has to admit it."""
     assert PostType.VIDEO in provider_cls(IG_CREDS).supported_post_types
+
+
+def test_instagram_login_reel_uses_cover_image_url():
+    provider = InstagramLoginProvider(IG_LOGIN_CREDS)
+    cover_url = "https://media.example.test/reel-cover.jpg"
+
+    _publish(
+        provider,
+        media_urls=[VIDEO_URL],
+        post_type=PostType.REEL,
+        extra={"cover_image_url": cover_url},
+    )
+
+    assert provider._request.call_args_list[0].kwargs["json"] == {
+        "media_type": "REELS",
+        "video_url": VIDEO_URL,
+        "cover_url": cover_url,
+    }
