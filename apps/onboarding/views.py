@@ -24,6 +24,7 @@ from django.views.decorators.http import require_GET, require_POST
 from django_ratelimit.decorators import ratelimit
 
 from apps.common.mail import transactional
+from apps.common.validators import is_safe_url
 from apps.credentials.models import PlatformCredential
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
@@ -607,7 +608,7 @@ def connection_bluesky_connect(request, token):
 
     try:
         provider = _get_provider_for_platform(PlatformCredential.Platform.BLUESKY, org.id)
-        tokens = provider.create_session(handle, app_password)
+        tokens = provider.create_session(handle, app_password, is_safe_url=is_safe_url)
         profile = provider.get_profile(tokens.access_token)
 
         account = _create_or_update_account(

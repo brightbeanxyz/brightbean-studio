@@ -564,7 +564,7 @@ def connect_bluesky(request, workspace_id):
 
     try:
         provider = _get_provider_for_platform(PlatformCredential.Platform.BLUESKY, request.org.id)
-        tokens = provider.create_session(handle, app_password)
+        tokens = provider.create_session(handle, app_password, is_safe_url=_is_safe_url)
         profile = provider.get_profile(tokens.access_token)
 
         _create_or_update_account(
