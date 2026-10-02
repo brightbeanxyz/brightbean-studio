@@ -7,6 +7,20 @@ from django.utils.safestring import mark_safe
 register = template.Library()
 
 
+@register.simple_tag(takes_context=True)
+def signup_allowed(context):
+    """Whether this visitor could sign up, per SIGNUP_MODE.
+
+    Used to hide the "Sign up" link on the login page when it would only
+    lead to a closed-signup notice. In invite mode this is True exactly for
+    visitors who followed an invitation link, so the link appears for the
+    people it is meant for and stays hidden for everyone else.
+    """
+    from apps.accounts.adapters import signup_allowed as _signup_allowed
+
+    return _signup_allowed(context.get("request"))
+
+
 @register.filter(is_safe=True)
 def json_attr(value):
     """Serialize a Python value as a JSON literal safe to embed inside an
