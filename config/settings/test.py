@@ -43,6 +43,11 @@ MEDIA_ROOT = BASE_DIR / "test_media"  # noqa: F405
 MEDIA_URL = "/media/"
 SERVE_MEDIA = True
 
+# Pinned for the same reason as STORAGE_BACKEND: base.py reads it from .env, so
+# a developer trying the feature locally would flip every signup-link test.
+# Tests that want it set use the `settings` fixture.
+CUSTOM_SIGNUP_URL = ""
+
 # Use simple static files storage in tests (no manifest/collectstatic needed)
 STORAGES["staticfiles"] = {  # noqa: F405
     "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",

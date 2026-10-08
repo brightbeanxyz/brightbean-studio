@@ -260,6 +260,21 @@ ACCOUNT_EMAIL_SUBJECT_PREFIX = ""
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 LOGIN_REDIRECT_URL = "/"
 ACCOUNT_LOGOUT_REDIRECT_URL = "/accounts/login/"
+# Where "Sign up" links send people instead of Studio's own /accounts/signup/
+# (see apps/accounts/signup_links.py). Empty keeps the built-in signup.
+CUSTOM_SIGNUP_URL = env("CUSTOM_SIGNUP_URL", default="").strip()
+# Raised at boot rather than rendered: a value like "example.com/join" would
+# resolve relative to the login page and 404, and an unquoted "# comment" after
+# the value in .env is kept by read_env and would end up inside the href.
+if CUSTOM_SIGNUP_URL and (
+    not CUSTOM_SIGNUP_URL.startswith(("https://", "http://", "/")) or any(c.isspace() for c in CUSTOM_SIGNUP_URL)
+):
+    from django.core.exceptions import ImproperlyConfigured
+
+    raise ImproperlyConfigured(
+        "CUSTOM_SIGNUP_URL must be an http(s):// URL or a path starting with /, "
+        "without spaces (put .env comments on their own line)."
+    )
 
 AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",
