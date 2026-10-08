@@ -11,6 +11,7 @@ from django.shortcuts import redirect, render
 from django.utils import timezone as django_tz
 from django.views.decorators.http import require_http_methods
 
+from apps.accounts.signup_links import custom_signup_url
 from apps.common.validators import clean_display_name
 from apps.composer.models import PlatformPost, Post, Tag
 from apps.members.decorators import require_org_role
@@ -181,7 +182,7 @@ def _handle_immediate_org_deletion(request, org):
 
     org.hard_delete(requesting_user=request.user)
     logout(request)
-    return redirect("account_signup")
+    return redirect(custom_signup_url(request) or "account_signup")
 
 
 def _handle_cancel_deletion(request, org):

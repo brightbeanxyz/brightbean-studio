@@ -117,6 +117,7 @@ After deploying, set these environment variables in your platform's dashboard:
 | `EMAIL_HOST_PASSWORD` | No | SMTP password |
 | `GOOGLE_AUTH_CLIENT_ID` | No | For Google OAuth login. Get from [Google Cloud Console](https://console.cloud.google.com/) → Credentials. |
 | `GOOGLE_AUTH_CLIENT_SECRET` | No | Google OAuth secret |
+| `CUSTOM_SIGNUP_URL` | No | Where "Sign up" links point, e.g. a waitlist or marketing page: the login page's link, the email sent when someone resets the password of an address with no account, and the redirect after an owner deletes their organization. Must be an `http(s)://` URL or a path starting with `/`. Default: the built-in `/accounts/signup/`. That page stays open either way (so your page can link back to it), and people with a pending invite are always sent to it, since only it accepts the invite. |
 | `UNSPLASH_ACCESS_KEY` | No | Enables Unsplash stock-photo search in the composer. Create a free app at [unsplash.com/developers](https://unsplash.com/developers). |
 
 For social media API keys, see [Platform Credentials](#platform-credentials). Full variable reference: `.env.example`.

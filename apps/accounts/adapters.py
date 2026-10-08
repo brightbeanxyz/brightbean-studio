@@ -1,7 +1,9 @@
 from allauth.account.adapter import DefaultAccountAdapter
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
+from allauth.utils import build_absolute_uri
 
 from apps.accounts.models import OAuthConnection
+from apps.accounts.signup_links import custom_signup_url
 from apps.common.mail import transactional
 
 
@@ -16,10 +18,17 @@ class AccountAdapter(DefaultAccountAdapter):
     global daily cap still applies; nothing bypasses that.
 
     ``render_mail`` is the single seam every allauth email passes through, so
-    overriding it here covers all of them without touching a template.
+    overriding it here covers all of them without touching a template. It also
+    points any ``signup_url`` in the context (the unknown-account email sent on
+    a password reset for an address with no account) at ``CUSTOM_SIGNUP_URL``.
     """
 
     def render_mail(self, template_prefix, email, context, headers=None):
+        if "signup_url" in context:
+            request = context.get("request")
+            custom = custom_signup_url(request)
+            if custom:
+                context = {**context, "signup_url": build_absolute_uri(request, custom)}
         return super().render_mail(
             template_prefix,
             email,
