@@ -88,6 +88,20 @@ class ApiKey(models.Model):
         null=True,
         help_text="Per-minute read-rate override. Null = use platform default.",
     )
+    # The per-minute tiers above stop bursts; these stop sustained polling,
+    # which stays under any per-minute limit while still making 165k calls a
+    # day. Counted from ``ApiKeyUsageHourly``, not the cache, so a deploy
+    # doesn't hand a poller a fresh budget.
+    rate_override_hourly = models.PositiveIntegerField(
+        blank=True,
+        null=True,
+        help_text="Calls-per-UTC-hour override. Null = use platform default; 0 freezes the key.",
+    )
+    rate_override_daily = models.PositiveIntegerField(
+        blank=True,
+        null=True,
+        help_text="Calls-per-UTC-day override. Null = use platform default; 0 freezes the key.",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -111,11 +125,16 @@ class ApiKey(models.Model):
 
 
 class ApiKeyAuditLog(models.Model):
-    """One row per authenticated Agent API request.
+    """One row per authenticated Agent API request that changed something or failed.
 
     Records *what* the key did, never *what was in the body* — request payloads
     can carry media URLs with embedded signed tokens, so we deliberately keep
     the audit row to action + target ID + status.
+
+    Successful reads, MCP protocol messages and 429s are only counted, in
+    ``ApiKeyUsageHourly``: one polling client made 165k reads a day, and a
+    row each was 97% of this table for no forensic gain. The policy lives in
+    ``apps.api.middleware._keeps_audit_row``.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -168,3 +187,71 @@ class ApiKeyAuditLog(models.Model):
     def __str__(self):
         actor = self.api_key.name if self.api_key_id else (self.actor_label or "oauth")
         return f"{self.action} -> {self.status_code} ({actor})"
+
+
+class ApiKeyUsageHourly(models.Model):
+    """How many calls one caller made in one UTC hour, per action and status.
+
+    Every authenticated Agent API / MCP call increments exactly one row here,
+    whether or not it also earns an ``ApiKeyAuditLog`` row. That makes this the
+    complete usage record and the source of the hourly and daily caps in
+    ``apps.api.usage``.
+
+    ``actor`` is ``key:<api_key_id>`` or ``oauth:<user_id>``. It is a string
+    rather than the two nullable FKs because Postgres treats NULLs as distinct
+    in a unique constraint, so a key on ``(api_key, actor_user, …)`` would never
+    match an existing row. The FKs are kept alongside for joins and are
+    ``SET_NULL`` so usage history outlives a deleted key.
+    """
+
+    actor = models.CharField(max_length=64)
+    hour_start = models.DateTimeField(help_text="Start of the UTC hour this row counts.")
+    action = models.CharField(max_length=64)
+    status_code = models.PositiveSmallIntegerField()
+    count = models.PositiveIntegerField(default=0)
+    last_seen_at = models.DateTimeField()
+
+    api_key = models.ForeignKey(
+        ApiKey,
+        on_delete=models.SET_NULL,
+        related_name="usage_hourly",
+        null=True,
+        blank=True,
+    )
+    actor_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="api_usage_hourly",
+        null=True,
+        blank=True,
+        help_text="Set for OAuth-authenticated MCP callers; null for key callers.",
+    )
+    workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        on_delete=models.SET_NULL,
+        related_name="api_usage_hourly",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        db_table = "api_keys_usage_hourly"
+        constraints = [
+            # ``record_usage`` upserts on exactly these columns, and the cap
+            # query reads the ``(actor, hour_start)`` prefix. ``workspace`` is
+            # in the key because an OAuth caller acts in whichever workspace
+            # they last opened, which can change within the hour; without it
+            # the second workspace's calls would land on the first's row. It
+            # is never NULL on insert (keys and OAuth callers both resolve
+            # one), so NULLs being distinct doesn't split rows.
+            models.UniqueConstraint(
+                fields=["actor", "hour_start", "workspace", "action", "status_code"],
+                name="uniq_usage_actor_hour_ws_action_status",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["hour_start"], name="idx_usage_hour"),
+        ]
+
+    def __str__(self):
+        return f"{self.actor} {self.action} -> {self.status_code} x{self.count} @ {self.hour_start.isoformat()}"

@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from apps.api_keys.models import ApiKey, ApiKeyAuditLog
+from apps.api_keys.models import ApiKey, ApiKeyAuditLog, ApiKeyUsageHourly
 
 
 @admin.register(ApiKey)
@@ -25,3 +25,14 @@ class ApiKeyAuditLogAdmin(admin.ModelAdmin):
     list_filter = ("action", "status_code")
     search_fields = ("path", "api_key__name")
     readonly_fields = tuple(f.name for f in ApiKeyAuditLog._meta.fields)
+
+
+@admin.register(ApiKeyUsageHourly)
+class ApiKeyUsageHourlyAdmin(admin.ModelAdmin):
+    """Who is calling how much. Sort by ``count`` to find a poller."""
+
+    list_display = ("hour_start", "actor", "api_key", "workspace", "action", "status_code", "count", "last_seen_at")
+    list_filter = ("action", "status_code")
+    search_fields = ("actor", "api_key__name", "api_key__lookup_prefix")
+    date_hierarchy = "hour_start"
+    readonly_fields = tuple(f.name for f in ApiKeyUsageHourly._meta.fields)

@@ -655,8 +655,12 @@ Permission keys: `create_posts`, `publish_directly`, `upload_media`, `view_analy
 | Per-key writes | 120 / min |
 | Per-key reads | 300 / min |
 | Per-workspace aggregate | 1000 / min |
+| Per-key calls, all kinds | 1,000 / hour |
+| Per-key calls, all kinds | 20,000 / day |
 
-Rate-limit responses (`429`) include `Retry-After`, `X-RateLimit-Limit`, and `X-RateLimit-Remaining` headers.
+The hourly and daily caps count REST and MCP calls together (every JSON-RPC message, including `ping` and `tools/list`), over fixed UTC hours and UTC days. Calls refused with `429` don't count against them. Rate-limit responses (`429`) include a `tier` (`per_key_hourly`, `per_key_daily`, …) and `Retry-After`, `X-RateLimit-Limit`, and `X-RateLimit-Remaining` headers; for the hourly and daily caps `Retry-After` is the time until the window resets.
+
+Don't poll faster than the data changes. Studio syncs the inbox every 5 minutes and analytics every hour, so `GET /inbox/` more often than every 5 minutes, or analytics more often than hourly, returns the same data and spends your budget.
 
 ### REST Endpoints
 

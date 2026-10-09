@@ -203,16 +203,60 @@ class TestMcpOAuthSuccess:
         assert body["error"]["code"] == INVALID_PARAMS
         assert "Permission denied" in body["error"]["message"]
 
-    def test_oauth_call_writes_user_attributed_audit_row(self):
-        from apps.api_keys.models import ApiKeyAuditLog
+    def test_oauth_read_is_counted_against_user_and_workspace(self):
+        from apps.api_keys.models import ApiKeyAuditLog, ApiKeyUsageHourly
 
-        user, _ws, _sa = _make_user_with_workspace("audit-oauth@example.com", WorkspaceMembership.WorkspaceRole.OWNER)
+        user, ws, _sa = _make_user_with_workspace("audit-oauth@example.com", WorkspaceMembership.WorkspaceRole.OWNER)
         c = _SecureClient(HTTP_AUTHORIZATION=f"Bearer {_mint_oauth_token(user)}")
         _post(c, _rpc("tools/call", {"name": "list_accounts", "arguments": {}}))
+        counter = ApiKeyUsageHourly.objects.get(actor_user=user)
+        assert counter.actor == f"oauth:{user.id}"
+        assert counter.api_key_id is None
+        assert counter.workspace_id == ws.id
+        assert counter.action == "mcp.tools/call:list_accounts"
+        # A read-only tool earns no audit row.
+        assert not ApiKeyAuditLog.objects.filter(actor_user=user).exists()
+
+    def test_oauth_usage_follows_the_workspace_switch(self):
+        """An OAuth caller acts in the workspace they last opened, which can
+        change within the hour. Each workspace keeps its own counter row.
+        """
+        from apps.api_keys.models import ApiKeyUsageHourly
+        from apps.workspaces.models import Workspace
+
+        user, ws_a, _sa = _make_user_with_workspace("switch-oauth@example.com", WorkspaceMembership.WorkspaceRole.OWNER)
+        ws_b = Workspace.objects.create(name="WS B", organization=ws_a.organization)
+        WorkspaceMembership.objects.create(
+            user=user, workspace=ws_b, workspace_role=WorkspaceMembership.WorkspaceRole.OWNER
+        )
+        c = _SecureClient(HTTP_AUTHORIZATION=f"Bearer {_mint_oauth_token(user)}")
+        call = _rpc("tools/call", {"name": "list_accounts", "arguments": {}})
+
+        _post(c, call)
+        user.last_workspace_id = ws_b.id
+        user.save(update_fields=["last_workspace_id"])
+        _post(c, call)
+        _post(c, call)
+
+        by_ws = dict(ApiKeyUsageHourly.objects.filter(actor_user=user).values_list("workspace_id", "count"))
+        assert by_ws == {ws_a.id: 1, ws_b.id: 2}
+
+    def test_oauth_write_writes_user_attributed_audit_row(self):
+        from apps.api_keys.models import ApiKeyAuditLog
+
+        user, _ws, sa = _make_user_with_workspace("audit-oauth-w@example.com", WorkspaceMembership.WorkspaceRole.OWNER)
+        c = _SecureClient(HTTP_AUTHORIZATION=f"Bearer {_mint_oauth_token(user)}")
+        _post(
+            c,
+            _rpc(
+                "tools/call", {"name": "create_draft", "arguments": {"social_account_id": str(sa.id), "caption": "hi"}}
+            ),
+        )
         row = ApiKeyAuditLog.objects.filter(actor_user=user).order_by("-created_at").first()
         assert row is not None
         assert row.api_key_id is None
         assert row.actor_label == "oauth"
+        assert row.action == "mcp.tools/call:create_draft"
 
 
 @pytest.mark.django_db

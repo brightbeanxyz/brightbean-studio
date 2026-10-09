@@ -25,6 +25,10 @@ class Tool:
     description: str
     input_schema: dict
     handler: Callable[[dict, Any], dict]
+    # Read-only calls are counted but get no audit-log row (see
+    # ``apps.api.middleware._keeps_audit_row``). Defaults to False so a new
+    # tool keeps its audit trail until someone decides it doesn't need one.
+    read_only: bool = False
 
     def to_mcp_dict(self) -> dict:
         """Wire shape returned by ``tools/list`` per the MCP spec."""
@@ -51,6 +55,11 @@ def all_tools() -> list[Tool]:
 
 def get_tool(name: str) -> Tool | None:
     return _REGISTRY.get(name)
+
+
+def is_read_only_tool(name: str) -> bool:
+    tool = _REGISTRY.get(name)
+    return tool is not None and tool.read_only
 
 
 def _reset_registry_for_tests() -> None:  # pragma: no cover

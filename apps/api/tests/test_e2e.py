@@ -28,7 +28,7 @@ from apps.api.middleware import PENDING_STATUS_SENTINEL
 from apps.api.models import IdempotencyRecord
 from apps.api.tasks import sweep_stale_idempotency_records
 from apps.api_keys import services
-from apps.api_keys.models import ApiKeyAuditLog
+from apps.api_keys.models import ApiKeyAuditLog, ApiKeyUsageHourly
 from apps.composer.models import PlatformPost, Post
 from apps.members.models import (
     PERMISSION_KEYS,
@@ -419,9 +419,11 @@ class TestAuditLabelCoverage:
         )
         assert ApiKeyAuditLog.objects.filter(action="post.create.draft").exists()
 
-    def test_me_read_logs_me_read(self, client_with_token):
+    def test_me_read_counts_me_read(self, client_with_token):
+        # Reads are counted, not logged: the label lives on the usage counter.
         client_with_token.get("/api/v1/me/")
-        assert ApiKeyAuditLog.objects.filter(action="me.read").exists()
+        assert ApiKeyUsageHourly.objects.filter(action="me.read", status_code=200).exists()
+        assert not ApiKeyAuditLog.objects.filter(action="me.read").exists()
 
 
 # ===========================================================================

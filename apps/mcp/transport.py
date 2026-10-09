@@ -262,11 +262,39 @@ def _log_mcp_audit(request: HttpRequest, msg: dict, *, status_code: int) -> None
     For ``tools/call`` we drill in to ``params.name`` so a forensic
     review can tell ``list_accounts`` from ``schedule_post`` without
     digging into request bodies (which we deliberately don't store).
+
+    The method and tool name come from the client, so names we don't
+    recognise collapse to ``unknown``: each distinct label is its own
+    ``ApiKeyUsageHourly`` row, and a client must not be able to mint those
+    at will.
     """
-    method = msg.get("method", "unknown") if isinstance(msg, dict) else "unknown"
+    method = msg.get("method") if isinstance(msg, dict) else None
+    if not isinstance(method, str) or (method not in METHODS and method not in _SPEC_METHODS_WE_DONT_SERVE):
+        method = "unknown"
     action = f"mcp.{method}"
     if method == "tools/call":
-        tool_name = ((msg.get("params") or {}) if isinstance(msg, dict) else {}).get("name")
-        if isinstance(tool_name, str):
-            action = f"mcp.tools/call:{tool_name}"
+        params = msg.get("params") if isinstance(msg, dict) else None
+        tool_name = params.get("name") if isinstance(params, dict) else None
+        action = f"mcp.tools/call:{tool_name if isinstance(tool_name, str) and get_tool(tool_name) else 'unknown'}"
     log_audit_entry(request, action=action, target_id=None, status_code=status_code)
+
+
+# Client-to-server methods from the MCP spec that we answer with "method not
+# found". Kept by name rather than collapsed to ``unknown`` because which of
+# them clients actually send is what tells us whether to implement one.
+_SPEC_METHODS_WE_DONT_SERVE = frozenset(
+    {
+        "completion/complete",
+        "logging/setLevel",
+        "notifications/cancelled",
+        "notifications/progress",
+        "notifications/roots/list_changed",
+        "prompts/get",
+        "prompts/list",
+        "resources/list",
+        "resources/read",
+        "resources/subscribe",
+        "resources/templates/list",
+        "resources/unsubscribe",
+    }
+)
