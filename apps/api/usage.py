@@ -24,7 +24,7 @@ import logging
 from typing import Any
 
 from django.db import connection
-from django.db.models import Q, Sum
+from django.db.models import Field, Q, Sum
 from django.http import HttpRequest
 from django.utils import timezone
 
@@ -119,7 +119,10 @@ def _db_value(field_name: str, value: Any) -> Any:
     """
     if value is None:
         return None
-    return ApiKeyUsageHourly._meta.get_field(field_name).get_db_prep_value(value, connection, prepared=False)
+    field = ApiKeyUsageHourly._meta.get_field(field_name)
+    # Every name passed here is a concrete column, never a reverse relation.
+    assert isinstance(field, Field)
+    return field.get_db_prep_value(value, connection, prepared=False)
 
 
 class CountUncountedApiCallsMiddleware:
