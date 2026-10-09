@@ -15,6 +15,7 @@ class ApiConfig(AppConfig):
         from django.db.models.signals import post_migrate
 
         post_migrate.connect(self._register_idempotency_sweep, sender=self)
+        post_migrate.connect(self._register_usage_sweep, sender=self)
 
     @staticmethod
     def _register_idempotency_sweep(sender, **kwargs):
@@ -45,3 +46,15 @@ class ApiConfig(AppConfig):
             # might exist on a fresh DB; skip quietly so first-run setup
             # doesn't error.
             logger.debug("Skipping idempotency sweep registration (DB not ready)")
+
+    @staticmethod
+    def _register_usage_sweep(sender, **kwargs):
+        """Register the daily audit-log / usage-counter retention sweep."""
+        from apps.api.tasks import USAGE_SWEEP_INTERVAL_SECONDS, sweep_api_usage_records
+        from apps.common.background import register_recurring_task
+
+        register_recurring_task(
+            sweep_api_usage_records,
+            repeat=USAGE_SWEEP_INTERVAL_SECONDS,
+            verbose_name="sweep_api_usage",
+        )

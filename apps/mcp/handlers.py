@@ -216,6 +216,7 @@ register_tool(
         ),
         input_schema={"type": "object", "properties": {}, "additionalProperties": False},
         handler=_list_accounts,
+        read_only=True,
     )
 )
 
@@ -424,6 +425,7 @@ register_tool(
             "additionalProperties": False,
         },
         handler=_get_post,
+        read_only=True,
     )
 )
 
@@ -512,6 +514,7 @@ register_tool(
             "additionalProperties": False,
         },
         handler=_list_posts,
+        read_only=True,
     )
 )
 
@@ -759,6 +762,7 @@ register_tool(
             "additionalProperties": False,
         },
         handler=_search_media,
+        read_only=True,
     )
 )
 
@@ -793,6 +797,7 @@ register_tool(
             "additionalProperties": False,
         },
         handler=_get_media,
+        read_only=True,
     )
 )
 
@@ -1174,6 +1179,7 @@ register_tool(
             "additionalProperties": False,
         },
         handler=_get_account_analytics,
+        read_only=True,
     )
 )
 
@@ -1225,6 +1231,7 @@ register_tool(
             "additionalProperties": False,
         },
         handler=_get_post_analytics,
+        read_only=True,
     )
 )
 
@@ -1372,6 +1379,7 @@ register_tool(
             "additionalProperties": False,
         },
         handler=_list_inbox_messages,
+        read_only=True,
     )
 )
 
@@ -1404,6 +1412,7 @@ register_tool(
             "additionalProperties": False,
         },
         handler=_get_inbox_message,
+        read_only=True,
     )
 )
 

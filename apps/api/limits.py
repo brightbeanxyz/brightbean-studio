@@ -1,6 +1,6 @@
 """Rate-limit primitives for the Agent API.
 
-Two orthogonal concerns live here:
+Three orthogonal concerns live here:
 
 1. ``PLATFORM_DAILY_POST_LIMIT`` — channel-aligned caps on how many
    scheduled-or-published PlatformPost rows an API key may create per
@@ -12,6 +12,11 @@ Two orthogonal concerns live here:
 
 2. Per-key / per-workspace / per-IP HTTP throttles via ``django-ratelimit``,
    exposed as small wrapper helpers so each router stays declarative.
+
+3. Per-key hourly and daily call caps, counted from ``ApiKeyUsageHourly``.
+   The per-minute tiers in (2) stop bursts but not a client polling just
+   under them all day long, which is what one key did at ~113 calls a
+   minute (165k a day). These caps are the backstop for that.
 
 The 429 body shape is uniform across all tiers so agents can self-throttle
 on ``tier`` without parsing free text.
@@ -28,6 +33,7 @@ from django.utils import timezone
 from django_ratelimit.core import is_ratelimited
 from ninja.errors import HttpError
 
+from apps.api.usage import actor_for, day_start, hour_start, usage_in_windows
 from apps.api_keys.models import ApiKey
 from apps.composer.models import PlatformPost
 from apps.social_accounts.models import SocialAccount
@@ -183,6 +189,14 @@ DEFAULT_READ_RATE = "300/m"
 WORKSPACE_AGG_WRITE_RATE = "1000/m"
 IP_FAILED_AUTH_RATE = "10/m"
 
+#: Calls per key per UTC hour / UTC day, overridable via
+#: ``ApiKey.rate_override_hourly`` / ``rate_override_daily``. In the 30 days
+#: before these existed the busiest legitimate key made 1,444 calls in an hour
+#: and 7,783 in a day; the hourly cap is the one that binds a steady poller,
+#: and at it the daily budget takes 20 hours to spend.
+DEFAULT_HOURLY_CAP = 1000
+DEFAULT_DAILY_CAP = 20000
+
 # ``django-ratelimit`` keys are computed by callable accessors; these
 # helpers consolidate the convention so individual routes stay clean.
 
@@ -261,6 +275,7 @@ def enforce_http_rate_limits(request: HttpRequest, *, is_write: bool) -> None:
                 retry_after=60,
             ),
         )
+    enforce_usage_caps(request)
     # Global instance cap — optional, env-driven.
     global_cap = getattr(settings, "BB_API_LIMIT", None)
     if global_cap and is_ratelimited(
@@ -283,6 +298,53 @@ def enforce_http_rate_limits(request: HttpRequest, *, is_write: bool) -> None:
 
 def _parse_rate_num(rate: str) -> int:
     return int(rate.split("/", 1)[0])
+
+
+def _override_cap(api_key: ApiKey, attr: str, default: int) -> int:
+    """Per-key cap override, with the same explicit-``0``-freezes rule as ``_override_or``."""
+    override = getattr(api_key, attr, None)
+    return int(override) if override is not None else default
+
+
+def enforce_usage_caps(request: HttpRequest) -> None:
+    """Raise 429 once the caller has used its hourly or daily call budget.
+
+    Windows are fixed UTC hours and days, so ``retry_after`` is exact: the
+    seconds until the window that tripped rolls over. Gated on
+    ``RATELIMIT_ENABLE`` like the django-ratelimit tiers, so it switches off
+    with them in development.
+    """
+    if not getattr(settings, "RATELIMIT_ENABLE", True):
+        return
+    api_key: ApiKey = request.auth  # type: ignore[attr-defined]
+    hourly_cap = _override_cap(api_key, "rate_override_hourly", DEFAULT_HOURLY_CAP)
+    daily_cap = _override_cap(api_key, "rate_override_daily", DEFAULT_DAILY_CAP)
+    now = timezone.now()
+    used_hour, used_day = usage_in_windows(actor_for(api_key), now)
+
+    # Daily first: when both are spent, the honest Retry-After is midnight.
+    if used_day >= daily_cap:
+        next_day = day_start(now) + dt.timedelta(days=1)
+        raise HttpError(
+            429,
+            _format_quota_message(
+                tier="per_key_daily",
+                limit=daily_cap,
+                remaining=0,
+                retry_after=max(int((next_day - now).total_seconds()), 1),
+            ),
+        )
+    if used_hour >= hourly_cap:
+        next_hour = hour_start(now) + dt.timedelta(hours=1)
+        raise HttpError(
+            429,
+            _format_quota_message(
+                tier="per_key_hourly",
+                limit=hourly_cap,
+                remaining=0,
+                retry_after=max(int((next_hour - now).total_seconds()), 1),
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------

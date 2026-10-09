@@ -1,11 +1,15 @@
 """Background tasks for the Agent API.
 
-Today there is exactly one: a 24-hourly sweep that deletes stale
-``IdempotencyRecord`` rows. The model docstring promises a 24h window
-for replay; without an actual sweep, any row whose worker died between
-``claim_idempotency_slot`` and ``finalize_idempotent_response`` /
-``release_idempotent_claim`` lingers forever in the PENDING state,
-locking the agent's retries with that key to HTTP 409.
+Two sweeps:
+
+* An hourly one that deletes stale ``IdempotencyRecord`` rows. The model
+  docstring promises a 24h window for replay; without an actual sweep, any
+  row whose worker died between ``claim_idempotency_slot`` and
+  ``finalize_idempotent_response`` / ``release_idempotent_claim`` lingers
+  forever in the PENDING state, locking the agent's retries with that key to
+  HTTP 409.
+* A daily one that ages out ``ApiKeyAuditLog`` and ``ApiKeyUsageHourly``
+  rows past their retention.
 """
 
 from __future__ import annotations
@@ -53,3 +57,50 @@ def sweep_stale_idempotency_records():
     deleted, _ = IdempotencyRecord.objects.filter(created_at__lt=cutoff).delete()
     if deleted:
         logger.info("Swept %d stale IdempotencyRecord rows older than %s", deleted, cutoff)
+
+
+#: Matches the ``org.audit_log_retention_days`` default in
+#: ``apps/settings_manager/defaults.py``. Usage counters are kept as long: they
+#: are a few dozen rows per key per day, and a year of them answers
+#: year-on-year questions the audit rows no longer can.
+AUDIT_LOG_RETENTION_DAYS = 365
+USAGE_RETENTION_DAYS = 365
+
+USAGE_SWEEP_INTERVAL_SECONDS = 24 * 60 * 60
+
+#: Rows per DELETE. Keeps each statement short so the sweep never holds a lock
+#: the request path's inserts have to wait on.
+_SWEEP_CHUNK = 10_000
+
+
+@background(schedule=0)
+def sweep_api_usage_records():
+    """Delete audit rows and usage counters older than their retention.
+
+    Exceptions are swallowed for the same reason as ``purge_email_counters``:
+    django-background-tasks drops a task that keeps raising, and losing the
+    schedule is worse than one missed night.
+    """
+    from apps.api_keys.models import ApiKeyAuditLog, ApiKeyUsageHourly
+
+    now = timezone.now()
+    try:
+        audit = _delete_in_chunks(
+            ApiKeyAuditLog.objects.filter(created_at__lt=now - dt.timedelta(days=AUDIT_LOG_RETENTION_DAYS))
+        )
+        usage = _delete_in_chunks(
+            ApiKeyUsageHourly.objects.filter(hour_start__lt=now - dt.timedelta(days=USAGE_RETENTION_DAYS))
+        )
+    except Exception:
+        logger.exception("API usage sweep failed")
+        return
+    if audit or usage:
+        logger.info("Swept %d audit row(s) and %d usage counter row(s) past retention", audit, usage)
+
+
+def _delete_in_chunks(queryset) -> int:
+    deleted = 0
+    while pks := list(queryset.values_list("pk", flat=True)[:_SWEEP_CHUNK]):
+        count, _ = queryset.model.objects.filter(pk__in=pks).delete()
+        deleted += count
+    return deleted

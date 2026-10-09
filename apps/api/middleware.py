@@ -17,7 +17,9 @@ from typing import Any
 from django.http import HttpRequest
 
 from apps.api.models import IdempotencyRecord
+from apps.api.usage import record_usage
 from apps.api_keys.models import ApiKey, ApiKeyAuditLog
+from apps.mcp.tools import is_read_only_tool
 
 # ---------------------------------------------------------------------------
 # Audit log
@@ -31,7 +33,10 @@ def log_audit_entry(
     target_id: uuid.UUID | None,
     status_code: int,
 ) -> None:
-    """Persist one ``ApiKeyAuditLog`` row for the request.
+    """Count the request, and persist an ``ApiKeyAuditLog`` row if it earns one.
+
+    Every authenticated request is counted in ``ApiKeyUsageHourly``. Only
+    writes and non-429 failures also get a row; see ``_keeps_audit_row``.
 
     Deliberately omits request body — payloads may contain media URLs
     with embedded signed tokens. We record verb + resource ID + outcome,
@@ -46,6 +51,9 @@ def log_audit_entry(
     if api_key is None:
         # Anonymous (failed-auth) paths produce no audit row — they're
         # represented by the rate-limit counter on the IP throttle.
+        return
+    record_usage(request, action=action, status_code=status_code)
+    if not _keeps_audit_row(request, action=action, status_code=status_code):
         return
     # OAuth MCP callers carry an ``OAuthMcpActor`` shim (not a saved ApiKey),
     # so we attribute the row to the user via ``actor_user`` instead of the
@@ -70,6 +78,34 @@ def log_audit_entry(
         logging.getLogger(__name__).warning(
             "Failed to write ApiKeyAuditLog for actor %s", getattr(api_key, "id", "oauth"), exc_info=True
         )
+
+
+_MCP_TOOL_CALL_PREFIX = "mcp.tools/call:"
+_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _keeps_audit_row(request: HttpRequest, *, action: str, status_code: int) -> bool:
+    """Whether this request is worth a full audit row, beyond being counted.
+
+    * 429 — no. A client ignoring ``Retry-After`` makes these by the
+      thousand, and refused calls did nothing to audit.
+    * any other failure — yes. An authenticated key probing foreign UUIDs
+      (403/404) is exactly what the trail is for, and the hourly cap bounds
+      how many such rows one key can make.
+    * MCP — only ``tools/call`` of a tool that isn't read-only. Protocol
+      traffic (``ping``, ``initialize``, ``tools/list``, notifications) is
+      the bulk of MCP volume and records nothing anyone acted on.
+    * REST — any method other than a read.
+    """
+    if status_code == 429:
+        return False
+    if status_code >= 400:
+        return True
+    if action.startswith("mcp."):
+        if not action.startswith(_MCP_TOOL_CALL_PREFIX):
+            return False
+        return not is_read_only_tool(action.removeprefix(_MCP_TOOL_CALL_PREFIX))
+    return (request.method or "GET").upper() not in _READ_METHODS
 
 
 def _client_ip(request: HttpRequest) -> str | None:

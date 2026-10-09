@@ -16,7 +16,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.api_keys import services
-from apps.api_keys.models import ApiKeyAuditLog
+from apps.api_keys.models import ApiKeyAuditLog, ApiKeyUsageHourly
 from apps.members.models import (
     PERMISSION_KEYS,
     OrgMembership,
@@ -225,8 +225,10 @@ class TestMcpAuditStatusDerivation:
             content_type="application/json",
         )
         assert r.status_code == 202
-        latest = ApiKeyAuditLog.objects.filter(api_key=issued_key.api_key).latest("created_at")
-        assert latest.status_code == 202
+        # Protocol traffic is counted, not logged.
+        counter = ApiKeyUsageHourly.objects.get(api_key=issued_key.api_key, action="mcp.notifications/initialized")
+        assert counter.status_code == 202
+        assert counter.count == 1
 
 
 # ===========================================================================
@@ -236,8 +238,8 @@ class TestMcpAuditStatusDerivation:
 
 @pytest.mark.django_db
 class TestBatchedRateLimitCharging:
-    def test_batch_audits_every_message(self, client_with_token, issued_key):
-        """Batch dispatch must audit every message (including notifications)
+    def test_batch_counts_every_message(self, client_with_token, issued_key):
+        """Batch dispatch must count every message (including notifications)
         and charge the rate limit per message. Notification audit was
         previously dropped in batches; this validates the fix.
         """
@@ -254,6 +256,7 @@ class TestBatchedRateLimitCharging:
             content_type="application/json",
         )
         assert r.status_code == 200
-        after = ApiKeyAuditLog.objects.filter(api_key=issued_key.api_key).count()
-        # 3 messages → 3 audit rows.
-        assert after - before == 3
+        # 3 protocol messages → 3 counted calls and no audit rows.
+        assert ApiKeyAuditLog.objects.filter(api_key=issued_key.api_key).count() == before
+        counts = dict(ApiKeyUsageHourly.objects.filter(api_key=issued_key.api_key).values_list("action", "count"))
+        assert counts == {"mcp.ping": 2, "mcp.notifications/initialized": 1}

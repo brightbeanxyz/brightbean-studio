@@ -238,6 +238,8 @@ class OAuthMcpActor:
     # No per-key rate overrides — OAuth callers use the default tiers.
     rate_override_writes = None
     rate_override_reads = None
+    rate_override_hourly = None
+    rate_override_daily = None
 
     def __init__(self, *, user: Any, membership: Any) -> None:
         self.issued_by = user
