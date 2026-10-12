@@ -481,6 +481,10 @@ function calendarApp() {
             // filter change would otherwise leave rows ticked that the new grid
             // doesn't show — and Delete would hit them.
             Alpine.store('sel').clear();
+            htmx.ajax('GET', this.calendarUrl(), {target: '#calendar-content', swap: 'innerHTML'});
+        },
+
+        calendarUrl() {
             const params = new URLSearchParams();
             params.set('mode', 'calendar');
             params.set('view', this.activeView);
@@ -490,11 +494,50 @@ function calendarApp() {
             if (this.calendarFilters.tag) params.set('tag', this.calendarFilters.tag);
             if (this.calendarFilters.tz) params.set('tz', this.calendarFilters.tz);
             {% if show_holidays %}params.set('holidays', '1');{% endif %}
-            const url = '{% url "calendar:calendar" workspace_id=workspace.id %}?' + params.toString();
-            htmx.ajax('GET', url, {target: '#calendar-content', swap: 'innerHTML'});
+            return '{% url "calendar:calendar" workspace_id=workspace.id %}?' + params.toString();
+        },
+
+        /* The worker publishes in the background and nothing pushes that to an
+           open page, so a scheduled chip would stay "scheduled" until a manual
+           reload. Re-fetch the grid and swap it only when it changed. */
+        lastGridHtml: null,
+        refreshing: false,
+
+        async refreshGrid() {
+            /* Never pull the grid out from under someone mid-action. */
+            if (this.refreshing || document.hidden || this._draggingChip || Alpine.store('sel').count) return;
+            if (!document.getElementById('calendar-content')) return;
+            this.refreshing = true;
+            try {
+                const resp = await fetch(this.calendarUrl(), { headers: { 'HX-Request': 'true' } });
+                if (!resp.ok) return;
+                const html = await resp.text();
+                if (html === this.lastGridHtml) return;
+                /* Re-check: a drag or selection may have started while the request was out. */
+                if (this._draggingChip || Alpine.store('sel').count) return;
+                const grid = document.getElementById('calendar-content');
+                if (!grid) return;
+                this.lastGridHtml = html;
+                const scrollTop = grid.scrollTop;
+                grid.innerHTML = html;
+                htmx.process(grid);
+                grid.scrollTop = scrollTop;
+                this.$nextTick(() => this.initCalendarDnD());
+            } catch (e) {
+                /* Offline or a transient error: the next tick tries again. */
+            } finally {
+                this.refreshing = false;
+            }
         },
 
         init() {
+            /* The shell can be re-rendered (mode switch); keep one timer, owned by
+               the newest instance, instead of one per render. */
+            clearInterval(window._calendarRefreshTimer);
+            window._calendarRefreshTimer = setInterval(() => this.refreshGrid(), 20000);
+            document.removeEventListener('visibilitychange', window._calendarOnVisible);
+            window._calendarOnVisible = () => { if (!document.hidden) this.refreshGrid(); };
+            document.addEventListener('visibilitychange', window._calendarOnVisible);
             // SortableJS drag-and-drop. Wire on first load and re-wire after
             // every HTMX swap of the calendar grid (nav, view change, filters).
             this.$nextTick(() => this.initCalendarDnD());
