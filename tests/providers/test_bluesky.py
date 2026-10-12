@@ -6,6 +6,7 @@ import time
 from unittest.mock import MagicMock, patch
 
 from providers.bluesky import BlueskyProvider, _access_jwt_expires_in
+from providers.exceptions import APIError
 
 
 def _make_jwt(payload: dict) -> str:
@@ -60,6 +61,146 @@ class TestCreateSession:
         assert tokens.refresh_token == "refresh"
         assert tokens.expires_in is not None
         assert 7195 <= tokens.expires_in <= 7200
+
+
+PLC_DID = "did:plc:abcdefghijklmnopqrstuvwx"
+
+
+def _fake_network(pds_endpoint: str, *, did: str = PLC_DID):
+    """Answer the handle lookup, the DID document and createSession like the network."""
+    access_jwt = _make_jwt({"exp": int(time.time()) + 7200})
+
+    def respond(method, url, **kwargs):
+        if url.endswith("/xrpc/com.atproto.identity.resolveHandle"):
+            body = {"did": did}
+        elif url.startswith("https://plc.directory/") or url.endswith("/.well-known/did.json"):
+            body = {
+                "id": did,
+                "service": [
+                    {
+                        "id": "#atproto_pds",
+                        "type": "AtprotoPersonalDataServer",
+                        "serviceEndpoint": pds_endpoint,
+                    }
+                ],
+            }
+        elif url.endswith("/xrpc/com.atproto.server.createSession"):
+            body = {"accessJwt": access_jwt, "refreshJwt": "refresh"}
+        else:
+            raise AssertionError(f"unexpected request: {method} {url}")
+        return MagicMock(json=MagicMock(return_value=body))
+
+    return respond
+
+
+def _always_safe(url: str) -> bool:
+    return True
+
+
+class TestResolvePds:
+    @patch.object(BlueskyProvider, "_request")
+    def test_follows_the_plc_did_document(self, mock_request):
+        mock_request.side_effect = _fake_network("https://eurosky.social")
+
+        pds_url = BlueskyProvider().resolve_pds("me.eurosky.social", is_safe_url=_always_safe)
+
+        assert pds_url == "https://eurosky.social"
+        assert mock_request.call_args_list[1].args[1] == f"https://plc.directory/{PLC_DID}"
+
+    @patch.object(BlueskyProvider, "_request")
+    def test_reads_a_did_web_document_from_its_domain(self, mock_request):
+        mock_request.side_effect = _fake_network("https://pds.example.org", did="did:web:example.org")
+
+        pds_url = BlueskyProvider().resolve_pds("example.org", is_safe_url=_always_safe)
+
+        assert pds_url == "https://pds.example.org"
+        assert mock_request.call_args_list[1].args[1] == "https://example.org/.well-known/did.json"
+
+    @patch.object(BlueskyProvider, "_request")
+    def test_takes_a_did_without_looking_up_a_handle(self, mock_request):
+        mock_request.side_effect = _fake_network("https://eurosky.social")
+
+        assert BlueskyProvider().resolve_pds(PLC_DID, is_safe_url=_always_safe) == "https://eurosky.social"
+        assert mock_request.call_count == 1
+
+    @patch.object(BlueskyProvider, "_request")
+    def test_does_not_resolve_an_email(self, mock_request):
+        assert BlueskyProvider().resolve_pds("me@example.org", is_safe_url=_always_safe) is None
+        mock_request.assert_not_called()
+
+    @patch.object(BlueskyProvider, "_request")
+    def test_drops_an_endpoint_the_ssrf_check_rejects(self, mock_request):
+        mock_request.side_effect = _fake_network("https://10.0.0.5")
+
+        pds_url = BlueskyProvider().resolve_pds("me.example.org", is_safe_url=lambda url: "10.0.0.5" not in url)
+
+        assert pds_url is None
+
+    @patch.object(BlueskyProvider, "_request")
+    def test_never_fetches_a_did_web_document_from_a_rejected_host(self, mock_request):
+        mock_request.side_effect = _fake_network("https://pds.example.org", did="did:web:internal.example")
+
+        assert BlueskyProvider().resolve_pds("internal.example", is_safe_url=lambda url: False) is None
+        assert mock_request.call_count == 1
+
+    @patch.object(BlueskyProvider, "_request")
+    def test_ignores_a_plain_http_endpoint(self, mock_request):
+        mock_request.side_effect = _fake_network("http://pds.example.org")
+
+        assert BlueskyProvider().resolve_pds("me.example.org", is_safe_url=_always_safe) is None
+
+    @patch.object(BlueskyProvider, "_request")
+    def test_does_not_build_a_url_from_a_malformed_did(self, mock_request):
+        mock_request.side_effect = _fake_network("https://pds.example.org", did="did:plc:../../export")
+
+        assert BlueskyProvider().resolve_pds("me.example.org", is_safe_url=_always_safe) is None
+        assert mock_request.call_count == 1
+
+
+class TestCreateSessionOnTheAccountPds:
+    @patch.object(BlueskyProvider, "_request")
+    def test_opens_the_session_on_a_third_party_pds(self, mock_request):
+        mock_request.side_effect = _fake_network("https://eurosky.social")
+        provider = BlueskyProvider()
+
+        provider.create_session("me.eurosky.social", "app-pw", is_safe_url=_always_safe)
+
+        assert mock_request.call_args.args[1] == "https://eurosky.social/xrpc/com.atproto.server.createSession"
+        assert provider.pds_url == "https://eurosky.social"
+
+    @patch.object(BlueskyProvider, "_request")
+    def test_keeps_bsky_social_for_accounts_bluesky_hosts(self, mock_request):
+        mock_request.side_effect = _fake_network("https://morel.us-east.host.bsky.network")
+        provider = BlueskyProvider()
+
+        provider.create_session("me.bsky.social", "app-pw", is_safe_url=_always_safe)
+
+        assert mock_request.call_args.args[1] == "https://bsky.social/xrpc/com.atproto.server.createSession"
+        assert provider.pds_url == "https://bsky.social"
+
+    @patch.object(BlueskyProvider, "_request")
+    def test_falls_back_to_bsky_social_when_the_lookup_fails(self, mock_request):
+        access_jwt = _make_jwt({"exp": int(time.time()) + 7200})
+        mock_request.side_effect = [
+            APIError("Unable to resolve handle", status_code=400),
+            MagicMock(json=MagicMock(return_value={"accessJwt": access_jwt, "refreshJwt": "refresh"})),
+        ]
+        provider = BlueskyProvider()
+
+        tokens = provider.create_session("me.example.org", "app-pw", is_safe_url=_always_safe)
+
+        assert tokens.access_token == access_jwt
+        assert mock_request.call_args.args[1] == "https://bsky.social/xrpc/com.atproto.server.createSession"
+
+    @patch.object(BlueskyProvider, "_request")
+    def test_looks_nothing_up_without_an_ssrf_check(self, mock_request):
+        mock_request.side_effect = _fake_network("https://eurosky.social")
+        provider = BlueskyProvider()
+
+        provider.create_session("me.eurosky.social", "app-pw")
+
+        assert mock_request.call_count == 1
+        assert provider.pds_url == "https://bsky.social"
 
 
 class TestRefreshToken:
