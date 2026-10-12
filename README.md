@@ -1,4 +1,6 @@
 <p align="center">
+
+[![Deploy to Railyard](https://app.railyard.run/deploy/badge)](https://app.railyard.run/deploy?repo=https://github.com/brightbeanxyz/brightbean-studio)
   <a href="https://github.com/brightbeanxyz/brightbean-studio">
     <img src=".github/assets/brightbean-studio-logo.webp" alt="BrightBean Studio" width="280">
   </a>
