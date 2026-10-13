@@ -266,7 +266,65 @@ function inboxController() {
             this.selected = new Set();
         },
 
+        /* Webhooks write new comments/DMs straight to the database, but nothing
+           pushes them to an open page — so the list re-fetches itself. */
+        activeId: null,
+        lastListHtml: null,
+        refreshing: false,
+
+        init() {
+            setInterval(() => this.refreshList(), 20000);
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) this.refreshList();
+            });
+        },
+
+        listUrl() {
+            const params = new URLSearchParams();
+            const view = new URLSearchParams(window.location.search).get('view');
+            if (view) params.set('view', view);
+            /* Skip blanks: "All platforms" submits platform="", which the view
+               would read as a filter matching nothing. */
+            document.querySelectorAll("[name='q'],[name='platform'],[name='type'],[name='status'],[name='sentiment']")
+                .forEach(el => { if (el.value) params.append(el.name, el.value); });
+            return '{% url "inbox:feed" workspace_id=workspace.id %}?' + params.toString();
+        },
+
+        async refreshList() {
+            /* Never pull the list out from under someone mid-action. */
+            if (this.refreshing || document.hidden || this.selectedCount > 0) return;
+            if (document.activeElement && document.activeElement.name === 'q') return;
+            this.refreshing = true;
+            try {
+                const resp = await fetch(this.listUrl(), { headers: { 'HX-Request': 'true' } });
+                if (!resp.ok) return;
+                const html = await resp.text();
+                if (html === this.lastListHtml) return;
+                this.lastListHtml = html;
+                const list = document.getElementById('inbox-message-list');
+                const scrollTop = list.scrollTop;
+                list.innerHTML = html;
+                htmx.process(list);
+                list.scrollTop = scrollTop;
+                this.highlightActive();
+            } catch (e) {
+                /* Offline or a transient error: the next tick tries again. */
+            } finally {
+                this.refreshing = false;
+            }
+        },
+
+        highlightActive() {
+            if (!this.activeId) return;
+            const row = document.getElementById('msg-' + this.activeId);
+            if (row) {
+                row.classList.add('is-active');
+                row.classList.remove('is-unread');
+            }
+        },
+
         selectMessage(id, url) {
+            this.activeId = id;
             /* Load detail panel via HTMX */
             htmx.ajax('GET', url, { target: '#inbox-detail-panel', swap: 'innerHTML' });
             /* Highlight active row */
