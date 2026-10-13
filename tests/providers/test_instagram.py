@@ -1266,3 +1266,129 @@ def test_video_is_a_declared_post_type(provider_cls):
     """An explicit post_type hint can still hand the provider VIDEO, so the
     declared contract has to admit it."""
     assert PostType.VIDEO in provider_cls(IG_CREDS).supported_post_types
+
+
+# Optional container fields: AI disclosure and Reel cover
+# ----------------------------------------------------------------------
+
+AI_AND_COVER = {"ig_user_id": "ig-1", "is_ai_generated": True, "video_cover_timestamp_ms": 22400}
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_a_reel_carries_the_ai_disclosure_and_its_cover_frame(make_provider, create_url):
+    """Meta requires the AI disclosure before sharing a Reel with realistic AI
+    audio or video, and the app only offers it at share time; without
+    thumb_offset the cover is the first frame, often a blank intro."""
+    provider = make_provider()
+
+    _publish(provider, text="Look at this", media_urls=[VIDEO_URL], post_type=PostType.REEL, extra=AI_AND_COVER)
+
+    assert provider._request.call_args_list[0].kwargs["json"] == {
+        "caption": "Look at this",
+        "media_type": "REELS",
+        "video_url": VIDEO_URL,
+        "thumb_offset": 22400,
+        "is_ai_generated": True,
+    }
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_an_image_carries_the_ai_disclosure_but_never_a_cover(make_provider, create_url):
+    """thumb_offset is a video field: a stale offset left on an image post must
+    not reach Instagram."""
+    provider = make_provider()
+
+    _publish(provider, media_urls=[IMAGE_URL], post_type=PostType.IMAGE, extra=AI_AND_COVER)
+
+    assert provider._request.call_args_list[0].kwargs["json"] == {
+        "image_url": IMAGE_URL,
+        "is_ai_generated": True,
+    }
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_a_story_sends_neither_option(make_provider, create_url):
+    """Neither field is documented for stories, and a rejected field would fail
+    the whole publish: stories keep their plain container."""
+    provider = make_provider()
+
+    _publish(provider, media_urls=[VIDEO_URL], post_type=PostType.STORY, extra=AI_AND_COVER)
+
+    assert provider._request.call_args_list[0].kwargs["json"] == {
+        "media_type": "STORIES",
+        "video_url": VIDEO_URL,
+    }
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_a_carousel_discloses_ai_on_the_parent_only(make_provider, create_url):
+    """Instagram rejects is_ai_generated on carousel children, so it goes on the
+    carousel container — and the cover offset goes nowhere."""
+    provider = make_provider()
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "child-1"}),
+            _resp({"status_code": "FINISHED"}),
+            _resp({"id": "child-2"}),
+            _resp({"status_code": "FINISHED"}),
+            _resp({"id": "carousel-1"}),
+            _resp({"status_code": "FINISHED"}),
+            _resp({"id": "media-1"}),
+        ]
+    )
+
+    provider.publish_post(
+        "token",
+        PublishContent(media_urls=[IMAGE_URL, VIDEO_URL], post_type=PostType.CAROUSEL, extra=AI_AND_COVER),
+    )
+
+    first, second, parent = (provider._request.call_args_list[i].kwargs["json"] for i in (0, 2, 4))
+    assert first == {"is_carousel_item": True, "image_url": IMAGE_URL}
+    assert second == {"is_carousel_item": True, "media_type": "VIDEO", "video_url": VIDEO_URL}
+    assert parent == {"media_type": "CAROUSEL", "children": "child-1,child-2", "is_ai_generated": True}
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+@pytest.mark.parametrize("cover", [-1, "soon", None, True, "1.5"])
+def test_an_unusable_cover_offset_is_left_out(make_provider, create_url, cover):
+    """A bad stored value falls back to Instagram's default cover instead of
+    failing the container."""
+    provider = make_provider()
+
+    _publish(
+        provider,
+        media_urls=[VIDEO_URL],
+        post_type=PostType.REEL,
+        extra={"ig_user_id": "ig-1", "video_cover_timestamp_ms": cover},
+    )
+
+    assert "thumb_offset" not in provider._request.call_args_list[0].kwargs["json"]
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_a_cover_stored_as_a_string_is_still_sent(make_provider, create_url):
+    provider = make_provider()
+
+    _publish(
+        provider,
+        media_urls=[VIDEO_URL],
+        post_type=PostType.REEL,
+        extra={"ig_user_id": "ig-1", "video_cover_timestamp_ms": "1500"},
+    )
+
+    assert provider._request.call_args_list[0].kwargs["json"]["thumb_offset"] == 1500
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_ai_disclosure_off_sends_nothing(make_provider, create_url):
+    """Off is Instagram's default; sending false would only add a field."""
+    provider = make_provider()
+
+    _publish(
+        provider,
+        media_urls=[VIDEO_URL],
+        post_type=PostType.REEL,
+        extra={"ig_user_id": "ig-1", "is_ai_generated": False},
+    )
+
+    assert "is_ai_generated" not in provider._request.call_args_list[0].kwargs["json"]
