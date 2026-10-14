@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import enum
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.parse import urlparse
@@ -79,6 +80,19 @@ class PublishResult:
     platform_post_id: str
     url: str | None = None
     extra: dict = field(default_factory=dict)
+    deferred: bool = False
+
+
+@dataclass
+class PublishContext:
+    """Private, durable progress for a resumable publish; never API input."""
+
+    checkpoint: dict
+    save_checkpoint: Callable[..., None]
+    deadline: float | None = None
+
+    def save(self) -> None:
+        self.save_checkpoint(self.checkpoint)
 
 
 class PublishState(enum.StrEnum):
@@ -191,6 +205,7 @@ class PublishContent:
     # Per-item media type ("image" / "video" / "gif" / ...), parallel to
     # ``media_urls``. Filled by the engine from MediaAsset.media_type.
     media_types: list[str] = field(default_factory=list)
+    publish_context: PublishContext | None = None
 
     def is_video(self, index: int = 0) -> bool:
         """Whether media item ``index`` is a video.

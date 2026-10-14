@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import time
+import uuid
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 from .base import SocialProvider
-from .exceptions import OAuthError, PublishError
+from .exceptions import APIError, OAuthError, PublishError
 from .types import (
     AccountProfile,
     AuthType,
@@ -18,6 +21,7 @@ from .types import (
     PostMetrics,
     PostType,
     PublishContent,
+    PublishContext,
     PublishResult,
     RateLimitConfig,
     ReplyResult,
@@ -222,19 +226,48 @@ class MastodonProvider(SocialProvider):
     # ------------------------------------------------------------------
 
     def publish_post(self, access_token: str, content: PublishContent) -> PublishResult:
-        """Publish a status to Mastodon."""
-        # Upload media first if present
-        media_ids: list[str] = []
-        for media_path in content.media_files or []:
-            media_id = self._upload_media(access_token, media_path)
-            media_ids.append(media_id)
+        """Upload once; yield instead of waiting for asynchronous processing."""
+        context = content.publish_context
+        if context is None:
+            # Standalone callers can still publish text and ready images. The
+            # studio supplies durable progress before entering this method.
+            context = PublishContext(
+                checkpoint={
+                    "attempt_id": str(uuid.uuid4()),
+                    "phase": "uploading",
+                    "params": self.status_parameters(content),
+                    "media": [
+                        {"source": str(i), "media_id": "", "ready": False} for i in range(len(content.media_files))
+                    ],
+                },
+                save_checkpoint=lambda _: None,
+            )
+        checkpoint = context.checkpoint
+        for index, attachment in enumerate(checkpoint["media"]):
+            if attachment["media_id"]:
+                continue
+            # Check ownership before each external side effect, as well as
+            # after it. A lost response may orphan an attachment, never a post.
+            context.save()
+            media_id, ready = self._upload_media(access_token, content.media_files[index])
+            attachment.update(media_id=media_id, ready=ready)
+            checkpoint.setdefault("processing_started_at", datetime.now(UTC).isoformat())
+            context.save()
+
+        if not all(item["ready"] for item in checkpoint["media"]):
+            checkpoint["phase"] = "processing"
+            context.save()
+            return PublishResult(platform_post_id="", deferred=True)
+        return self._submit_status(access_token, context)
+
+    @staticmethod
+    def status_parameters(content: PublishContent) -> dict:
+        """Freeze only authored status parameters, never runtime metadata."""
 
         # Build status params
         params: dict = {}
         if content.text:
             params["status"] = content.text
-        if media_ids:
-            params["media_ids[]"] = media_ids
 
         # Visibility
         visibility = content.extra.get("visibility", "public")
@@ -258,18 +291,100 @@ class MastodonProvider(SocialProvider):
         if content.extra.get("in_reply_to_id"):
             params["in_reply_to_id"] = content.extra["in_reply_to_id"]
 
-        resp = self._request(
-            "POST",
-            f"{self.instance_url}/api/v1/statuses",
-            access_token=access_token,
-            data=params,
-        )
-        data = resp.json()
+        return deepcopy(params)
 
+    def resume_publish(self, access_token: str, context: PublishContext) -> PublishResult:
+        """Check each pending attachment once, then submit when all are ready."""
+        checkpoint = context.checkpoint
+        if checkpoint.get("status_id"):
+            return self._completed_result(checkpoint)
+        if checkpoint["phase"] != "submitting":
+            for attachment in checkpoint["media"]:
+                if attachment["ready"]:
+                    continue
+                timeout = self._resume_timeout(context)
+                if timeout is None:
+                    return PublishResult(platform_post_id="", deferred=True)
+                context.save()
+                try:
+                    response = self._request(
+                        "GET",
+                        f"{self.instance_url}/api/v1/media/{attachment['media_id']}",
+                        access_token=access_token,
+                        timeout=timeout,
+                    )
+                except APIError as exc:
+                    if exc.status_code in (400, 401, 403, 404, 413, 415, 422):
+                        exc.retryable = False
+                    raise
+                # 206 can have no body at all. A thumbnail is not proof that
+                # the full-sized upload has finished processing.
+                if response.status_code == 200 and response.json().get("url"):
+                    attachment["ready"] = True
+                    context.save()
+            if not all(item["ready"] for item in checkpoint["media"]):
+                return PublishResult(platform_post_id="", deferred=True)
+        return self._submit_status(access_token, context)
+
+    @staticmethod
+    def _resume_timeout(context: PublishContext) -> float | None:
+        remaining = 5.0 if context.deadline is None else min(5.0, context.deadline - time.monotonic())
+        return remaining if remaining > 0 else None
+
+    def _submit_status(self, access_token: str, context: PublishContext) -> PublishResult:
+        checkpoint = context.checkpoint
+        if checkpoint.get("status_id"):
+            return self._completed_result(checkpoint)
+        started = checkpoint.get("first_submission_at") or checkpoint.get("processing_started_at")
+        if started and datetime.now(UTC) - datetime.fromisoformat(started) >= timedelta(minutes=30):
+            # Readiness may have changed just as the durable deadline expired.
+            # Yield so the coordinator settles the timeout without posting.
+            return PublishResult(platform_post_id="", deferred=True)
+        timeout = self._resume_timeout(context)
+        if timeout is None:
+            return PublishResult(platform_post_id="", deferred=True)
+        params = deepcopy(checkpoint["params"])
+        if checkpoint["media"]:
+            params["media_ids[]"] = [item["media_id"] for item in checkpoint["media"]]
+        checkpoint["phase"] = "submitting"
+        checkpoint.setdefault("first_submission_at", datetime.now(UTC).isoformat())
+        context.save()
+
+        try:
+            response = self._request(
+                "POST",
+                f"{self.instance_url}/api/v1/statuses",
+                access_token=access_token,
+                headers={"Idempotency-Key": f"studio-mastodon-{checkpoint['attempt_id']}"},
+                data=params,
+                timeout=timeout,
+            )
+        except APIError as exc:
+            if (
+                exc.status_code == 422
+                and not checkpoint.get("submission_uncertain")
+                and "not finished processing" in str(exc.raw_response.get("error", "")).lower()
+            ):
+                checkpoint["phase"] = "processing"
+                checkpoint.pop("first_submission_at", None)
+                for item in checkpoint["media"]:
+                    item["ready"] = False
+                context.save()
+                return PublishResult(platform_post_id="", deferred=True)
+            if exc.status_code in (400, 401, 403, 404, 413, 415, 422):
+                exc.retryable = False
+            raise
+        data = response.json()
+        checkpoint.update(phase="complete", status_id=str(data["id"]), status_url=data.get("url"))
+        context.save()
+        return self._completed_result(checkpoint)
+
+    @staticmethod
+    def _completed_result(checkpoint: dict) -> PublishResult:
         return PublishResult(
-            platform_post_id=data["id"],
-            url=data.get("url"),
-            extra=data,
+            platform_post_id=checkpoint["status_id"],
+            url=checkpoint.get("status_url"),
+            extra={"id": checkpoint["status_id"], "url": checkpoint.get("status_url")},
         )
 
     def publish_comment(self, access_token: str, post_id: str, text: str) -> CommentResult:
@@ -294,17 +409,22 @@ class MastodonProvider(SocialProvider):
     # Media upload
     # ------------------------------------------------------------------
 
-    def _upload_media(self, access_token: str, file_path: str) -> str:
-        """Upload a media file and return its media ID."""
-        with open(file_path, "rb") as f:
-            resp = self._request(
-                "POST",
-                f"{self.instance_url}/api/v2/media",
-                access_token=access_token,
-                files={"file": f},
-            )
+    def _upload_media(self, access_token: str, file_path: str) -> tuple[str, bool]:
+        """Return an accepted ID and whether the full upload is already ready."""
+        try:
+            with open(file_path, "rb") as f:
+                resp = self._request(
+                    "POST",
+                    f"{self.instance_url}/api/v2/media",
+                    access_token=access_token,
+                    files={"file": f},
+                )
+        except APIError as exc:
+            if exc.status_code in (400, 401, 403, 404, 413, 415, 422):
+                exc.retryable = False
+            raise
         data = resp.json()
-        return data["id"]
+        return str(data["id"]), resp.status_code == 200 and bool(data.get("url"))
 
     # ------------------------------------------------------------------
     # Analytics

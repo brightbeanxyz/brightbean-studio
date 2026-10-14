@@ -51,6 +51,15 @@ PUBLISH_RATE_LIMIT_MESSAGE = "The platform's rate limit was reached. We'll retry
 PUBLISH_QUOTA_EXHAUSTED_MESSAGE = "The platform's daily API limit is used up, so the post couldn't be published."
 PUBLISH_REJECTED_MESSAGE = "The platform rejected this post."
 PUBLISH_GENERIC_MESSAGE = "Publishing failed. Please try again."
+PUBLISH_MASTODON_MEDIA_FAILED_MESSAGE = (
+    "Mastodon could not process the attached media. Please check the file and try again."
+)
+PUBLISH_MASTODON_MEDIA_TIMEOUT_MESSAGE = (
+    "Mastodon did not finish processing the attached media in time. Please try again later."
+)
+PUBLISH_MASTODON_CONTENT_CHANGED_MESSAGE = (
+    "This post or its account changed during publishing. Please review it before trying again."
+)
 # The two messages above promise a retry, which is true only while attempts
 # remain. Once the budget is spent the post is permanently failed and the
 # composer must not keep telling the user to sit tight.

@@ -49,7 +49,7 @@ from apps.social_accounts.error_messages import (
 )
 from providers import VIDEO_POST_TYPES, get_provider
 from providers.exceptions import ProviderError, PublishError, RateLimitError
-from providers.types import PostType, PublishContent, PublishState
+from providers.types import PostType, PublishContent, PublishContext, PublishState
 
 from .models import PublishLog, RateLimitState
 
@@ -507,7 +507,11 @@ class PublishEngine:
         for pp in refreshed:
             self._maybe_schedule_first_comment(pp)
 
-        return True
+        # Mastodon preparatory uploads must not produce a "post published"
+        # cycle log. The confirmation sweep logs their eventual completion.
+        return any(
+            pp.social_account.platform != "mastodon" or pp.status == PlatformPost.Status.PUBLISHED for pp in refreshed
+        )
 
     def _maybe_schedule_first_comment(self, platform_post):
         """Queue the first comment for a freshly published post, once.
@@ -546,6 +550,11 @@ class PublishEngine:
         """
         start_time = time.monotonic()
         account = platform_post.social_account
+
+        if account.platform == "mastodon":
+            from .mastodon import publish_mastodon
+
+            return publish_mastodon(self, platform_post, media_cache=media_cache)
 
         # Check rate limits
         rate_state = RateLimitState.objects.filter(
@@ -688,7 +697,7 @@ class PublishEngine:
                 exc_info=True,
             )
 
-    def _dispatch_to_provider(self, platform_post, media_cache=None):
+    def _dispatch_to_provider(self, platform_post, media_cache=None, publish_context: PublishContext | None = None):
         """Dispatch to the appropriate platform provider.
 
         Resolves credentials, refreshes tokens if needed, builds a
@@ -776,11 +785,21 @@ class PublishEngine:
                 media_types.append(asset.media_type)
 
                 if needs_local_media:
-                    media_files.append(media_cache.path_for(asset))
+                    accepted = False
+                    if publish_context is not None:
+                        from .mastodon import media_source
+
+                        accepted = any(
+                            item.get("source") == media_source(asset) and item.get("media_id")
+                            for item in publish_context.checkpoint.get("media", [])
+                        )
+                    # Retain positional correspondence for partially uploaded
+                    # attempts; the provider skips these placeholders.
+                    media_files.append("" if accepted else media_cache.path_for(asset))
 
             # Merge per-platform extras (e.g. YouTube privacy_status, custom
             # tags, thumbnail) on top of the base extra dict.
-            extra = {"tags": platform_post.post.tags or []}
+            extra: dict = {"tags": platform_post.post.tags or []}
             platform_extra = platform_post.platform_extra or {}
             extra.update(platform_extra)
 
@@ -854,6 +873,7 @@ class PublishEngine:
                 extra=extra,
                 link_url=link_url,
                 video_duration_sec=primary_video_duration,
+                publish_context=publish_context,
             )
 
             logger.info(
@@ -872,6 +892,7 @@ class PublishEngine:
                 # True when platform_post_id is a handle for work still in
                 # progress rather than a published post's id.
                 "async_publish": provider.publish_is_async,
+                "deferred": result.deferred is True,
             }
         finally:
             # Per-child temp files (thumbnail, cover) are ours either way. The
@@ -1191,8 +1212,24 @@ class PublishEngine:
             "social_account", "post__workspace", "post__author"
         )
 
+        pending = list(pending)
+        from .mastodon import SWEEP_SECONDS, publish_mastodon
+
+        resumable = [pp for pp in pending if pp.social_account.platform == "mastodon" and pp.publish_checkpoint]
+        deadline = time.monotonic() + SWEEP_SECONDS
         settled = 0
+        for pp in sorted(resumable, key=lambda pp: pp.publish_checkpoint.get("next_check_at", "")):
+            if time.monotonic() >= deadline:
+                break
+            try:
+                result = publish_mastodon(self, pp, resume=True, deadline=deadline)
+                settled += bool(result.get("settled"))
+            except Exception:
+                logger.exception("Error resuming Mastodon PlatformPost %s", pp.id)
+
         for pp in pending:
+            if pp.social_account.platform == "mastodon" and pp in resumable:
+                continue
             try:
                 if self._confirm_one_publish(
                     pp,

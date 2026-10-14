@@ -23,6 +23,7 @@ from .types import (
     PostMetrics,
     PostType,
     PublishContent,
+    PublishContext,
     PublishResult,
     PublishStatus,
     RateLimitConfig,
@@ -217,6 +218,10 @@ class SocialProvider(ABC):
         ``publish_is_async`` is True.
         """
         raise NotImplementedError(f"{self.platform_name} does not report publish status")
+
+    def resume_publish(self, access_token: str, context: PublishContext) -> PublishResult:
+        """Advance a persisted publish without downloading accepted attachments."""
+        raise NotImplementedError(f"{self.platform_name} does not resume publishes")
 
     def publish_comment(self, access_token: str, post_id: str, text: str) -> CommentResult:
         """Post a comment on an existing post (e.g. first comment)."""

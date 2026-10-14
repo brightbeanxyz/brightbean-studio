@@ -363,6 +363,7 @@ class PlatformPost(models.Model):
         "retry_count",
         "next_retry_at",
         "publish_error",
+        "publish_checkpoint",
     )
 
     # Statuses that must never be removed by *accidental* deletion paths
@@ -471,6 +472,7 @@ class PlatformPost(models.Model):
         help_text="The post ID on the platform after publishing.",
     )
     publish_error = models.TextField(blank=True, default="")
+    publish_checkpoint = models.JSONField(default=dict, blank=True, editable=False)
     published_at = models.DateTimeField(blank=True, null=True)
 
     # First-comment outcome. Kept in dedicated columns rather than in
@@ -583,6 +585,7 @@ class PlatformPost(models.Model):
             # post against an outcome that has nothing to do with it — reporting
             # a publish that never reached the platform as done.
             self.platform_post_id = ""
+            self.publish_checkpoint = {}
 
     @property
     def status_color(self):
