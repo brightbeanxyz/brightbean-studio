@@ -313,7 +313,7 @@ class FacebookVideoSettingsTests(AccountScopeTestsBase):
         )
         PostMedia.objects.create(post=self.post, media_asset=self.video)
 
-    def _facebook_payload(self, post_type=None):
+    def _facebook_payload(self, post_type=None, ai_generated=False):
         """A composer submit for the Facebook account.
 
         The hidden ``facebook_panel_<id>`` marker is what the composer renders
@@ -324,6 +324,8 @@ class FacebookVideoSettingsTests(AccountScopeTestsBase):
         fields = {f"facebook_panel_{account_id}": "1"}
         if post_type is not None:
             fields[f"facebook_post_type_{account_id}"] = post_type
+        if ai_generated:
+            fields[f"facebook_is_ai_generated_{account_id}"] = "true"
         return self._payload(
             selected_accounts=account_id,
             account_scope=account_id,
@@ -336,6 +338,34 @@ class FacebookVideoSettingsTests(AccountScopeTestsBase):
         self.assertIn(response.status_code, (200, 204, 302))
         self.facebook_pp.refresh_from_db()
         self.assertEqual(self.facebook_pp.platform_extra["post_type"], "reel")
+
+    def test_a_reel_keeps_the_ai_disclosure(self):
+        response = self.client.post(self.save_url, data=self._facebook_payload("reel", ai_generated=True))
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.facebook_pp.refresh_from_db()
+        self.assertEqual(self.facebook_pp.platform_extra, {"post_type": "reel", "is_ai_generated": True})
+
+    def test_switching_the_disclosure_off_removes_it(self):
+        self.facebook_pp.platform_extra = {"post_type": "reel", "is_ai_generated": True}
+        self.facebook_pp.save(update_fields=["platform_extra"])
+
+        response = self.client.post(self.save_url, data=self._facebook_payload("reel"))
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.facebook_pp.refresh_from_db()
+        self.assertEqual(self.facebook_pp.platform_extra, {"post_type": "reel"})
+
+    def test_a_regular_video_cannot_carry_the_disclosure(self):
+        """Only the Page Reels edge accepts ``is_ai_generated``."""
+        self.facebook_pp.platform_extra = {"post_type": "reel", "is_ai_generated": True}
+        self.facebook_pp.save(update_fields=["platform_extra"])
+
+        response = self.client.post(self.save_url, data=self._facebook_payload("video", ai_generated=True))
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.facebook_pp.refresh_from_db()
+        self.assertEqual(self.facebook_pp.platform_extra, {})
 
     def test_choosing_regular_video_clears_the_hint_rather_than_recording_it(self):
         """A lone video already infers VIDEO, so the hint would only restate it.

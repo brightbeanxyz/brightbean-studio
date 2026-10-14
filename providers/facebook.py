@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
+import tempfile
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode, urlparse
+
+import httpx
 
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, ProviderError, PublishError
@@ -521,15 +526,30 @@ class FacebookProvider(SocialProvider):
         # _request would wave through. Catching it here names the upload as the
         # failing step rather than letting the finish call report a video that
         # was never assembled.
-        upload_resp = self._request(
-            "POST",
-            upload_url,
-            headers={
-                "Authorization": f"OAuth {access_token}",
-                "file_url": content.media_urls[0],
-            },
-        )
-        self._raise_for_reel_phase(self._safe_json(upload_resp), "upload the Reel video")
+        #
+        # Meta can also fail to fetch the file at all: bot protection in front
+        # of a self-hosted instance answers its fetcher with a 403 even though
+        # the URL is public. It reports that as FileUrlProcessingError and the
+        # upload session stays open, so the bytes are sent instead, through
+        # the same session (Meta's "upload a local file" flow).
+        try:
+            upload_resp = self._request(
+                "POST",
+                upload_url,
+                headers={
+                    "Authorization": f"OAuth {access_token}",
+                    "file_url": content.media_urls[0],
+                },
+            )
+            upload_data = self._safe_json(upload_resp)
+        except APIError as exc:
+            if not self._reel_url_fetch_failed(exc.raw_response):
+                raise
+            upload_data = exc.raw_response
+        if self._reel_url_fetch_failed(upload_data):
+            logger.warning("Facebook could not fetch the Reel from its URL; uploading the bytes instead")
+            upload_data = self._upload_reel_bytes(access_token, upload_url, content.media_urls[0])
+        self._raise_for_reel_phase(upload_data, "upload the Reel video")
 
         finish_payload: dict = {
             "upload_phase": "finish",
@@ -538,6 +558,12 @@ class FacebookProvider(SocialProvider):
         }
         if content.text:
             finish_payload["description"] = content.text
+        # Meta requires the AI disclosure for realistic video or audio made or
+        # changed with AI. The Page Reels edge takes it on the finish call
+        # (``is_ai_generated``; v25.0 answers "must be a boolean" to anything
+        # else, so it is a known parameter there). Sent only when on.
+        if (content.extra or {}).get("is_ai_generated"):
+            finish_payload["is_ai_generated"] = "true"
         # No "title": content.title is the composer's internal organizing label,
         # not copy written for Facebook, and _publish_video omits it for the
         # same reason. A Reel's caption is its description.
@@ -580,6 +606,45 @@ class FacebookProvider(SocialProvider):
                 **{k: v for k, v in video_fields.items() if k in ("post_id", "permalink_url")},
             },
         )
+
+    @staticmethod
+    def _reel_url_fetch_failed(data: dict | None) -> bool:
+        """Whether Meta reported that it could not fetch the Reel's file_url."""
+        debug = (data or {}).get("debug_info") or {}
+        return isinstance(debug, dict) and debug.get("type") == "FileUrlProcessingError"
+
+    def _upload_reel_bytes(self, access_token: str, upload_url: str, media_url: str) -> dict:
+        """Send the Reel's bytes to an open upload session, from ``media_url``.
+
+        Streamed through a temporary file, as LinkedIn's video upload does, so
+        a long Reel never sits whole in memory.
+        """
+        tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)  # noqa: SIM115
+        try:
+            try:
+                with httpx.stream("GET", media_url, timeout=300.0) as resp:
+                    resp.raise_for_status()
+                    for buf in resp.iter_bytes():
+                        tmp.write(buf)
+            finally:
+                tmp.close()
+            size = os.path.getsize(tmp.name)
+            with open(tmp.name, "rb") as media:
+                upload_resp = self._request(
+                    "POST",
+                    upload_url,
+                    headers={
+                        "Authorization": f"OAuth {access_token}",
+                        "offset": "0",
+                        "file_size": str(size),
+                    },
+                    data=media,
+                    timeout=300.0,
+                )
+            return self._safe_json(upload_resp)
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp.name)
 
     def _raise_for_reel_phase(self, data: dict, action: str) -> None:
         """Fail a Reel phase that answered 2xx but did not actually succeed."""
