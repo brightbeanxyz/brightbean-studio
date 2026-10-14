@@ -375,7 +375,10 @@ class MastodonProvider(SocialProvider):
                 exc.retryable = False
             raise
         data = response.json()
-        checkpoint.update(phase="complete", status_id=str(data["id"]), status_url=data.get("url"))
+        status_id = data.get("id")
+        if not isinstance(status_id, (str, int)) or isinstance(status_id, bool) or not str(status_id):
+            raise PublishError("Mastodon did not return a valid status ID", platform=self.platform_name)
+        checkpoint.update(phase="complete", status_id=str(status_id), status_url=data.get("url"))
         context.save()
         return self._completed_result(checkpoint)
 

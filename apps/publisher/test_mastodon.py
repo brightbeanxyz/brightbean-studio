@@ -377,6 +377,50 @@ def test_changed_content_cannot_use_old_uploaded_media(setup, monkeypatch):
     assert pp.publish_error == CONTENT_CHANGED_MESSAGE
 
 
+def test_content_change_after_lost_response_requires_remote_verification(setup, monkeypatch):
+    engine, pp, provider, _ = setup
+    request = Mock(side_effect=httpx.ReadTimeout("lost"))
+    monkeypatch.setattr(provider, "_request", request)
+    engine._publish_platform_post(pp)
+    Post.objects.filter(pk=pp.post_id).update(caption="changed")
+    due(pp)
+    assert engine.confirm_pending_publishes() == 1
+    request.assert_called_once()
+    pp.refresh_from_db()
+    assert pp.publish_error == PUBLISH_UNCONFIRMED_MESSAGE
+    assert pp.publish_checkpoint["attempt_id"]
+
+
+def test_known_created_status_is_preserved_after_content_change(setup, monkeypatch):
+    engine, pp, provider, _ = setup
+    context = _claim(engine, pp, resume=False)
+    assert context is not None
+    request = Mock(return_value=response(200, {"id": "status-1"}))
+    monkeypatch.setattr(provider, "_request", request)
+    provider.resume_publish("test-token", context)
+    Post.objects.filter(pk=pp.post_id).update(caption="changed")
+    due(pp, lease_expired=True)
+    assert engine.confirm_pending_publishes() == 1
+    request.assert_called_once()
+    pp.refresh_from_db()
+    assert pp.status == "published"
+    assert pp.platform_post_id == "status-1"
+
+
+def test_missing_status_id_is_unconfirmed_and_keeps_the_submission_key(setup, monkeypatch):
+    engine, pp, provider, _ = setup
+    request = Mock(side_effect=[response(200, {"id": None}), response(200, {"id": "status-1"})])
+    monkeypatch.setattr(provider, "_request", request)
+    assert engine._publish_platform_post(pp)["deferred"] is True
+    pp.refresh_from_db()
+    assert pp.status == "publishing"
+    assert pp.publish_checkpoint["submission_uncertain"] is True
+    key = request.call_args.kwargs["headers"]["Idempotency-Key"]
+    due(pp)
+    assert engine.confirm_pending_publishes() == 1
+    assert request.call_args.kwargs["headers"]["Idempotency-Key"] == key
+
+
 def test_local_cleanup_failure_never_resubmits_a_created_status(setup, monkeypatch):
     engine, pp, provider, _ = setup
     request = Mock(return_value=response(200, {"id": "status-1"}))

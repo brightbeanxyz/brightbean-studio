@@ -279,12 +279,17 @@ def publish_mastodon(
             "complete",
         }:
             return _fail(engine, post, context, PUBLISH_UNCONFIRMED_MESSAGE, unknown=True)
-        if checkpoint.get("content_changed"):
-            return _fail(
-                engine, post, context, CONTENT_CHANGED_MESSAGE, unknown=bool(checkpoint.get("first_submission_at"))
-            )
         if checkpoint.get("status_id"):
             return _finish(engine, post, context, MastodonProvider._completed_result(checkpoint), started=started)
+        if checkpoint.get("content_changed"):
+            unknown = bool(checkpoint.get("first_submission_at"))
+            return _fail(
+                engine,
+                post,
+                context,
+                PUBLISH_UNCONFIRMED_MESSAGE if unknown else CONTENT_CHANGED_MESSAGE,
+                unknown=unknown,
+            )
         now = timezone.now()
         submitted = _date(checkpoint.get("first_submission_at"))
         processing = _date(checkpoint.get("processing_started_at"))
