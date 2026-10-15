@@ -25,14 +25,22 @@ class Tool:
     description: str
     input_schema: dict
     handler: Callable[[dict, Any], dict]
+    # MCP `_meta` passthrough. Used for host-specific extensions that live
+    # alongside the schema — notably ChatGPT's ``openai/fileParams``, which
+    # tells ChatGPT that a top-level input field accepts a file so it uploads
+    # the bytes and hands the server a ``download_url`` to fetch.
+    meta: dict | None = None
 
     def to_mcp_dict(self) -> dict:
         """Wire shape returned by ``tools/list`` per the MCP spec."""
-        return {
+        out = {
             "name": self.name,
             "description": self.description,
             "inputSchema": self.input_schema,
         }
+        if self.meta:
+            out["_meta"] = self.meta
+        return out
 
 
 _REGISTRY: dict[str, Tool] = {}

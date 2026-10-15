@@ -896,6 +896,427 @@ register_tool(
 
 
 # ---------------------------------------------------------------------------
+# Tool: upload_media_from_url (server-side fetch)
+# ---------------------------------------------------------------------------
+#
+# Why this exists: some MCP clients — ChatGPT in particular — cannot supply a
+# binary payload at all. upload_media needs base64 of the raw bytes, and the
+# presigned flow below needs a multipart/form-data POST with a binary body; an
+# MCP client only exchanges JSON, so it can do neither. What those clients CAN
+# do is hand over a URL (ChatGPT exposes uploaded and generated images as
+# files.oaiusercontent.com links). This closes that gap by fetching the bytes
+# server-side and running them through the same validation and asset pipeline as
+# every other upload.
+#
+# SSRF is the entire risk: the server makes an outbound request to a
+# caller-supplied URL. Defences, in order:
+#   1. https only — no file://, gopher://, http://.
+#   2. Optional host allowlist via MCP_MEDIA_FETCH_ALLOWED_HOSTS.
+#   3. Host is resolved and EVERY resolved address must be public. Private,
+#      loopback, link-local, reserved, multicast and unspecified are all
+#      rejected, which covers 169.254.169.254 (cloud metadata) and RFC1918.
+#   4. Redirects are followed MANUALLY so step 3 re-runs on each hop — a public
+#      URL that 302s to 127.0.0.1 is the obvious bypass otherwise.
+#   5. Body is streamed with a hard byte cap so a hostile or endless response
+#      can't exhaust memory.
+#
+# Residual risk, documented rather than ignored: DNS rebinding (validate
+# resolves to a public IP, connect resolves to a private one). Closing that
+# properly needs IP pinning with manual SNI — more machinery than a
+# permission-gated tool warrants.
+_MCP_FETCH_TIMEOUT = (10, 30)  # (connect, read) seconds
+_MCP_FETCH_MAX_REDIRECTS = 5
+_MCP_FETCH_CHUNK = 64 * 1024
+_MCP_FETCH_MAX_BYTES_DEFAULT = 25 * 1024 * 1024
+
+
+def _fetch_max_bytes() -> int:
+    from django.conf import settings as dj_settings
+
+    return int(getattr(dj_settings, "MCP_MEDIA_FETCH_MAX_BYTES", _MCP_FETCH_MAX_BYTES_DEFAULT))
+
+
+def _fetch_user_agent() -> str:
+    """User-Agent for outbound fetches.
+
+    Configurable because several large CDNs (Wikimedia among them) apply
+    *different* rate limits per User-Agent and expect a descriptive one carrying
+    contact details. A generic UA gets throttled far sooner — and, worse, the
+    resulting 429 looks like our own rate limiter unless the message names the
+    upstream host (see the error path in ``_fetch_remote_media``).
+    """
+    from django.conf import settings as dj_settings
+
+    default = "BrightBeanStudio/1.0 (+{url}; media-fetch)".format(
+        url=getattr(dj_settings, "MCP_PUBLIC_BASE_URL", "https://brightbean.studio")
+    )
+    return str(getattr(dj_settings, "MCP_MEDIA_FETCH_USER_AGENT", default))
+
+
+def _assert_fetchable_url(url: str) -> None:
+    """Reject anything that is not a public https URL."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    from django.conf import settings as dj_settings
+
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise JsonRpcError(INVALID_PARAMS, "url must use https")
+    host = parsed.hostname
+    if not host:
+        raise JsonRpcError(INVALID_PARAMS, "url must include a host")
+
+    allowed = getattr(dj_settings, "MCP_MEDIA_FETCH_ALLOWED_HOSTS", None)
+    if allowed:
+        allowed_lc = {str(h).lower() for h in allowed}
+        if host.lower() not in allowed_lc:
+            raise JsonRpcError(
+                INVALID_PARAMS,
+                f"host {host!r} is not in MCP_MEDIA_FETCH_ALLOWED_HOSTS",
+            )
+
+    try:
+        addrinfos = socket.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise JsonRpcError(INVALID_PARAMS, f"could not resolve host {host!r}") from exc
+
+    for info in addrinfos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError as exc:
+            raise JsonRpcError(INVALID_PARAMS, "url host resolved to an invalid address") from exc
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            raise JsonRpcError(
+                INVALID_PARAMS,
+                "url resolves to a non-public address; refusing to fetch it",
+            )
+
+
+def _filename_from_url(url: str) -> str:
+    """Derive a safe filename from the URL path. The pipeline re-extensions it."""
+    from urllib.parse import unquote, urlparse
+
+    stem = unquote(urlparse(url).path.rsplit("/", 1)[-1]).strip() or "upload"
+    for bad in ("/", "\\", "\x00"):
+        stem = stem.replace(bad, "_")
+    return stem[:255]
+
+
+def _fetch_remote_media(url: str) -> tuple[bytes, str]:
+    """Fetch ``url`` under the SSRF guards above. Returns (content, content_type)."""
+    import requests
+
+    from apps.media_library.validators import ALL_ALLOWED_MIMES
+
+    max_bytes = _fetch_max_bytes()
+    current = url
+
+    for _hop in range(_MCP_FETCH_MAX_REDIRECTS + 1):
+        _assert_fetchable_url(current)
+        resp = requests.get(
+            current,
+            stream=True,
+            timeout=_MCP_FETCH_TIMEOUT,
+            allow_redirects=False,  # re-validate every hop ourselves
+            headers={"User-Agent": _fetch_user_agent(), "Accept": "*/*"},
+        )
+        try:
+            if resp.status_code in (301, 302, 303, 307, 308):
+                location = resp.headers.get("Location")
+                if not location:
+                    raise JsonRpcError(INVALID_PARAMS, "redirect response had no Location header")
+                from urllib.parse import urljoin
+
+                current = urljoin(current, location)
+                continue
+
+            if resp.status_code != 200:
+                # Name the upstream host explicitly. Without it a 429 reads as if
+                # BrightBean throttled the call, when in fact a CDN refused us —
+                # Wikimedia in particular rate-limits datacenter IPs aggressively.
+                from urllib.parse import urlparse
+
+                remote = urlparse(current).hostname or "remote server"
+                retry_after = resp.headers.get("Retry-After")
+                suffix = f" (Retry-After: {retry_after})" if retry_after else ""
+                if resp.status_code == 429:
+                    hint = (
+                        " — that is the upstream host rate-limiting this server, "
+                        "not BrightBean. Retry later, or host the file somewhere "
+                        "that does not throttle datacenter IPs."
+                    )
+                elif 400 <= resp.status_code < 500:
+                    hint = " — the upstream host rejected the request; check the URL."
+                else:
+                    hint = " — the upstream host failed; retry later."
+                raise JsonRpcError(
+                    INVALID_PARAMS,
+                    f"{remote!r} returned HTTP {resp.status_code}{suffix}{hint}",
+                )
+
+            declared = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if declared and declared not in ALL_ALLOWED_MIMES:
+                raise JsonRpcError(
+                    INVALID_PARAMS,
+                    f"content-type {declared!r} is not an allowed media type",
+                )
+
+            declared_len = resp.headers.get("Content-Length")
+            if declared_len and declared_len.isdigit() and int(declared_len) > max_bytes:
+                raise JsonRpcError(
+                    INVALID_PARAMS,
+                    (f"remote file is {int(declared_len)} bytes, over the {max_bytes} byte fetch cap"),
+                )
+
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in resp.iter_content(chunk_size=_MCP_FETCH_CHUNK):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > max_bytes:
+                    raise JsonRpcError(
+                        INVALID_PARAMS,
+                        f"remote file exceeded the {max_bytes} byte fetch cap",
+                    )
+                chunks.append(chunk)
+            return b"".join(chunks), (declared or "application/octet-stream")
+        finally:
+            resp.close()
+
+    raise JsonRpcError(INVALID_PARAMS, f"too many redirects (limit {_MCP_FETCH_MAX_REDIRECTS})")
+
+
+def _upload_media_from_url(args: dict, context: dict[str, Any]) -> dict:
+    """Fetch a URL server-side and register it as a media asset.
+
+    Built for MCP clients that cannot send binary payloads — see the SSRF note
+    above the fetch helpers. Content is still validated by magic bytes inside
+    create_asset, so a mislabelled Content-Type can't smuggle anything past.
+    """
+    from django.core.exceptions import ValidationError
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from apps.media_library.quotas import StorageQuotaExceededError
+    from apps.media_library.services import create_asset as media_create_asset
+
+    _require_perm(context, "upload_media")
+
+    url = args.get("url")
+    if not isinstance(url, str) or not url.strip():
+        raise JsonRpcError(INVALID_PARAMS, "url must be a non-empty string")
+    url = url.strip()
+
+    filename = args.get("filename")
+    if filename is not None and (not isinstance(filename, str) or not filename.strip()):
+        raise JsonRpcError(INVALID_PARAMS, "filename must be a non-empty string")
+    filename = (filename or _filename_from_url(url)).strip()[:255]
+
+    raw, content_type = _fetch_remote_media(url)
+    if not raw:
+        raise JsonRpcError(INVALID_PARAMS, "fetched file is empty")
+
+    uploaded = SimpleUploadedFile(name=filename, content=raw, content_type=content_type)
+
+    api_key = context["api_key"]
+    workspace = api_key.workspace
+    folder = _resolve_media_folder(workspace, args)
+    tags = _parse_media_tags(args)
+
+    try:
+        asset = media_create_asset(
+            organization=workspace.organization,
+            workspace=workspace,
+            uploaded_file=uploaded,
+            uploaded_by=api_key.issued_by if api_key.issued_by_id else None,
+            folder=folder,
+            alt_text=args.get("alt_text", "") or "",
+            title=args.get("title", "") or "",
+            tags=tags,
+        )
+    except StorageQuotaExceededError as exc:
+        raise JsonRpcError(
+            INVALID_PARAMS,
+            f"Storage quota exceeded: used={exc.used} limit={exc.limit} attempted={exc.attempted}",
+        ) from exc
+    except ValidationError as exc:
+        raise JsonRpcError(INVALID_PARAMS, "; ".join(getattr(exc, "messages", [str(exc)]))) from exc
+
+    from apps.media_library.tasks import process_media_asset
+
+    process_media_asset(str(asset.id))
+
+    return _wrap_text(_serialize_media(asset))
+
+
+register_tool(
+    Tool(
+        name="upload_media_from_url",
+        description=(
+            "Upload a media file by giving a public https URL; BrightBean fetches it "
+            "server-side. Use this when you cannot produce raw bytes or base64 — for "
+            "example ChatGPT, which can pass an image link (files.oaiusercontent.com) "
+            "but cannot send binary content. Enforces https-only, blocks requests that "
+            "resolve to private/internal addresses, follows redirects with re-validation, "
+            "and caps the download size. Content is validated by magic bytes, so a "
+            "mislabelled Content-Type is still rejected. Returns the same shape as "
+            "upload_media; processing_status starts at 'pending'."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "Public https URL of the file to fetch and store.",
+                },
+                "filename": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "description": "Optional display name; derived from the URL if omitted.",
+                },
+                "alt_text": {"type": "string", "maxLength": 2000},
+                "title": {"type": "string", "maxLength": 255},
+                "folder_id": {"type": "string", "format": "uuid"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        },
+        handler=_upload_media_from_url,
+    )
+)
+
+
+def _upload_media_file(args: dict, context: dict[str, Any]) -> dict:
+    """Upload a file the AI host attached directly to this tool call.
+
+    This is the path that actually works for ChatGPT. It cannot base64 an image
+    (``upload_media``) and it exposes no public link (``upload_media_from_url``),
+    so neither of those can be driven from a ChatGPT conversation. What ChatGPT
+    *can* do is upload the file itself and hand the server a short-lived
+    ``download_url`` — declared via ``_meta["openai/fileParams"]`` on the tool.
+
+    ``download_url`` is a **temporary bearer URL**: anyone holding it can read the
+    file. So it is fetched here, never logged, never echoed in a result, and never
+    stored as the asset's permanent location — the bytes go into our own storage
+    through the normal pipeline. Errors from the fetch name only the host, never
+    the signed query string.
+    """
+    from django.core.exceptions import ValidationError
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from apps.media_library.quotas import StorageQuotaExceededError
+    from apps.media_library.services import create_asset as media_create_asset
+
+    _require_perm(context, "upload_media")
+
+    file_obj = args.get("file")
+    if not isinstance(file_obj, dict):
+        raise JsonRpcError(INVALID_PARAMS, "file must be an object")
+
+    download_url = file_obj.get("download_url")
+    if not isinstance(download_url, str) or not download_url.strip():
+        raise JsonRpcError(INVALID_PARAMS, "file.download_url must be a non-empty string")
+
+    file_id = file_obj.get("file_id")
+    if not isinstance(file_id, str) or not file_id.strip():
+        raise JsonRpcError(INVALID_PARAMS, "file.file_id must be a non-empty string")
+
+    # Prefer our own safe name; fall back to the host's, then to the URL path.
+    filename = args.get("filename") or file_obj.get("file_name") or ""
+    if not isinstance(filename, str) or not filename.strip():
+        filename = _filename_from_url(download_url)
+    filename = filename.strip()[:255]
+
+    raw, content_type = _fetch_remote_media(download_url.strip())
+    if not raw:
+        raise JsonRpcError(INVALID_PARAMS, "attached file is empty")
+
+    uploaded = SimpleUploadedFile(name=filename, content=raw, content_type=content_type)
+
+    api_key = context["api_key"]
+    workspace = api_key.workspace
+    folder = _resolve_media_folder(workspace, args)
+    tags = _parse_media_tags(args)
+
+    try:
+        asset = media_create_asset(
+            organization=workspace.organization,
+            workspace=workspace,
+            uploaded_file=uploaded,
+            uploaded_by=api_key.issued_by if api_key.issued_by_id else None,
+            folder=folder,
+            alt_text=args.get("alt_text", "") or "",
+            title=args.get("title", "") or "",
+            tags=tags,
+        )
+    except StorageQuotaExceededError as exc:
+        raise JsonRpcError(
+            INVALID_PARAMS,
+            f"Storage quota exceeded: used={exc.used} limit={exc.limit} attempted={exc.attempted}",
+        ) from exc
+    except ValidationError as exc:
+        raise JsonRpcError(INVALID_PARAMS, "; ".join(getattr(exc, "messages", [str(exc)]))) from exc
+
+    from apps.media_library.tasks import process_media_asset
+
+    process_media_asset(str(asset.id))
+
+    return _wrap_text(_serialize_media(asset))
+
+
+register_tool(
+    Tool(
+        name="upload_media_file",
+        description=(
+            "Upload a file the user attached to this conversation. USE THIS for image "
+            "and file uploads when a host (ChatGPT, Claude) can attach a file to the "
+            "tool call — it is the only path that works when you cannot produce base64 "
+            "and have no public URL. The host uploads the bytes and supplies a "
+            "short-lived download_url, which BrightBean fetches server-side into its own "
+            "storage. Returns the same shape as upload_media."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "file": {
+                    "type": "object",
+                    "properties": {
+                        "download_url": {"type": "string"},
+                        "file_id": {"type": "string"},
+                        "mime_type": {"type": "string"},
+                        "file_name": {"type": "string"},
+                    },
+                    "required": ["download_url", "file_id"],
+                    "additionalProperties": False,
+                },
+                "filename": {"type": "string", "maxLength": 255},
+                "alt_text": {"type": "string", "maxLength": 2000},
+                "title": {"type": "string", "maxLength": 255},
+                "folder_id": {"type": "string", "format": "uuid"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["file"],
+            "additionalProperties": False,
+        },
+        handler=_upload_media_file,
+        # Tells ChatGPT this top-level field accepts a file: it uploads the bytes
+        # and fills in download_url/file_id (+ mime_type/file_name) at call time.
+        meta={"openai/fileParams": ["file"]},
+    )
+)
+
+
+# ---------------------------------------------------------------------------
 # Tools: request_media_upload / finalize_media_upload (presigned direct-to-R2)
 # ---------------------------------------------------------------------------
 #
