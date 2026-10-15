@@ -14,7 +14,20 @@
             <h1>{% blocktrans with name=application.name|default:"This application" %}Authorize {{ name }}?{% endblocktrans %}</h1>
             <p>{% blocktrans with name=application.name|default:"This application" %}{{ name }} wants to connect to your BrightBean Studio workspace with the following permissions:{% endblocktrans %}</p>
 
-            <form id="authorizationForm" method="post">
+            {% comment %}
+              action is explicit ON PURPOSE. Chromium bug 393431137: a form with
+              NO action attribute gets its action resolved to the full document
+              URL (including the OAuth query string), and Chromium then refuses
+              the submission claiming a form-action 'self' violation — even
+              though 'self' is allowlisted. Google's consent flow hits this and
+              silently dead-ends. An explicit action keeps the target a clean
+              same-origin path so the check passes.
+
+              Dropping the query string is safe: DOT stores every OAuth param
+              (redirect_uri, state, scope, code_challenge, …) in the hidden
+              fields below and reads them from the POST body in form_valid().
+            {% endcomment %}
+            <form id="authorizationForm" method="post" action="{% url 'oauth2_provider:authorize' %}">
                 {% csrf_token %}
 
                 {% comment %}
