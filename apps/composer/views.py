@@ -356,6 +356,33 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
                     extra["video_cover_timestamp_ms"] = cover_ms_val
             pp.platform_extra = extra
 
+        elif account.platform in ("instagram", "instagram_login") and f"instagram_panel_{acc_id}" in request.POST:
+            # Gated on the panel's hidden marker, like Facebook's: only a form
+            # that rendered these controls may change what they control, so a
+            # non-composer save never wipes the disclosure or the cover.
+            extra = {**(pp.platform_extra or {})}
+            # Meta requires the AI disclosure for realistic AI-made video or
+            # audio. Store it only when on: off is Instagram's default.
+            if request.POST.get(f"instagram_is_ai_generated_{acc_id}") == "true":
+                extra["is_ai_generated"] = True
+            else:
+                extra.pop("is_ai_generated", None)
+            # The cover only means something for a lone video (a Reel). It is
+            # cleared otherwise, so swapping the video can't leave a stale
+            # offset pointing into a different clip. Parsed with int() for the
+            # same reason as TikTok's: isdigit() accepts digits int() rejects.
+            media_types = list(post.media_attachments.values_list("media_asset__media_type", flat=True)[:2])
+            cover_ms = request.POST.get(f"instagram_video_cover_timestamp_ms_{acc_id}", "").strip()
+            try:
+                cover_ms_val = int(cover_ms) if cover_ms else -1
+            except ValueError:
+                cover_ms_val = -1
+            if media_types == ["video"] and cover_ms_val >= 0:
+                extra["video_cover_timestamp_ms"] = cover_ms_val
+            else:
+                extra.pop("video_cover_timestamp_ms", None)
+            pp.platform_extra = extra
+
         pp.save()
 
 
