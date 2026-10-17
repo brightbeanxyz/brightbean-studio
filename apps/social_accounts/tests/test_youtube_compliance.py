@@ -14,6 +14,7 @@ from django.utils import timezone
 
 from apps.analytics.models import AccountInsightsSnapshot, PostInsightsSnapshot, YouTubePeriodReport
 from apps.analytics.tasks import _write_post_snapshot
+from apps.analytics.youtube_reports import PACIFIC
 from apps.composer.models import PlatformPost, Post
 from apps.inbox.models import InboxMessage
 from apps.inbox.tasks import InboxSyncEngine
@@ -213,13 +214,14 @@ def test_missing_scope_is_retryable_and_does_not_force_existing_reconnection(cha
 
 def test_history_keeps_180_days_and_drops_arbitrary_old_response_payloads(channel):
     now = timezone.now()
+    today = now.astimezone(PACIFIC).date()
     old = AccountInsightsSnapshot.objects.create(
-        social_account=channel, metric_key="views", date=now.date() - timedelta(days=181), value=4
+        social_account=channel, metric_key="views", date=today - timedelta(days=181), value=4
     )
     retained = AccountInsightsSnapshot.objects.create(
         social_account=channel,
         metric_key="views",
-        date=now.date() - timedelta(days=179),
+        date=today - timedelta(days=179),
         value=3,
         raw={"source": "youtube_analytics", "copied_profile": "Old"},
     )
