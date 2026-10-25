@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import time
 from urllib.parse import urlparse
 
@@ -163,10 +164,26 @@ class RegisterView(View):
             client_name,
         )
 
+        # ChatGPT's DCR parser REQUIRES a client_secret field in the registration
+        # response, even though it registers with
+        # token_endpoint_auth_method="none". Omitting it makes ChatGPT abort the
+        # connector with "The MCP server denied access." (Confirmed on the OpenAI
+        # developer forum: servers that omit the secret break ChatGPT, while
+        # Claude works — Claude does not require it.)
+        #
+        # The client stays CLIENT_PUBLIC, so this value is NEVER validated at the
+        # token endpoint. PKCE (S256) plus the consent screen remain the real
+        # security controls; this string exists only to satisfy OpenAI's parser.
+        # Do not "fix" this into a confidential client — ChatGPT declares auth
+        # method "none" and would not send the secret on the token request.
+        client_secret = secrets.token_urlsafe(48)
+
         return JsonResponse(
             {
                 "client_id": app.client_id,
+                "client_secret": client_secret,
                 "client_id_issued_at": int(time.time()),
+                "client_secret_expires_at": 0,
                 "redirect_uris": redirect_uris,
                 "grant_types": sorted(set(grant_types) | {"authorization_code"}),
                 "response_types": ["code"],
