@@ -282,6 +282,12 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
             has_exactly_one_video = media_types == ["video"]
             if facebook_post_type == "reel" and has_exactly_one_video:
                 extra["post_type"] = "reel"
+                # Meta requires the AI disclosure for realistic AI-made video
+                # or audio; only the Reels edge accepts it. Stored only when on.
+                if request.POST.get(f"facebook_is_ai_generated_{acc_id}") == "true":
+                    extra["is_ai_generated"] = True
+                else:
+                    extra.pop("is_ai_generated", None)
             else:
                 # Only the deviation from the default is worth storing. A lone
                 # video already infers PostType.VIDEO at publish time, so a
@@ -291,6 +297,8 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
                 # Facebook's video endpoint. Choosing regular video therefore
                 # clears the hint rather than recording it.
                 extra.pop("post_type", None)
+                # The disclosure rides on the Reel; a regular video can't carry it.
+                extra.pop("is_ai_generated", None)
             pp.platform_extra = extra
 
         elif account.platform == "youtube":
