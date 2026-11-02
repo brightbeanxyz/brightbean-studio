@@ -126,11 +126,15 @@ def _check_social_account_health(account_id: str):
             # expire; display names and handles can also change on-platform.
             # Guard each write so a transient empty response doesn't wipe
             # previously-good values.
-            if profile.avatar_url:
+            # linkedin_company inherits /v2/me, which describes the member and
+            # not the page. Keep the page name and logo saved at connect time.
+            # A LinkedIn URN is never a displayable avatar URL.
+            is_page = account.platform == "linkedin_company"
+            if profile.avatar_url and not is_page and not profile.avatar_url.startswith("urn:"):
                 account.avatar_url = profile.avatar_url
-            if profile.name:
+            if profile.name and not is_page:
                 account.account_name = profile.name
-            if profile.handle:
+            if profile.handle and not is_page:
                 account.account_handle = profile.handle
             if account.connection_status != SocialAccount.ConnectionStatus.TOKEN_EXPIRING:
                 account.connection_status = SocialAccount.ConnectionStatus.CONNECTED
