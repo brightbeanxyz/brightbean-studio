@@ -1,4 +1,4 @@
-"""Tests for LinkedInCompanyProvider.get_user_pages."""
+"""Tests for LinkedInCompanyProvider: page listing, scopes and first comments."""
 
 from unittest.mock import MagicMock, patch
 
@@ -147,3 +147,35 @@ class TestGetUserPages:
         pages = provider.get_user_pages("token")
 
         assert pages[0]["id"] == "33333"
+
+
+class TestFirstComment:
+    def test_requests_the_feed_scope_for_commenting_as_the_page(self):
+        assert "w_organization_social_feed" in LinkedInCompanyProvider().required_scopes
+
+    @patch.object(LinkedInCompanyProvider, "_request")
+    def test_comments_as_the_organization_that_authored_the_post(self, mock_request):
+        post = _make_response({"author": "urn:li:organization:98765"})
+        created = _make_response({})
+        created.headers = {"x-restli-id": "urn:li:comment:(urn:li:share:1,2)"}
+        mock_request.side_effect = [post, created]
+
+        result = LinkedInCompanyProvider().publish_comment("token", "urn:li:share:1", "Link: https://example.com")
+
+        get_args = mock_request.call_args_list[0].args
+        assert get_args == ("GET", "https://api.linkedin.com/rest/posts/urn%3Ali%3Ashare%3A1")
+        post_kwargs = mock_request.call_args_list[1].kwargs
+        assert post_kwargs["json"]["actor"] == "urn:li:organization:98765"
+        assert result.platform_comment_id == "urn:li:comment:(urn:li:share:1,2)"
+
+    @patch.object(LinkedInCompanyProvider, "get_profile")
+    @patch.object(LinkedInCompanyProvider, "_request")
+    def test_falls_back_to_the_member_on_a_post_the_page_did_not_author(self, mock_request, mock_profile):
+        mock_profile.return_value = MagicMock(platform_id="abc")
+        created = _make_response({})
+        created.headers = {}
+        mock_request.side_effect = [_make_response({"author": "urn:li:person:xyz"}), created]
+
+        LinkedInCompanyProvider().publish_comment("token", "urn:li:share:1", "hi")
+
+        assert mock_request.call_args_list[1].kwargs["json"]["actor"] == "urn:li:person:abc"

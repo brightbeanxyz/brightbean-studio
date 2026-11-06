@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from .linkedin import API_BASE, LINKEDIN_HEADERS, LinkedInProvider
+from .linkedin import API_BASE, LINKEDIN_HEADERS, LinkedInProvider, _encode_urn
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,28 @@ class LinkedInCompanyProvider(LinkedInProvider):
             "w_organization_social",
             "r_organization_social",
             "rw_organization_admin",
+            # Commenting as the page: without it LinkedIn answers
+            # 403 partnerApiSocialActions.CREATE on the first comment.
+            "w_organization_social_feed",
         ]
+
+    def _comment_actor(self, access_token: str, post_id: str) -> str:
+        """Comment as the page that authored the post, not as the admin who connected it.
+
+        ``publish_comment`` gets no account, so the post's own author is the
+        reliable source for the organization URN (one GET, covered by
+        r_organization_social).
+        """
+        resp = self._request(
+            "GET",
+            f"{API_BASE}/rest/posts/{_encode_urn(post_id)}",
+            access_token=access_token,
+            headers=LINKEDIN_HEADERS,
+        )
+        author = resp.json().get("author", "")
+        if author.startswith("urn:li:organization:"):
+            return author
+        return super()._comment_actor(access_token, post_id)
 
     def get_user_pages(self, access_token: str) -> list[dict]:
         resp = self._request(

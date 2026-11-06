@@ -520,8 +520,7 @@ class LinkedInProvider(SocialProvider):
 
         post_id should be the post URN (e.g. urn:li:share:123456).
         """
-        profile = self.get_profile(access_token)
-        actor = f"urn:li:person:{profile.platform_id}"
+        actor = self._comment_actor(access_token, post_id)
 
         resp = self._request(
             "POST",
@@ -539,6 +538,11 @@ class LinkedInProvider(SocialProvider):
         data = resp.json()
         comment_urn = resp.headers.get("x-restli-id", data.get("id", ""))
         return CommentResult(platform_comment_id=comment_urn, extra=data)
+
+    def _comment_actor(self, access_token: str, post_id: str) -> str:
+        """Who the first comment is posted as: the connected member."""
+        profile = self.get_profile(access_token)
+        return f"urn:li:person:{profile.platform_id}"
 
     # ------------------------------------------------------------------
     # Inbox
