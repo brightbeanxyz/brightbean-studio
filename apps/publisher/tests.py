@@ -787,6 +787,25 @@ class ResolvePostTypeFromMediaTypeTest(SimpleTestCase):
             PostType.STORY,
         )
 
+    def test_a_document_is_a_document_post_where_the_provider_supports_it(self):
+        resolved = PublishEngine._resolve_post_type(
+            platform="linkedin_company",
+            platform_extra={},
+            media_count=1,
+            first_media_type="document",
+            supported_post_types=[PostType.TEXT, PostType.DOCUMENT],
+        )
+        self.assertEqual(resolved, PostType.DOCUMENT)
+
+    def test_a_document_stays_text_where_the_provider_does_not(self):
+        self.assertEqual(self._resolve("facebook", first_media_type="document"), PostType.TEXT)
+
+    def test_a_document_hint_without_a_document_is_ignored(self):
+        self.assertEqual(
+            self._resolve("linkedin_company", first_media_type="image", extra={"post_type": "document"}),
+            PostType.IMAGE,
+        )
+
 
 def _attachment(media_type: str, url: str, *, has_file: bool = True):
     """A stand-in media attachment for the dispatch loop.

@@ -522,7 +522,7 @@
                         <!-- Media row: dropzone tile + Unsplash tile + attached thumbnails -->
                         <div class="flex flex-wrap items-start gap-2 px-4 pb-3">
                             <input type="file" x-ref="fileInput" class="hidden" multiple
-                                   accept="image/*,video/*"
+                                   accept="image/*,video/*,application/pdf"
                                    @change="handleFileSelect($event)">
                             <div class="media-dropzone-inline"
                                  @dragover.prevent="$el.classList.add('dragover')"

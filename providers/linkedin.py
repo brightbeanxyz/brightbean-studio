@@ -8,7 +8,7 @@ import os
 import tempfile
 import time
 from datetime import UTC, datetime
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode, urlparse
 
 import httpx
 
@@ -120,11 +120,12 @@ class LinkedInProvider(SocialProvider):
             PostType.LINK,
             PostType.ARTICLE,
             PostType.POLL,
+            PostType.DOCUMENT,
         ]
 
     @property
     def supported_media_types(self) -> list[MediaType]:
-        return [MediaType.JPEG, MediaType.PNG, MediaType.GIF, MediaType.MP4]
+        return [MediaType.JPEG, MediaType.PNG, MediaType.GIF, MediaType.MP4, MediaType.PDF]
 
     @property
     def required_scopes(self) -> list[str]:
@@ -255,6 +256,8 @@ class LinkedInProvider(SocialProvider):
             return self._publish_image_post(access_token, author, content)
         if content.post_type == PostType.VIDEO and (content.media_files or content.media_urls):
             return self._publish_video_post(access_token, author, content)
+        if content.post_type == PostType.DOCUMENT and (content.media_files or content.media_urls):
+            return self._publish_document_post(access_token, author, content)
         if content.post_type == PostType.ARTICLE:
             return self._publish_article_post(access_token, author, content)
         if content.post_type == PostType.POLL:
@@ -424,7 +427,7 @@ class LinkedInProvider(SocialProvider):
 
             # Step 4: wait for processing — posting before status=AVAILABLE returns
             # 400 MEDIA_ASSET_WAITING_UPLOAD / MEDIA_ASSET_PROCESSING_FAILED.
-            self._wait_for_video_available(access_token, video_urn)
+            self._wait_for_media_available(access_token, video_urn, resource="videos")
         finally:
             if cleanup_path:
                 with contextlib.suppress(OSError):
@@ -451,6 +454,55 @@ class LinkedInProvider(SocialProvider):
             url=self._post_urn_to_url(post_urn),
             extra={"urn": post_urn, "video_urn": video_urn},
         )
+
+    def _publish_document_post(self, access_token: str, author: str, content: PublishContent) -> PublishResult:
+        # Documents API: initializeUpload -> PUT the file -> wait for AVAILABLE ->
+        # create the post with the document as media. LinkedIn renders it page by
+        # page (the "carousel" people post as a PDF).
+        init_resp = self._request(
+            "POST",
+            f"{API_BASE}/rest/documents",
+            access_token=access_token,
+            headers=LINKEDIN_HEADERS,
+            params={"action": "initializeUpload"},
+            json={"initializeUploadRequest": {"owner": author}},
+        )
+        init_data = init_resp.json().get("value", {})
+        upload_url = init_data.get("uploadUrl", "")
+        document_urn = init_data.get("document", "")
+        if not upload_url or not document_urn:
+            raise PublishError(
+                "Failed to initialize LinkedIn document upload",
+                platform=self.platform_name,
+                raw_response=init_data,
+            )
+
+        source = content.media_files[0] if content.media_files else content.media_urls[0]
+        self._upload_binary(access_token, upload_url, source)
+        self._wait_for_media_available(access_token, document_urn, resource="documents")
+
+        body = self._build_post_body(author, content.text)
+        # LinkedIn shows the title above the document; it is required.
+        body["content"] = {"media": {"id": document_urn, "title": content.title or self._document_title(content)}}
+        resp = self._request(
+            "POST",
+            f"{API_BASE}/rest/posts",
+            access_token=access_token,
+            headers=LINKEDIN_HEADERS,
+            json=body,
+        )
+        post_urn = resp.headers.get("x-restli-id", "")
+        return PublishResult(
+            platform_post_id=post_urn,
+            url=self._post_urn_to_url(post_urn),
+            extra={"urn": post_urn, "document_urn": document_urn},
+        )
+
+    @staticmethod
+    def _document_title(content: PublishContent) -> str:
+        """The file's name, for a document post whose author gave no title."""
+        url = content.media_urls[0] if content.media_urls else ""
+        return unquote(os.path.basename(urlparse(url).path)) or "Document"
 
     def _publish_article_post(self, access_token: str, author: str, content: PublishContent) -> PublishResult:
         body = self._build_post_body(author, content.text)
@@ -863,27 +915,31 @@ class LinkedInProvider(SocialProvider):
         tmp.close()
         return tmp.name, True
 
-    def _wait_for_video_available(
+    def _wait_for_media_available(
         self,
         access_token: str,
-        video_urn: str,
+        media_urn: str,
         *,
+        resource: str,
         timeout_seconds: float = 180.0,
         poll_interval: float = 3.0,
     ) -> None:
-        """Poll until the video reaches AVAILABLE status (or fail fast on terminal errors).
+        """Poll ``/rest/{resource}/{urn}`` until AVAILABLE (or fail fast on terminal errors).
 
-        Posting against a video that is still WAITING_UPLOAD / PROCESSING returns
-        400 MEDIA_ASSET_WAITING_UPLOAD or MEDIA_ASSET_PROCESSING_FAILED — see
+        Videos and documents share the status values. Posting against one that is
+        still WAITING_UPLOAD / PROCESSING returns 400 MEDIA_ASSET_WAITING_UPLOAD or
+        MEDIA_ASSET_PROCESSING_FAILED — see
         https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/videos-api#api-error-details
+        and the documents-api page's status table.
         """
+        kind = resource.rstrip("s")
         last_status: str | None = None
 
         def available() -> bool:
             nonlocal last_status
             resp = self._request(
                 "GET",
-                f"{API_BASE}/rest/videos/{_encode_urn(video_urn)}",
+                f"{API_BASE}/rest/{resource}/{_encode_urn(media_urn)}",
                 access_token=access_token,
                 headers=LINKEDIN_HEADERS,
             )
@@ -891,7 +947,7 @@ class LinkedInProvider(SocialProvider):
             status = data.get("status")
             if status == "PROCESSING_FAILED":
                 raise PublishError(
-                    f"LinkedIn rejected the video during processing: "
+                    f"LinkedIn rejected the {kind} during processing: "
                     f"{data.get('processingFailureReason', 'unknown reason')}",
                     platform=self.platform_name,
                     raw_response=data,
@@ -904,7 +960,7 @@ class LinkedInProvider(SocialProvider):
             deadline=time.monotonic() + timeout_seconds,
             interval=poll_interval,
             on_timeout=lambda: PublishError(
-                f"Timed out waiting for LinkedIn video to become AVAILABLE (last status: {last_status})",
+                f"Timed out waiting for LinkedIn {kind} to become AVAILABLE (last status: {last_status})",
                 platform=self.platform_name,
             ),
         )

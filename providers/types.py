@@ -38,6 +38,8 @@ class PostType(enum.Enum):
     POLL = "poll"
     PIN = "pin"
     SHORT = "short"
+    # A file the platform renders page by page (LinkedIn document post).
+    DOCUMENT = "document"
 
 
 class MediaType(enum.Enum):
