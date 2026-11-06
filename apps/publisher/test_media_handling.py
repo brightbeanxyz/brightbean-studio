@@ -121,6 +121,25 @@ class UrlOnlyProvidersSkipDownloadTest(SimpleTestCase):
     @patch("apps.publisher.engine.download_to_path")
     @patch("apps.publisher.engine.get_provider")
     @patch("apps.publisher.engine._resolve_publish_credentials", return_value={})
+    def test_a_pdf_reaches_a_document_capable_provider_as_a_document(self, _creds, get_provider, download):
+        engine, platform_post, provider = _dispatch_mocks(
+            "linkedin_company",
+            needs_local_media=False,
+            attachments=[_attachment("d1", media_type="document", filename="playbook.pdf")],
+            supported=(PostType.TEXT, PostType.IMAGE, PostType.DOCUMENT),
+        )
+        get_provider.return_value = provider
+
+        engine._dispatch_to_provider(platform_post)
+
+        _token, content = provider.publish_post.call_args.args
+        assert content.post_type is PostType.DOCUMENT
+        assert content.media_urls == ["https://cdn.example/playbook.pdf"]
+        assert content.extra["author"] == "urn:li:organization:acct-1"
+
+    @patch("apps.publisher.engine.download_to_path")
+    @patch("apps.publisher.engine.get_provider")
+    @patch("apps.publisher.engine._resolve_publish_credentials", return_value={})
     def test_video_duration_still_reaches_the_provider(self, _creds, get_provider, download):
         engine, platform_post, provider = _dispatch_mocks(
             "instagram",

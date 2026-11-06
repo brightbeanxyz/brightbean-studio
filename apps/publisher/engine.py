@@ -20,6 +20,7 @@ import os
 import tempfile
 import threading
 import time
+from collections.abc import Container
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timedelta
 
@@ -869,6 +870,7 @@ class PublishEngine:
                 # demote every Instagram/Threads carousel to a single post.
                 media_count=usable_attachments,
                 first_media_type=first_media_type,
+                supported_post_types=provider.supported_post_types,
             )
 
             content = PublishContent(
@@ -936,6 +938,8 @@ class PublishEngine:
         if hint is PostType.VIDEO:
             # _publish_video posts media_urls[0] to the video endpoint as-is.
             return first_media_type == "video"
+        if hint is PostType.DOCUMENT:
+            return first_media_type == "document"
         return True
 
     @staticmethod
@@ -944,6 +948,7 @@ class PublishEngine:
         platform_extra: dict,
         media_count: int,
         first_media_type: str | None,
+        supported_post_types: Container[PostType] = (),
     ) -> PostType:
         """Derive the correct PostType from context.
 
@@ -952,7 +957,9 @@ class PublishEngine:
            and against the media actually attached right now)
         2. Platform defaults (Pinterest → PIN)
         3. Multi-media on carousel-capable platforms → CAROUSEL
-        4. Fallback: video → VIDEO (REEL on Instagram), image → IMAGE, else → TEXT
+        4. Fallback: video → VIDEO (REEL on Instagram), image → IMAGE,
+           document → DOCUMENT where the provider lists it in
+           ``supported_post_types``, else → TEXT
         """
         # 1. Explicit post_type hint from platform_extra
         hint = platform_extra.get("post_type")
@@ -994,6 +1001,8 @@ class PublishEngine:
             return PostType.VIDEO
         if first_media_type == "image":
             return PostType.IMAGE
+        if first_media_type == "document" and PostType.DOCUMENT in supported_post_types:
+            return PostType.DOCUMENT
         return PostType.TEXT
 
     def _fail_permanently(self, platform_post, error_msg, *, user_message, reason="non-retryable"):
