@@ -71,6 +71,10 @@ Toolbar: nav arrows + period + Today + view dropdown | right: filter dropdowns.
 
         <!-- Right side: filter dropdowns -->
         <div class="cal-filters-scroll flex items-center gap-2 ml-auto overflow-x-auto flex-nowrap" style="-webkit-overflow-scrolling: touch; scrollbar-width: none;">
+            {% ui_select model="calendarFilters.brand" options=brands onchange="reloadCalendar()" placeholder="All Brands" %}
+
+            {% ui_select model="calendarFilters.campaign" options=campaigns onchange="reloadCalendar()" placeholder="All Campaigns" %}
+
             <!-- Status filter -->
             {% ui_select model="calendarFilters.status" options=status_choices onchange="reloadCalendar()" placeholder="All Posts" icon="status" %}
 

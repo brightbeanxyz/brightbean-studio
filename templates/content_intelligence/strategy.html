@@ -1,0 +1,22 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Editorial Strategy - {{ brand.name }}{% endblock %}
+{% block content %}
+<div class="max-w-5xl space-y-8">
+    <div class="flex items-start justify-between">
+        <div><a href="{% url 'brands:list' workspace_id=workspace.id %}" class="text-sm" style="color: var(--text-secondary);">← Brand Profiles</a><h2 class="text-xl font-semibold mt-3">{{ brand.name }} editorial strategy</h2></div>
+        {% if can_manage_strategy %}<a href="{% url 'content_intelligence:plan_create' workspace_id=workspace.id brand_id=brand.id %}" class="px-5 py-2 text-sm font-semibold rounded-full" style="background: var(--primary); color: white;">Generate plan</a>{% endif %}
+    </div>
+    <div class="rounded-xl p-6" style="border: 1px solid var(--border); background: var(--surface-0);">
+        <h3 class="font-semibold mb-4">REACH / AUTHORITY / CONVERSION</h3>
+        <form method="post" class="space-y-5">{% csrf_token %}
+            {% if form.non_field_errors %}<div class="p-3 rounded-lg" style="background:#FEE2E2;color:#991B1B;">{{ form.non_field_errors }}</div>{% endif %}
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-5">{% for field in form %}<div><label class="block text-sm font-semibold mb-2" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<p class="text-xs mt-1" style="color:var(--error-500);">{{ error }}</p>{% endfor %}</div>{% endfor %}</div>
+            {% if can_manage_strategy %}<button type="submit" class="px-5 py-2 text-sm font-semibold rounded-full" style="background:var(--primary);color:white;">Save strategy</button>{% else %}<p class="text-sm" style="color:var(--text-secondary);">You have read-only access.</p>{% endif %}
+        </form>
+    </div>
+    <div>
+        <h3 class="font-semibold mb-3">Content plans</h3>
+        <div class="space-y-3">{% for plan in plans %}<a href="{% url 'content_intelligence:plan_detail' workspace_id=workspace.id brand_id=brand.id plan_id=plan.id %}" class="block rounded-xl p-4" style="border:1px solid var(--border);background:var(--surface-0);"><span class="font-medium">{{ plan.get_cadence_display }}</span><span class="text-sm ml-2" style="color:var(--text-secondary);">{{ plan.start_date }} – {{ plan.end_date }} · {{ plan.items.count }} items · strategy v{{ plan.strategy_version.version }}</span></a>{% empty %}<p class="text-sm" style="color:var(--text-secondary);">No plans generated yet.</p>{% endfor %}</div>
+    </div>
+</div>
+{% endblock %}
