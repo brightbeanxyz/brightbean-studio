@@ -8,7 +8,9 @@ import logging
 import os
 import re
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 from .base import SocialProvider
 from .exceptions import PublishError
@@ -26,6 +28,12 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_PDS_URL = "https://bsky.social"
+PLC_DIRECTORY_URL = "https://plc.directory"
+
+# The DIDs the PDS lookup follows: a did:plc is 24 base32 characters, a did:web
+# a bare hostname (atproto allows no port or path on it).
+_PLC_DID_RE = re.compile(r"^did:plc:[a-z2-7]{24}$")
+_WEB_DID_RE = re.compile(r"^did:web:[A-Za-z0-9.-]+$")
 
 
 def _access_jwt_expires_in(access_jwt: str) -> int | None:
@@ -44,6 +52,27 @@ def _access_jwt_expires_in(access_jwt: str) -> int | None:
     except (ValueError, KeyError, TypeError, json.JSONDecodeError):
         return None
     return max(0, exp - int(time.time()))
+
+
+def _pds_endpoint(did_document: dict) -> str | None:
+    """Return the ``#atproto_pds`` service endpoint of a DID document, if any."""
+    for service in did_document.get("service") or []:
+        if not isinstance(service, dict):
+            continue
+        if not str(service.get("id", "")).endswith("#atproto_pds"):
+            continue
+        if service.get("type") != "AtprotoPersonalDataServer":
+            continue
+        endpoint = service.get("serviceEndpoint")
+        if isinstance(endpoint, str) and endpoint.startswith("https://"):
+            return endpoint.rstrip("/")
+    return None
+
+
+def _is_bluesky_hosted(pds_url: str) -> bool:
+    """True for bsky.social and the PDS fleet Bluesky runs behind it."""
+    host = (urlparse(pds_url).hostname or "").lower()
+    return host == "bsky.social" or host.endswith(".bsky.network")
 
 
 class BlueskyProvider(SocialProvider):
@@ -121,16 +150,57 @@ class BlueskyProvider(SocialProvider):
         data = resp.json()
         return data["did"]
 
+    def resolve_pds(self, identifier: str, *, is_safe_url: Callable[[str], bool]) -> str | None:
+        """Return the base URL of the PDS hosting ``identifier``, a handle or a DID.
+
+        Follows the account's DID document: plc.directory for a did:plc, the
+        domain's ``/.well-known/did.json`` for a did:web. A DID document can
+        name any server, so ``is_safe_url`` vets every host that comes from it
+        before it is contacted. Returns None for an email address (createSession
+        accepts one, but it resolves to nothing), a DID or document this cannot
+        follow, and a URL ``is_safe_url`` rejects.
+        """
+        identifier = identifier.strip().lstrip("@")
+        if "@" in identifier:
+            return None
+        did = identifier if identifier.startswith("did:") else self.resolve_handle(identifier)
+        if _PLC_DID_RE.match(did):
+            document_url = f"{PLC_DIRECTORY_URL}/{did}"
+        elif _WEB_DID_RE.match(did):
+            document_url = f"https://{did.removeprefix('did:web:')}/.well-known/did.json"
+            if not is_safe_url(document_url):
+                return None
+        else:
+            return None
+        endpoint = _pds_endpoint(self._request("GET", document_url).json())
+        if endpoint and is_safe_url(endpoint):
+            return endpoint
+        return None
+
     # ------------------------------------------------------------------
     # Session management
     # ------------------------------------------------------------------
 
-    def create_session(self, handle: str, app_password: str) -> OAuthTokens:
+    def create_session(
+        self,
+        handle: str,
+        app_password: str,
+        *,
+        is_safe_url: Callable[[str], bool] | None = None,
+    ) -> OAuthTokens:
         """Create an AT Protocol session using handle and app password.
 
         Returns an ``OAuthTokens`` with *accessJwt* as ``access_token`` and
         *refreshJwt* as ``refresh_token``.
+
+        With ``is_safe_url``, the session is opened on the PDS hosting the
+        account and ``pds_url`` is updated to it, for the caller to store on the
+        account. bsky.social only knows the accounts on Bluesky's own PDS fleet:
+        a handle on eurosky.social or on a self-hosted PDS cannot log in through
+        it. Bluesky-hosted accounts, and any lookup that fails, keep bsky.social.
         """
+        if is_safe_url is not None:
+            self.pds_url = self._session_host(handle, is_safe_url)
         resp = self._request(
             "POST",
             f"{self.pds_url}/xrpc/com.atproto.server.createSession",
@@ -143,6 +213,22 @@ class BlueskyProvider(SocialProvider):
             expires_in=_access_jwt_expires_in(data["accessJwt"]),
             raw_response=data,
         )
+
+    def _session_host(self, identifier: str, is_safe_url: Callable[[str], bool]) -> str:
+        """Pick where a new session is opened: the account's own PDS, else bsky.social."""
+        try:
+            pds_url = self.resolve_pds(identifier, is_safe_url=is_safe_url)
+        except Exception:
+            logger.warning(
+                "Could not resolve the PDS hosting %s, using %s",
+                identifier,
+                DEFAULT_PDS_URL,
+                exc_info=True,
+            )
+            return DEFAULT_PDS_URL
+        if pds_url is None or _is_bluesky_hosted(pds_url):
+            return DEFAULT_PDS_URL
+        return pds_url
 
     def refresh_token(self, refresh_token: str) -> OAuthTokens:
         """Refresh an AT Protocol session using the refresh JWT."""
