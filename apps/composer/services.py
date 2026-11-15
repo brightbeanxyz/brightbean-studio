@@ -456,6 +456,12 @@ def publish_blocker(social_account, *, media_types, platform_extra: dict | None 
     reason = media_blocker(social_account, media_types=media_types)
     if reason:
         return reason
+    if social_account.platform in ("instagram", "instagram_login"):
+        from providers.instagram_trials import trial_reel_error
+
+        reason = trial_reel_error(platform_extra or {}, single_video=set(media_types) == {"video"})
+        if reason:
+            return reason
     if social_account.platform == "pinterest" and not (platform_extra or {}).get("board_id"):
         return "Pinterest needs a board for every pin. Choose one for this post in the composer before scheduling it."
     return ""
@@ -467,6 +473,18 @@ def require_publishable(platform_post, *, media_types=None) -> None:
     ``media_types`` lets a caller checking many rows answer it for all of them
     in one query (``media_types_by_post``) instead of one per row.
     """
+    if (
+        platform_post.social_account.platform in ("instagram", "instagram_login")
+        and (platform_post.platform_extra or {}).get("trial_reel_graduation_strategy") is not None
+    ):
+        from providers.instagram_trials import trial_reel_error
+
+        media = list(
+            _usable_attachments().filter(post=platform_post.post).values_list("media_asset__media_type", flat=True)
+        )
+        reason = trial_reel_error(platform_post.platform_extra, single_video=media == ["video"])
+        if reason:
+            raise ValueError(reason)
     if media_types is None:
         media_types = post_media_types(platform_post.post)
     reason = publish_blocker(

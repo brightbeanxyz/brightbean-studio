@@ -31,6 +31,7 @@ can_approve, display_timezone, and the parent Alpine scope (selectedPosts, diffO
                 <div class="flex items-center gap-1">
                     {% for pp in post.platform_posts.all %}
                     <span class="w-5 h-5 rounded-[5px] flex items-center justify-center">{% include "partials/_platform_icon.html" with platform=pp.social_account.platform size="sm" %}</span>
+                    {% include "partials/_instagram_trial_mode.html" with pp=pp %}
                     {% endfor %}
                 </div>
                 <span class="text-[0.75rem] text-stone-400 inline-flex items-center gap-1 ml-auto tabular-nums flex-shrink-0">

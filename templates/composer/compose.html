@@ -563,6 +563,23 @@
                     </div>
                 </div>
 
+                <template x-for="accId in selectedAccounts" :key="'instagram-trial-' + accId">
+                    <div x-show="['instagram', 'instagram_login'].includes(charLimits[accId]?.platform)"
+                         class="border border-stone-200 rounded-xl bg-white p-4">
+                        <input type="hidden" :name="'instagram_trial_panel_' + accId" value="1"
+                               :disabled="!['instagram', 'instagram_login'].includes(charLimits[accId]?.platform)">
+                        <label :for="'instagram-trial-' + accId" class="block text-sm font-medium mb-2">Instagram audience</label>
+                        <select :id="'instagram-trial-' + accId" :name="'instagram_trial_strategy_' + accId"
+                                :disabled="!['instagram', 'instagram_login'].includes(charLimits[accId]?.platform)"
+                                x-init="$el.value = platformExtras[accId]?.trial_reel_graduation_strategy || ''"
+                                class="w-full border border-stone-200 rounded-lg text-sm">
+                            <option value="">Regular Reel or feed post</option>
+                            <option value="MANUAL">Trial Reel · share with followers manually in Instagram</option>
+                            <option value="SS_PERFORMANCE">Trial Reel · automatically share if it performs well</option>
+                        </select>
+                    </div>
+                </template>
+
                 <!-- Facebook video destination (regular Page video by default) -->
                 <template x-for="accId in selectedAccounts" :key="'facebook-video-settings-' + accId">
                     <div x-show="charLimits[accId]?.platform === 'facebook' && hasSingleVideoAttached"

@@ -10,6 +10,7 @@ already-approved posts get "Put on hold"; held posts show their state.
         <div class="flex items-center gap-2 mb-2.5 flex-wrap">
             {% for pp in post.platform_posts.all %}
             <span class="text-[0.6875rem] font-semibold px-2.5 py-0.5 rounded-full bg-stone-100 text-stone-600">{{ pp.social_account.get_platform_display }}</span>
+            {% include "partials/_instagram_trial_mode.html" with pp=pp %}
             {% endfor %}
             {% if post.client_pending %}{% status_badge 'pending_client' %}{% elif post.client_on_hold %}{% status_badge 'on_hold' %}{% elif post.client_approved %}{% status_badge 'approved' %}{% endif %}
             {% if post.scheduled_at %}

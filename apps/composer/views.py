@@ -235,6 +235,35 @@ def _readonly_rejection(request, post):
     )
 
 
+def _validate_instagram_trial_changes(request, post):
+    selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
+    for pp in post.platform_posts.filter(
+        social_account_id__in=selected_ids,
+        social_account__platform__in=("instagram", "instagram_login"),
+        status__in=("scheduled", "pending_client", "on_hold"),
+    ):
+        current = pp.platform_extra or {}
+        proposed = _instagram_trial_settings(request, str(pp.social_account_id), current) or {}
+        if current.get("trial_reel_graduation_strategy") != proposed.get("trial_reel_graduation_strategy"):
+            return JsonResponse(
+                {"errors": {"instagram_audience": "Move this post to draft before changing its Instagram audience."}},
+                status=400,
+            )
+    return None
+
+
+def _instagram_trial_settings(request, account_id, current):
+    if f"instagram_trial_panel_{account_id}" not in request.POST:
+        return current
+    extra = {**(current or {})}
+    strategy = request.POST.get(f"instagram_trial_strategy_{account_id}", "").strip()
+    if strategy:
+        extra["trial_reel_graduation_strategy"] = strategy
+    else:
+        extra.pop("trial_reel_graduation_strategy", None)
+    return extra
+
+
 def _sync_platform_posts(request, post, workspace, initial_status=None):
     """Sync platform post selections from form data.
 
@@ -292,6 +321,9 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
                 # clears the hint rather than recording it.
                 extra.pop("post_type", None)
             pp.platform_extra = extra
+
+        elif account.platform in ("instagram", "instagram_login"):
+            pp.platform_extra = _instagram_trial_settings(request, acc_id, pp.platform_extra)
 
         elif account.platform == "youtube":
             tags_list = parse_and_truncate_youtube_tag_string(request.POST.get(f"yt_tags_{acc_id}", ""))
@@ -907,7 +939,14 @@ def _transition_post_children(post, target, *, allow_via_draft=True, only=None):
 
 def _base_content_snapshot(post):
     """Reviewable base content used to detect edits to an approved post."""
-    return (post.title, post.caption, post.first_comment, tuple(post.tags or []))
+    trials = tuple(
+        (str(pp.social_account_id), (pp.platform_extra or {}).get("trial_reel_graduation_strategy"))
+        for pp in post.platform_posts.filter(
+            social_account__platform__in=("instagram", "instagram_login"),
+            platform_extra__has_key="trial_reel_graduation_strategy",
+        ).order_by("social_account_id")
+    )
+    return (post.title, post.caption, post.first_comment, tuple(post.tags or []), trials)
 
 
 def _revert_approved_to_review(post):
@@ -1001,6 +1040,9 @@ def save_post(request, workspace_id, post_id=None):
         readonly_error = _readonly_rejection(request, post)
         if readonly_error is not None:
             return readonly_error
+        trial_error = _validate_instagram_trial_changes(request, post)
+        if trial_error is not None:
+            return trial_error
         _orig_content = _base_content_snapshot(post)
         form = PostForm(request.POST, instance=post)
     else:
@@ -1377,6 +1419,9 @@ def autosave(request, workspace_id, post_id=None):
         # so a 4xx here would fire the global error toast on every tick.
         if _is_readonly_write(request, post):
             return HttpResponse('<span class="text-xs text-gray-400">Read-only — not saved</span>')
+        trial_error = _validate_instagram_trial_changes(request, post)
+        if trial_error is not None:
+            return trial_error
         orig_content = _base_content_snapshot(post)
     else:
         # Check if a previous autosave already created a draft for this session
@@ -1424,10 +1469,13 @@ def autosave(request, workspace_id, post_id=None):
     selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
     _remove_deselected_platform_posts(request, post, selected_ids)
     for acc_id in selected_ids:
-        PlatformPost.objects.get_or_create(
+        pp, _created = PlatformPost.objects.get_or_create(
             post=post,
             social_account_id=acc_id,
         )
+        if pp.social_account.platform in ("instagram", "instagram_login"):
+            pp.platform_extra = _instagram_trial_settings(request, acc_id, pp.platform_extra)
+            pp.save(update_fields=["platform_extra", "updated_at"])
 
     # Option A: an autosave that changed an approved post's content reverts it to
     # pending_review so edited content can't publish without a fresh review.
