@@ -620,7 +620,7 @@ Brightbean Studio supports two LinkedIn paths. Pick whichever your LinkedIn dev 
    ```
 5. Scopes:
    - **Personal:** `r_basicprofile`, `w_member_social`, `r_member_social`
-   - **Company:** `r_basicprofile`, `w_member_social`, `w_organization_social`, `r_organization_social`, `rw_organization_admin`
+   - **Company:** `r_basicprofile`, `w_member_social`, `w_organization_social`, `r_organization_social`, `rw_organization_admin`, `w_organization_social_feed` (first comment as the page; a page connected before this scope was added has to be reconnected)
 6. Set the environment variables:
    ```
    PLATFORM_LINKEDIN_COMPANY_CLIENT_ID=your-client-id
