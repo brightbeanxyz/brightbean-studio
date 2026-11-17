@@ -590,6 +590,68 @@ def test_a_platform_without_a_floor_keeps_the_five_minute_cadence(connected_acco
     get_provider.return_value.get_messages.assert_called_once()
 
 
+def test_any_platform_can_set_a_floor_from_the_environment():
+    from config.settings.base import inbox_platform_min_poll_seconds
+
+    floors = inbox_platform_min_poll_seconds(
+        {
+            "INBOX_LINKEDIN_COMPANY_MIN_POLL_SECONDS": "31536000",
+            "INBOX_YOUTUBE_MIN_POLL_SECONDS": "3600",
+            "INBOX_DEEP_SWEEP_SECONDS": "60",
+        }
+    )
+
+    assert floors == {"youtube": 3600, "linkedin_company": 31536000}
+
+
+def test_youtube_keeps_its_default_floor_and_zero_removes_it():
+    from config.settings.base import inbox_platform_min_poll_seconds
+
+    assert inbox_platform_min_poll_seconds({}) == {"youtube": 1800}
+    assert inbox_platform_min_poll_seconds({"INBOX_YOUTUBE_MIN_POLL_SECONDS": "0"}) == {"youtube": 0}
+
+
+def _linkedin_company_account(workspace):
+    return SocialAccount.objects.create(
+        workspace=workspace,
+        platform="linkedin_company",
+        account_platform_id="li-sync-1",
+        account_name="LinkedIn Sync Test",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+
+
+@pytest.mark.django_db
+def test_a_configured_platform_is_not_repolled_inside_its_floor(workspace, settings):
+    settings.INBOX_PLATFORM_MIN_POLL_SECONDS = {"youtube": 1800, "linkedin_company": 365 * 24 * 60 * 60}
+    account = _linkedin_company_account(workspace)
+    account.inbox_last_polled_at = timezone.now() - timedelta(days=30)
+    account.save(update_fields=["inbox_last_polled_at"])
+
+    provider = MagicMock()
+    provider.credentials = {}
+    with patch("apps.inbox.tasks.get_provider", return_value=provider):
+        InboxSyncEngine().sync_all()
+
+    provider.get_messages.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_a_configured_platform_is_polled_once_past_its_floor(workspace, settings):
+    settings.INBOX_PLATFORM_MIN_POLL_SECONDS = {"youtube": 1800, "linkedin_company": 3600}
+    account = _linkedin_company_account(workspace)
+    account.inbox_last_polled_at = timezone.now() - timedelta(hours=2)
+    account.save(update_fields=["inbox_last_polled_at"])
+
+    provider = MagicMock()
+    provider.credentials = {}
+    provider.get_messages.return_value = []
+    with patch("apps.inbox.tasks.get_provider", return_value=provider):
+        InboxSyncEngine().sync_all()
+
+    provider.get_messages.assert_called_once()
+
+
 @pytest.mark.django_db
 def test_a_stale_account_gets_the_deep_sweep(workspace):
     """The weekly walk is what finds a reply older than the routine poll's lookback."""

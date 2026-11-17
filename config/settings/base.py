@@ -1,3 +1,5 @@
+import os
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -644,7 +646,22 @@ PUBLISHER_MAX_CONCURRENT_PLATFORM_PUBLISHES = env.int("PUBLISHER_MAX_CONCURRENT_
 # sidesteps apps.common.background.register_recurring_task, which SKIPS an
 # already-registered task, so editing an interval constant would change nothing
 # on a deployment that has run before.)
-INBOX_PLATFORM_MIN_POLL_SECONDS = {"youtube": env.int("INBOX_YOUTUBE_MIN_POLL_SECONDS", default=1800)}
+#
+# Any other platform can get a floor the same way: INBOX_<PLATFORM>_MIN_POLL_SECONDS,
+# with the platform value upper-cased (INBOX_LINKEDIN_COMPANY_MIN_POLL_SECONDS,
+# INBOX_THREADS_MIN_POLL_SECONDS, ...). 0 removes a floor, YouTube's included.
+_INBOX_MIN_POLL_ENV = re.compile(r"INBOX_([A-Z0-9_]+)_MIN_POLL_SECONDS")
+
+
+def inbox_platform_min_poll_seconds(environ) -> dict[str, int]:
+    floors = {"youtube": 1800}
+    for name, value in environ.items():
+        if match := _INBOX_MIN_POLL_ENV.fullmatch(name):
+            floors[match.group(1).lower()] = int(value)
+    return floors
+
+
+INBOX_PLATFORM_MIN_POLL_SECONDS = inbox_platform_min_poll_seconds(os.environ)
 
 # How often an account's entire comment history is walked. The routine poll
 # stops early to protect the budget, which means a reply to a thread older than
