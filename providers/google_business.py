@@ -87,7 +87,9 @@ class GoogleBusinessProvider(SocialProvider):
             "scope": " ".join(self.required_scopes),
             "state": state,
             "access_type": "offline",
-            "prompt": "consent",
+            # select_account: show Google's chooser so a Brand Account (e.g. a company channel) can be picked
+            # instead of silently reusing the browser's signed-in identity.
+            "prompt": "consent select_account",
         }
         return f"{AUTH_URL}?{urlencode(params)}"
 
