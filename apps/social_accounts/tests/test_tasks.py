@@ -66,6 +66,58 @@ class TestCheckSocialAccountHealth:
         assert account.last_error == ""
 
     @patch("providers.get_provider")
+    def test_linkedin_company_health_check_keeps_page_name_and_logo(self, mock_get_provider, workspace):
+        # Regression: LinkedInCompanyProvider inherits /v2/me, so the health
+        # check replaced the page logo with a member URN and the page name with
+        # the member name.
+        account = SocialAccount.objects.create(
+            workspace=workspace,
+            platform="linkedin_company",
+            account_platform_id="12345",
+            account_name="Acme",
+            avatar_url="https://media.licdn.com/logo.png",
+            oauth_access_token="tok",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        mock_provider = MagicMock()
+        mock_provider.get_profile.return_value = _profile(
+            platform_id="member-1",
+            name="Jane Member",
+            avatar_url="urn:li:digitalmediaAsset:D4D03AQabc",
+        )
+        mock_get_provider.return_value = mock_provider
+
+        check_social_account_health.now(str(account.id))
+
+        account = SocialAccount.objects.get(pk=account.pk)
+        assert account.account_name == "Acme"
+        assert account.avatar_url == "https://media.licdn.com/logo.png"
+        assert account.connection_status == SocialAccount.ConnectionStatus.CONNECTED
+
+    @patch("providers.get_provider")
+    def test_urn_avatar_never_overwrites_saved_avatar(self, mock_get_provider, workspace):
+        account = SocialAccount.objects.create(
+            workspace=workspace,
+            platform="linkedin_personal",
+            account_platform_id="member-1",
+            account_name="Jane Member",
+            avatar_url="https://media.licdn.com/me.jpg",
+            oauth_access_token="tok",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        mock_provider = MagicMock()
+        mock_provider.get_profile.return_value = _profile(
+            platform_id="member-1",
+            name="Jane Member",
+            avatar_url="urn:li:digitalmediaAsset:D4D03AQabc",
+        )
+        mock_get_provider.return_value = mock_provider
+
+        check_social_account_health.now(str(account.id))
+
+        assert SocialAccount.objects.get(pk=account.pk).avatar_url == "https://media.licdn.com/me.jpg"
+
+    @patch("providers.get_provider")
     def test_instagram_health_check_passes_selected_ig_user_id(self, mock_get_provider, workspace):
         account = SocialAccount.objects.create(
             workspace=workspace,
