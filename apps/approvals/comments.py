@@ -57,7 +57,13 @@ def create_comment(post, author, body, visibility, parent_id=None, attachment=No
     workspace = post.workspace
     mentions = MENTION_REGEX.findall(body)
     if mentions:
-        _notify_mentions(mentions, post, author, workspace, body)
+        # Threaded under an internal comment counts as internal: clients never
+        # see that thread (get_comments_for_post drops the parent).
+        internal = PostComment.Visibility.INTERNAL in (
+            visibility,
+            parent_comment.visibility if parent_comment else None,
+        )
+        _notify_mentions(mentions, post, author, workspace, body, internal=internal)
 
     return comment
 
@@ -87,10 +93,18 @@ def update_comment(comment_id, user, body, *, workspace=None):
     return comment
 
 
-def delete_comment(comment_id, user, workspace):
-    """Soft-delete a comment. Authors and managers can delete."""
+def delete_comment(comment_id, user, workspace, *, post):
+    """Soft-delete a comment. Authors and managers can delete.
+
+    The comment must sit on ``post`` inside ``workspace``. The moderation check
+    reads the caller's role in ``workspace``, so a comment looked up by id alone
+    let a manager of workspace A delete workspace B's comments — including
+    another organization's — by putting B's comment id in A's URL.
+    """
     comment = PostComment.objects.filter(
         id=comment_id,
+        post=post,
+        post__workspace=workspace,
         deleted_at__isnull=True,
     ).first()
 
@@ -129,9 +143,16 @@ def get_comments_for_post(post, user):
         workspace=workspace,
     ).first()
 
+    is_client = bool(membership and membership.workspace_role == WorkspaceMembership.WorkspaceRole.CLIENT)
+
     active_replies = PostComment.objects.filter(
         deleted_at__isnull=True,
     ).select_related("author")
+    # The visibility filter has to reach the replies too: the template renders
+    # every prefetched reply, so an internal reply under an external comment
+    # would otherwise reach the client.
+    if is_client:
+        active_replies = active_replies.filter(visibility=PostComment.Visibility.EXTERNAL)
 
     qs = (
         PostComment.objects.filter(
@@ -147,18 +168,24 @@ def get_comments_for_post(post, user):
     )
 
     # Clients only see external comments
-    if membership and membership.workspace_role == WorkspaceMembership.WorkspaceRole.CLIENT:
+    if is_client:
         qs = qs.filter(visibility=PostComment.Visibility.EXTERNAL)
 
     return qs
 
 
-def _notify_mentions(mentions, post, author, workspace, body):
-    """Send notifications to @mentioned workspace members."""
+def _notify_mentions(mentions, post, author, workspace, body, *, internal=False):
+    """Send notifications to @mentioned workspace members.
+
+    An ``internal`` comment never notifies a client: the notification quotes
+    the body, which is exactly what the visibility filter keeps from them.
+    """
     # Build lookup of display names / email prefixes → user
     memberships = WorkspaceMembership.objects.filter(
         workspace=workspace,
     ).select_related("user")
+    if internal:
+        memberships = memberships.exclude(workspace_role=WorkspaceMembership.WorkspaceRole.CLIENT)
 
     name_to_user = {}
     for m in memberships:

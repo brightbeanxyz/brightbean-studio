@@ -281,10 +281,13 @@ class ProposedPublishAtSaveTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         post.refresh_from_db()
         self.assertIsNone(post.proposed_publish_at)
-        # The clear must not disturb the scheduling aggregate the publisher reads.
-        self.assertIsNone(post.scheduled_at)
+        # The proposal becomes the committed time. A scheduled child with no
+        # time of its own and none on the parent is never picked up by the
+        # publisher, so leaving both null here stranded the post.
         pp.refresh_from_db()
         self.assertEqual(pp.status, "scheduled")
+        self.assertEqual(pp.scheduled_at, PROPOSED_LOCAL)
+        self.assertEqual(post.scheduled_at, PROPOSED_LOCAL)
 
     def test_publisher_fallback_still_picks_up_scheduled_post(self):
         # Regression guard for the publish path: a scheduled child with NULL

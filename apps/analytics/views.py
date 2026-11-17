@@ -18,6 +18,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET
 
 from apps.composer.models import PlatformPost
+from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
 from apps.social_accounts.models import AnalyticsPlatformConfig, SocialAccount
 from apps.workspaces.models import Workspace
@@ -32,6 +33,7 @@ DEFAULT_RANGE = 30
 
 
 @login_required
+@require_permission("view_analytics")
 @require_GET
 def analytics_status(request, workspace_id, account_id):
     workspace = _get_workspace(request, workspace_id)
@@ -113,6 +115,7 @@ def _parse_page(value: str | None) -> int:
 
 
 @login_required
+@require_permission("view_analytics")
 def analytics_index(request: HttpRequest, workspace_id) -> HttpResponse:
     """Landing route: redirects to the first connected account with analytics."""
     workspace = _get_workspace(request, workspace_id)
@@ -134,6 +137,7 @@ def analytics_index(request: HttpRequest, workspace_id) -> HttpResponse:
 
 
 @login_required
+@require_permission("view_analytics")
 def analytics_account(request: HttpRequest, workspace_id, account_id) -> HttpResponse:
     """Main analytics page for one connected SocialAccount."""
     workspace = _get_workspace(request, workspace_id)
@@ -268,6 +272,7 @@ def analytics_account(request: HttpRequest, workspace_id, account_id) -> HttpRes
 
 
 @login_required
+@require_permission("view_analytics")
 def post_detail(request: HttpRequest, workspace_id, post_id) -> HttpResponse:
     """HTMX-loaded payload for the slide-over post-detail drawer."""
     workspace = _get_workspace(request, workspace_id)

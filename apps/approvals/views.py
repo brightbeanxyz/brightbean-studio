@@ -255,13 +255,15 @@ def edit_comment(request, workspace_id, post_id, comment_id):
 def delete_comment(request, workspace_id, post_id, comment_id):
     """Soft-delete a comment."""
     workspace = _get_workspace(request, workspace_id)
+    # Resolve the post before anything is mutated; the service then only finds
+    # a comment that belongs to it.
+    post = get_object_or_404(Post, id=post_id, workspace=workspace)
 
     try:
-        comment_service.delete_comment(comment_id, request.user, workspace)
+        comment_service.delete_comment(comment_id, request.user, workspace, post=post)
     except (ValueError, PermissionError) as e:
         return HttpResponse(str(e), status=400 if isinstance(e, ValueError) else 403)
 
-    post = get_object_or_404(Post, id=post_id, workspace=workspace)
     comments = comment_service.get_comments_for_post(post, request.user)
     return render(
         request,
@@ -289,11 +291,20 @@ def comment_attachment(request, workspace_id, post_id, comment_id):
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
     comment = get_object_or_404(
-        PostComment,
+        PostComment.objects.select_related("parent_comment"),
         id=comment_id,
         post=post,
         deleted_at__isnull=True,
     )
+
+    # The same rule get_comments_for_post applies to the text: a client never
+    # sees an internal comment, or anything threaded under one.
+    membership = request.workspace_membership
+    if membership and membership.workspace_role == "client":
+        internal = PostComment.Visibility.INTERNAL
+        parent = comment.parent_comment
+        if comment.visibility == internal or (parent is not None and parent.visibility == internal):
+            raise Http404("Comment not found.")
 
     if not comment.attachment:
         raise Http404("This comment has no attachment.")

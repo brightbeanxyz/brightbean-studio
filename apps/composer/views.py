@@ -31,7 +31,8 @@ from apps.common.validators import (
     safe_xml_fromstring,
 )
 from apps.media_library.models import MediaAsset
-from apps.members.decorators import require_permission
+from apps.media_library.validators import ALLOWED_MIME_TYPES, get_accepted_file_types, sniff_mime
+from apps.members.decorators import membership_permissions, require_permission, require_post_edit
 from apps.members.models import WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
@@ -53,6 +54,7 @@ from .models import (
     Tag,
 )
 from .services import (
+    _require_approval_gate_passes,
     media_blocker,
     media_change_blocker,
     post_media_types,
@@ -381,6 +383,47 @@ def _validate_pinterest_board_selection(request, post, workspace):
                 {"errors": {"pinterest_board": f"Select a Pinterest board for {account.account_name}."}},
                 status=400,
             )
+    return None
+
+
+# save_post actions that hand children straight to the publisher. Submit and
+# resubmit only start a review, so they are not among them.
+_DIRECT_SCHEDULE_ACTIONS = frozenset({"schedule", "publish_now", "add_to_queue", "add_to_queue_priority"})
+# A child in one of these has been through review, or is already committed.
+_PAST_REVIEW_STATUSES = frozenset({"approved", "scheduled", "publishing", "published", "failed"})
+
+
+def _approval_gate_rejection(request, workspace, post_id, action):
+    """A 400 when ``action`` would commit an unreviewed child where review is required.
+
+    In the required approval modes "every post must be approved ... before it
+    can go out" (the approvals settings page). The schedule, queue and
+    publish-now actions moved every selected child to ``scheduled`` and created
+    new ones already scheduled, so a contributor's draft reached the publisher
+    unreviewed. This applies to every role, as the REST /schedule route's gate
+    does; selected children that are already approved schedule as before.
+    """
+    if action not in _DIRECT_SCHEDULE_ACTIONS:
+        return None
+    try:
+        _require_approval_gate_passes(workspace)
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        return None
+
+    statuses = {}
+    if post_id:
+        statuses = {
+            str(account_id): status
+            for account_id, status in PlatformPost.objects.filter(post_id=post_id).values_list(
+                "social_account_id", "status"
+            )
+        }
+    # A selected account with no child yet would be created already scheduled.
+    selected = [str(uuid.UUID(a)) for a in _parse_selected_account_ids(request.POST.get("selected_accounts", ""))]
+    if any(statuses.get(account_id) not in _PAST_REVIEW_STATUSES for account_id in selected):
+        return JsonResponse({"errors": {"approval": message}}, status=400)
     return None
 
 
@@ -861,6 +904,9 @@ def compose(request, workspace_id, post_id=None):
         "failed_platform_posts": failed_platform_posts,
         "failed_first_comments": failed_first_comments,
         "unsplash_enabled": bool(settings.UNSPLASH_ACCESS_KEY),
+        # The file picker offers what upload_media will accept (it validates by
+        # the bytes, through the media library), not every image/* and video/*.
+        "media_input_accept": get_accepted_file_types("image", "video"),
     }
     return render(request, "composer/compose.html", context)
 
@@ -1006,6 +1052,11 @@ def save_post(request, workspace_id, post_id=None):
     else:
         _orig_content = None
         form = PostForm(request.POST)
+
+    # Before anything is saved: a refused schedule must not half-apply.
+    approval_error = _approval_gate_rejection(request, workspace, post_id, action)
+    if approval_error is not None:
+        return approval_error
 
     if not form.is_valid():
         return JsonResponse({"errors": form.errors}, status=400)
@@ -1293,15 +1344,65 @@ def save_post(request, workspace_id, post_id=None):
     return redirect("composer:compose_edit", workspace_id=workspace.id, post_id=post.id)
 
 
+# Outcomes the publisher records, never editorial choices. A hand-set
+# ``published`` stamps ``published_at`` on a post no platform ever received.
+_PUBLISHER_ONLY_TARGETS = frozenset({"published", "failed"})
+
+
+def _sync_parent_schedule(post):
+    """Re-derive ``Post.scheduled_at`` unless a committed child still leans on it.
+
+    A scheduled or publishing child with a null ``scheduled_at`` (the chip used
+    to commit them that way) publishes at the parent's time through the
+    publisher's ``Coalesce(scheduled_at, post__scheduled_at)`` fallback;
+    re-deriving the parent from the other children's times would move or clear
+    it under that child.
+    """
+    from .services import sync_post_scheduled_at
+
+    leaning_on_parent = post.platform_posts.filter(
+        status__in=("scheduled", "publishing"), scheduled_at__isnull=True
+    ).exists()
+    if not leaning_on_parent:
+        sync_post_scheduled_at(post)
+
+
+def _unschedule_drafted_child(pp):
+    """Persist a child just moved to draft, and take it off the schedule.
+
+    A bare status save left the draft on the calendar at its old time and still
+    holding its queue slot. Clears the child's ``scheduled_at`` and drops its
+    QueueEntry, as the service's draft path does, then re-derives the parent's
+    time (see ``_sync_parent_schedule``). When that leaves the post with no
+    committed time, the one it was meant to go out at is kept as the draft-stage
+    proposal, so scheduling the child again restores it instead of committing a
+    row the publisher can never pick up.
+    """
+    from apps.calendar.models import QueueEntry
+
+    post = pp.post
+    previous_time = pp.scheduled_at or post.scheduled_at
+    pp.scheduled_at = None
+    with transaction.atomic():
+        pp.save(update_fields=[*PlatformPost.TRANSITION_FIELDS, "scheduled_at", "updated_at"])
+        QueueEntry.objects.filter(post=post, queue__social_account=pp.social_account).delete()
+        _sync_parent_schedule(post)
+        if post.scheduled_at is None and post.proposed_publish_at is None and previous_time is not None:
+            post.proposed_publish_at = previous_time
+            post.save(update_fields=["proposed_publish_at", "updated_at"])
+
+
 @login_required
+@require_permission("create_posts")
 @require_POST
 def transition_platform_post(request, workspace_id, post_id, platform_post_id):
     """Transition a single PlatformPost to a target editorial status.
 
     Used by the composer's per-account chip menu so the user can take a single
     social account in/out of draft, schedule, etc. without affecting siblings.
-    Permission rules mirror save_post: ``approve_posts`` is required for any
-    approval-stage target; ``publish_directly`` is required for scheduled.
+    Permission rules mirror save_post: the caller must be able to edit the post
+    at all, ``approve_posts`` is required for any approval-stage target, and
+    ``publish_directly`` for scheduled.
     """
     workspace = _get_workspace(request, workspace_id)
     pp = get_object_or_404(
@@ -1310,12 +1411,14 @@ def transition_platform_post(request, workspace_id, post_id, platform_post_id):
         post_id=post_id,
         post__workspace=workspace,
     )
+    require_post_edit(request, pp.post)
     target = (request.POST.get("target_status") or "").strip()
     if not target:
         return JsonResponse({"error": "target_status required"}, status=400)
+    if target in _PUBLISHER_ONLY_TARGETS:
+        return JsonResponse({"error": f"A post can't be marked {target} by hand."}, status=400)
 
-    membership = request.workspace_membership
-    perms = membership.effective_permissions if membership else {}
+    perms = membership_permissions(request)
     approval_states = {"approved", "pending_review", "pending_client", "changes_requested", "rejected"}
     if target in ("scheduled", "publishing") and not perms.get("publish_directly", False):
         raise PermissionDenied("You do not have permission to schedule this post.")
@@ -1326,6 +1429,16 @@ def transition_platform_post(request, workspace_id, post_id, platform_post_id):
         return JsonResponse({"ok": True, "status": pp.status, "noop": True})
 
     if target in ("scheduled", "publishing"):
+        # A draft has not been through review. Where the workspace requires
+        # approval, committing one straight to the publisher would skip it —
+        # the same gate the REST /schedule route applies via the service.
+        # ``approved`` (and a ``failed`` retry, which got there via publishing)
+        # has passed the gate already.
+        if pp.status == "draft":
+            try:
+                _require_approval_gate_passes(workspace)
+            except ValueError as exc:
+                return JsonResponse({"error": str(exc)}, status=400)
         # save_post's own checks never see this endpoint: it moves one row
         # straight to the publisher, so a failed image-only TikTok row could
         # otherwise be "retried" into the same failure.
@@ -1334,19 +1447,47 @@ def transition_platform_post(request, workspace_id, post_id, platform_post_id):
         except ValueError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
 
+    if target == "draft":
+        try:
+            pp.transition_to("draft")
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+        _unschedule_drafted_child(pp)
+        return JsonResponse({"ok": True, "status": pp.status, "platform_post_id": str(pp.id)})
+
+    publish_at = None
+    if target == "scheduled":
+        # The publisher only picks a scheduled row whose own time, or else the
+        # parent's, is due; one with neither is never published. Take the
+        # child's time, then the post's, then the draft-stage proposal (which
+        # is where a chip-drafted child's time is kept). A failed row with no
+        # time is a retry, so it goes now.
+        publish_at = pp.scheduled_at or pp.post.scheduled_at or pp.post.proposed_publish_at
+        if publish_at is None and pp.status == "failed":
+            publish_at = timezone.now()
+        if publish_at is None:
+            return JsonResponse(
+                {"error": "Pick a publish time in the composer before scheduling this post."}, status=400
+            )
+
     try:
         pp.transition_to(target)
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
-    pp.save(update_fields=[*PlatformPost.TRANSITION_FIELDS, "updated_at"])
-    # Committing a child to publishing obsoletes any draft-stage proposal.
-    # Clear it directly rather than via sync_post_scheduled_at: this view sets
-    # ``scheduled`` WITHOUT a ``scheduled_at``, and the publisher relies on the
-    # ``Coalesce(scheduled_at, post__scheduled_at)`` fallback — recomputing the
-    # Post.scheduled_at aggregate here could strand a post that depends on it.
-    if target in ("scheduled", "publishing", "published") and pp.post.proposed_publish_at is not None:
-        pp.post.proposed_publish_at = None
-        pp.post.save(update_fields=["proposed_publish_at", "updated_at"])
+    update_fields = [*PlatformPost.TRANSITION_FIELDS, "updated_at"]
+    if publish_at is not None and pp.scheduled_at is None:
+        # Pin the time on the child instead of leaning on the parent's.
+        pp.scheduled_at = publish_at
+        update_fields.append("scheduled_at")
+    with transaction.atomic():
+        pp.save(update_fields=update_fields)
+        if target == "scheduled":
+            # Also drops the now-obsolete proposal once a committed time exists.
+            _sync_parent_schedule(pp.post)
+        # Committing a child to publishing obsoletes any draft-stage proposal.
+        if pp.post.proposed_publish_at is not None:
+            pp.post.proposed_publish_at = None
+            pp.post.save(update_fields=["proposed_publish_at", "updated_at"])
     return JsonResponse({"ok": True, "status": pp.status, "platform_post_id": str(pp.id)})
 
 
@@ -1441,6 +1582,7 @@ def autosave(request, workspace_id, post_id=None):
 
 
 @login_required
+@require_permission("create_posts")
 @require_POST
 def preview(request, workspace_id):
     """Live preview endpoint - renders platform-specific preview from form state.
@@ -1581,6 +1723,7 @@ def thumbnail_picker(request, workspace_id):
 
 
 @login_required
+@require_permission("create_posts")
 @require_POST
 def thumbnail_upload(request, workspace_id):
     """Upload an image from the local machine to the media library and return
@@ -1594,23 +1737,10 @@ def thumbnail_upload(request, workspace_id):
     if not uploaded_file:
         return JsonResponse({"error": "No file provided"}, status=400)
 
-    content_type = uploaded_file.content_type or ""
-    if not content_type.startswith("image/"):
-        return JsonResponse({"error": "Only image files are allowed"}, status=400)
-
-    from apps.media_library.models import MediaAsset
-
-    asset = MediaAsset.objects.create(
-        organization=workspace.organization,
-        workspace=workspace,
-        uploaded_by=request.user,
-        file=uploaded_file,
-        filename=uploaded_file.name,
-        media_type=MediaAsset.MediaType.IMAGE,
-        mime_type=content_type,
-        file_size=uploaded_file.size,
-        source="upload",
-    )
+    try:
+        asset = _store_composer_upload(request, workspace, uploaded_file, images_only=True)
+    except _UploadRejectedError as exc:
+        return JsonResponse({"error": str(exc)}, status=exc.status)
 
     url = ""
     if asset.thumbnail:
@@ -1957,6 +2087,8 @@ def unsplash_search(request, workspace_id):
 
 
 @login_required
+@require_permission("create_posts")
+@require_permission("upload_media")
 @require_POST
 def unsplash_import(request, workspace_id, post_id=None):
     """Download selected Unsplash photos server-side and attach them as media.
@@ -1989,6 +2121,7 @@ def unsplash_import(request, workspace_id, post_id=None):
     post = None
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
+        require_post_edit(request, post)
 
     auth_headers = {"Authorization": f"Client-ID {settings.UNSPLASH_ACCESS_KEY}"}
     new_assets = []
@@ -2207,11 +2340,13 @@ def tiktok_creator_info(request, workspace_id, account_id):
 
 
 @login_required
+@require_permission("create_posts")
 @require_POST
 def attach_media(request, workspace_id, post_id):
     """Attach a media asset to a post."""
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
+    require_post_edit(request, post)
     media_asset_id = request.POST.get("media_asset_id")
 
     if not media_asset_id:
@@ -2250,6 +2385,7 @@ def attach_media(request, workspace_id, post_id):
 
 
 @login_required
+@require_permission("create_posts")
 @require_POST
 def attach_pending_media(request, workspace_id):
     """Attach a library media asset as pending (before post is saved)."""
@@ -2325,7 +2461,56 @@ def _attach_asset_for_composer(request, workspace, asset, post=None):
     return None
 
 
+class _UploadRejectedError(Exception):
+    """A composer upload failed validation; ``status`` is the HTTP code to answer with."""
+
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.status = status
+
+
+def _store_composer_upload(request, workspace, uploaded_file, *, images_only=False):
+    """Store a composer or idea upload through the media library's own validation.
+
+    ``create_asset`` sniffs the real type from the bytes, renames the stored
+    file to the extension those bytes justify, and enforces the storage quota.
+    Building the ``MediaAsset`` by hand trusted the client's Content-Type and
+    kept the uploader's filename, so "probe.html" claimed as image/jpeg landed
+    in the public media tree as text/html.
+
+    Raises ``PermissionDenied`` without ``upload_media`` (the media library's
+    own upload route requires it) and ``_UploadRejectedError`` for a file that fails
+    validation.
+    """
+    from apps.media_library.quotas import StorageQuotaExceededError
+    from apps.media_library.services import create_asset
+    from apps.media_library.tasks import process_media_asset
+
+    if not membership_permissions(request).get("upload_media", False):
+        raise PermissionDenied("Permission denied: upload_media")
+
+    if images_only and sniff_mime(uploaded_file) not in ALLOWED_MIME_TYPES["image"]:
+        raise _UploadRejectedError("Only image files are allowed")
+
+    try:
+        asset = create_asset(
+            organization=workspace.organization,
+            workspace=workspace,
+            uploaded_file=uploaded_file,
+            uploaded_by=request.user,
+            source="upload",
+        )
+    except ValidationError as exc:
+        raise _UploadRejectedError(" ".join(exc.messages)) from exc
+    except StorageQuotaExceededError as exc:
+        raise _UploadRejectedError("Storage quota exceeded.", status=413) from exc
+
+    process_media_asset(str(asset.id))
+    return asset
+
+
 @login_required
+@require_permission("create_posts")
 @require_POST
 def upload_media(request, workspace_id, post_id=None):
     """Upload a file directly from the composer and optionally attach to a post."""
@@ -2335,33 +2520,19 @@ def upload_media(request, workspace_id, post_id=None):
     if not uploaded_file:
         return JsonResponse({"error": "No file provided"}, status=400)
 
-    from apps.media_library.models import MediaAsset
-
-    # Determine media type
-    content_type = uploaded_file.content_type or ""
-    if content_type.startswith("image/"):
-        media_type = MediaAsset.MediaType.IMAGE
-    elif content_type.startswith("video/"):
-        media_type = MediaAsset.MediaType.VIDEO
-    elif content_type == "image/gif":
-        media_type = MediaAsset.MediaType.GIF
-    else:
-        media_type = MediaAsset.MediaType.DOCUMENT
-
-    asset = MediaAsset.objects.create(
-        organization=workspace.organization,
-        workspace=workspace,
-        uploaded_by=request.user,
-        file=uploaded_file,
-        filename=uploaded_file.name,
-        media_type=media_type,
-        mime_type=content_type,
-        file_size=uploaded_file.size,
-        source="upload",
-    )
-
+    # Authorise the post before anything is stored, so a refused attach can't
+    # leave an orphaned asset behind.
+    post = None
     if post_id:
         post = get_object_or_404(Post, id=post_id, workspace=workspace)
+        require_post_edit(request, post)
+
+    try:
+        asset = _store_composer_upload(request, workspace, uploaded_file)
+    except _UploadRejectedError as exc:
+        return JsonResponse({"error": str(exc)}, status=exc.status)
+
+    if post is not None:
         attachment = _attach_asset_for_composer(request, workspace, asset, post)
         # Option A: changing media on an approved post sends it back for re-approval.
         _revert_approved_to_review(post)
@@ -2391,11 +2562,13 @@ def upload_media(request, workspace_id, post_id=None):
 
 
 @login_required
+@require_permission("create_posts")
 @require_POST
 def remove_media(request, workspace_id, post_id, media_id):
     """Remove a media attachment from a post."""
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
+    require_post_edit(request, post)
     attachment = PostMedia.objects.filter(id=media_id, post=post).first()
     if attachment is not None:
         # Taking the last video off a post already scheduled to TikTok, or the
@@ -2423,7 +2596,17 @@ def remove_media(request, workspace_id, post_id, media_id):
     return response
 
 
+def _asset_in_use(asset):
+    """Whether any post or idea still references ``asset``."""
+    return (
+        PostMedia.objects.filter(media_asset=asset).exists()
+        or IdeaMedia.objects.filter(media_asset=asset).exists()
+        or Idea.objects.filter(media_asset=asset).exists()
+    )
+
+
 @login_required
+@require_permission("create_posts")
 @require_POST
 def remove_pending_media(request, workspace_id, asset_id):
     """Remove a pending media asset (before post is saved)."""
@@ -2435,13 +2618,20 @@ def remove_pending_media(request, workspace_id, asset_id):
     session_key = f"pending_media_{workspace.id}"
     pending = request.session.get(session_key, [])
     asset_id_str = str(asset_id)
-    if asset_id_str in pending:
+    was_pending = asset_id_str in pending
+    if was_pending:
         pending.remove(asset_id_str)
         request.session[session_key] = pending
 
-    # Delete the asset and its files from storage (R2)
-    asset = MediaAsset.objects.filter(id=asset_id, workspace=workspace).first()
-    if asset:
+    # Delete the stored file only for this user's own fresh upload that nothing
+    # uses yet. The id comes from the request, and a library asset picked as
+    # pending (attach_pending_media) belongs to the library: deleting it by id
+    # let any contributor destroy a teammate's asset, along with its
+    # attachments on every draft, approved and published post.
+    asset = None
+    if was_pending:
+        asset = MediaAsset.objects.filter(id=asset_id, workspace=workspace, uploaded_by=request.user).first()
+    if asset and not _asset_in_use(asset):
         with contextlib.suppress(Exception):
             delete_asset(asset)
 
@@ -2497,6 +2687,7 @@ def drafts_list(request, workspace_id):
 
 
 @login_required
+@require_permission("create_posts")
 @require_POST
 def post_delete(request, workspace_id, post_id):
     """Delete a post or a single platform post via HTMX.
@@ -2505,11 +2696,18 @@ def post_delete(request, workspace_id, post_id):
     that social account is removed.  If it was the last PlatformPost the parent
     Post is deleted as well.  Without the parameter the entire Post (and all
     its PlatformPosts) is deleted.
+
+    Deleting is editing: own posts need ``create_posts``, anyone else's
+    ``edit_others_posts`` — the same rule the composer applies to opening them.
     """
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
+    require_post_edit(request, post)
 
     account_id = request.GET.get("account") or request.POST.get("account")
+    if account_id and not _is_valid_uuid(account_id):
+        # A malformed id would raise ValidationError in the UUIDField lookup (a 500).
+        return HttpResponse("Invalid account.", status=400)
     if account_id:
         pp = get_object_or_404(PlatformPost, post=post, social_account_id=account_id)
         pp.delete()
@@ -2526,6 +2724,7 @@ def post_delete(request, workspace_id, post_id):
 
 
 @login_required
+@require_permission("create_posts")
 @require_POST
 def clone_post_view(request, workspace_id, post_id):
     """Clone a post into a fresh draft (Clone / Repost) and open the copy.
@@ -2540,11 +2739,6 @@ def clone_post_view(request, workspace_id, post_id):
 
     workspace = _get_workspace(request, workspace_id)
     post = get_object_or_404(Post, id=post_id, workspace=workspace)
-
-    membership = request.workspace_membership
-    perms = membership.effective_permissions if membership else {}
-    if not perms.get("create_posts", False):
-        raise PermissionDenied("You do not have permission to create posts.")
 
     new_post = clone_post(post, author=request.user)
     target = reverse("composer:compose_edit", kwargs={"workspace_id": workspace.id, "post_id": new_post.id})
@@ -2772,33 +2966,6 @@ def _sync_idea_media_attachments(idea, workspace, ordered_asset_ids):
         idea.save(update_fields=["media_asset", "updated_at"])
 
 
-def _create_idea_media_asset(workspace, user, uploaded_file):
-    """Create a MediaAsset from an uploaded file for Idea create/edit flows."""
-    from apps.media_library.models import MediaAsset
-
-    content_type = uploaded_file.content_type or ""
-    if content_type == "image/gif":
-        media_type = MediaAsset.MediaType.GIF
-    elif content_type.startswith("image/"):
-        media_type = MediaAsset.MediaType.IMAGE
-    elif content_type.startswith("video/"):
-        media_type = MediaAsset.MediaType.VIDEO
-    else:
-        media_type = MediaAsset.MediaType.DOCUMENT
-
-    return MediaAsset.objects.create(
-        organization=workspace.organization,
-        workspace=workspace,
-        uploaded_by=user,
-        file=uploaded_file,
-        filename=uploaded_file.name,
-        media_type=media_type,
-        mime_type=content_type,
-        file_size=uploaded_file.size,
-        source="upload",
-    )
-
-
 @login_required
 @require_permission("create_posts")
 def create_landing(request, workspace_id):
@@ -2827,6 +2994,7 @@ def create_landing(request, workspace_id):
         "builtin_templates": get_all_templates(),
         "template_categories": CATEGORIES,
         "feeds": feeds,
+        "media_input_accept": get_accepted_file_types("image", "video"),
     }
     return render(request, "composer/create_landing.html", context)
 
@@ -2841,7 +3009,10 @@ def idea_upload_media(request, workspace_id):
     if not uploaded_file:
         return JsonResponse({"error": "No file provided"}, status=400)
 
-    asset = _create_idea_media_asset(workspace, request.user, uploaded_file)
+    try:
+        asset = _store_composer_upload(request, workspace, uploaded_file)
+    except _UploadRejectedError as exc:
+        return JsonResponse({"error": str(exc)}, status=exc.status)
     return JsonResponse(
         {
             "asset_id": str(asset.id),
@@ -2881,7 +3052,10 @@ def idea_create(request, workspace_id):
     uploaded_file = request.FILES.get("media") or request.FILES.get("file")
     media_asset_id = request.POST.get("media_asset_id", "").strip()
     if uploaded_file:
-        uploaded_asset = _create_idea_media_asset(workspace, request.user, uploaded_file)
+        try:
+            uploaded_asset = _store_composer_upload(request, workspace, uploaded_file)
+        except _UploadRejectedError as exc:
+            return HttpResponse(str(exc), status=exc.status)
         media_asset_ids.append(str(uploaded_asset.id))
     elif not media_asset_ids and media_asset_id:
         from apps.media_library.models import MediaAsset
@@ -2960,7 +3134,10 @@ def idea_edit(request, workspace_id, idea_id):
     uploaded_file = request.FILES.get("media") or request.FILES.get("file")
     uploaded_asset = None
     if uploaded_file:
-        uploaded_asset = _create_idea_media_asset(workspace, request.user, uploaded_file)
+        try:
+            uploaded_asset = _store_composer_upload(request, workspace, uploaded_file)
+        except _UploadRejectedError as exc:
+            return HttpResponse(str(exc), status=exc.status)
         media_asset_ids.append(str(uploaded_asset.id))
     media_asset_ids = _normalize_media_asset_ids(media_asset_ids)
 
@@ -3259,6 +3436,7 @@ def category_list(request, workspace_id):
     workspace = _get_workspace(request, workspace_id)
     categories = ContentCategory.objects.for_workspace(workspace.id)
     form = ContentCategoryForm()
+    perms = membership_permissions(request)
 
     return render(
         request,
@@ -3267,11 +3445,15 @@ def category_list(request, workspace_id):
             "workspace": workspace,
             "categories": categories,
             "form": form,
+            # Mirror the decorators on category_create and category_edit/delete.
+            "can_create_categories": perms.get("create_posts", False),
+            "can_edit_categories": perms.get("create_posts", False) and perms.get("edit_others_posts", False),
         },
     )
 
 
 @login_required
+@require_permission("create_posts")
 @require_POST
 def category_create(request, workspace_id):
     """Create a new content category via HTMX."""
@@ -3294,6 +3476,8 @@ def category_create(request, workspace_id):
 
 
 @login_required
+@require_permission("create_posts")
+@require_permission("edit_others_posts")
 @require_POST
 def category_edit(request, workspace_id, category_id):
     """Edit a content category via HTMX."""
@@ -3312,6 +3496,8 @@ def category_edit(request, workspace_id, category_id):
 
 
 @login_required
+@require_permission("create_posts")
+@require_permission("edit_others_posts")
 @require_POST
 def category_delete(request, workspace_id, category_id):
     """Delete a content category via HTMX."""
@@ -3334,7 +3520,7 @@ def category_delete(request, workspace_id, category_id):
 def template_list(request, workspace_id):
     """Settings page for managing post templates."""
     workspace = _get_workspace(request, workspace_id)
-    templates = PostTemplate.objects.for_workspace(workspace.id).select_related("created_by")
+    templates = list(PostTemplate.objects.for_workspace(workspace.id).select_related("created_by"))
 
     return render(
         request,
@@ -3342,11 +3528,13 @@ def template_list(request, workspace_id):
         {
             "workspace": workspace,
             "templates": templates,
+            "deletable_template_ids": {tpl.id for tpl in templates if _can_delete_template(request, tpl)},
         },
     )
 
 
 @login_required
+@require_permission("create_posts")
 @require_POST
 def save_as_template(request, workspace_id, post_id):
     """Save the current post as a reusable template."""
@@ -3384,12 +3572,23 @@ def save_as_template(request, workspace_id, post_id):
     return redirect("composer:compose_edit", workspace_id=workspace.id, post_id=post.id)
 
 
+def _can_delete_template(request, tpl):
+    """Templates are shared: the creator may delete their own, anyone else needs ``edit_others_posts``."""
+    perms = membership_permissions(request)
+    if not perms.get("create_posts", False):
+        return False
+    return tpl.created_by_id == request.user.id or perms.get("edit_others_posts", False)
+
+
 @login_required
+@require_permission("create_posts")
 @require_POST
 def template_delete(request, workspace_id, template_id):
     """Delete a post template."""
     workspace = _get_workspace(request, workspace_id)
     tpl = get_object_or_404(PostTemplate, id=template_id, workspace=workspace)
+    if not _can_delete_template(request, tpl):
+        raise PermissionDenied("You do not have permission to delete this template.")
     tpl.delete()
 
     return HttpResponse(
@@ -3620,6 +3819,14 @@ def csv_confirm_import(request, workspace_id):
     # rather than scheduled to fail, and the result screen says so.
     drafted_count = 0
     drafted_platforms: set[str] = set()
+    # Where the workspace requires approval nothing goes out unreviewed, so
+    # dated rows land as drafts on their date, for the team to submit.
+    try:
+        _require_approval_gate_passes(workspace)
+    except ValueError:
+        review_required = True
+    else:
+        review_required = False
 
     for row in rows:
         try:
@@ -3653,7 +3860,7 @@ def csv_confirm_import(request, workspace_id):
                     t = datetime.strptime(time_str, "%H:%M").time() if time_str else time_cls(9, 0)
                     naive_dt = datetime.combine(d, t)
                     post.scheduled_at = naive_dt.replace(tzinfo=tz)
-                    initial_pp_status = "scheduled"
+                    initial_pp_status = "draft" if review_required else "scheduled"
 
             # First comment
             if "first_comment" in mapping and mapping["first_comment"] < len(row):
@@ -3723,6 +3930,7 @@ def csv_confirm_import(request, workspace_id):
             "total_rows": len(rows),
             "drafted_count": drafted_count,
             "drafted_platforms": get_text_list(sorted(drafted_platforms), "and"),
+            "review_required": review_required,
         },
     )
 
@@ -3756,6 +3964,7 @@ def tag_list(request, workspace_id):
 
 
 @login_required
+@require_permission("create_posts")
 @require_POST
 def tag_create(request, workspace_id):
     """Create a new tag and return it as JSON."""

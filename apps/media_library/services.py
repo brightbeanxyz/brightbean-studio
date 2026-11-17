@@ -69,6 +69,7 @@ def create_asset(
     alt_text: str = "",
     title: str = "",
     tags: list[str] | None = None,
+    source: str = "",
 ):
     """Create a new media asset from an uploaded file.
 
@@ -120,6 +121,7 @@ def create_asset(
         alt_text=alt_text or "",
         title=title or "",
         tags=list(tags) if tags else [],
+        source=source,
     )
     asset.save()
     return asset

@@ -37,11 +37,10 @@ from django.conf import settings
 from django.test import Client, override_settings
 from django.urls import Resolver404, clear_url_caches, resolve
 from django.utils import timezone
-from django.views.static import serve
 
 import config.urls
 from apps.accounts.models import User
-from config.urls import PUBLIC_MEDIA_PREFIXES, media_urlpatterns
+from config.urls import MEDIA_CONTENT_SECURITY_POLICY, PUBLIC_MEDIA_PREFIXES, media_urlpatterns
 
 BASE_SETTINGS_PATH = Path(config.urls.__file__).resolve().parent / "settings" / "base.py"
 
@@ -116,7 +115,7 @@ def test_helper_builds_one_prefixed_route():
             patterns = media_urlpatterns()
 
         assert len(patterns) == len(PUBLIC_MEDIA_PREFIXES)
-        assert {p.callback for p in patterns} == {serve}
+        assert {p.callback for p in patterns} == {config.urls.serve_public_media}
         assert {p.default_args["document_root"] for p in patterns} == {media_root}
 
 
@@ -171,7 +170,7 @@ def test_public_prefixes_are_routed_with_debug_off(path):
 
     match = resolve(path)
 
-    assert match.func is serve
+    assert match.func is config.urls.serve_public_media
     assert match.kwargs["path"] == path.removeprefix("/media/")
 
 
@@ -217,6 +216,26 @@ def test_media_file_is_served():
 
             assert response.status_code == 200
             assert b"".join(response.streaming_content) == b"probe-bytes"
+
+
+def test_an_uploaded_page_is_served_unable_to_run_script():
+    """An HTML or SVG file that reaches the media tree must not execute on the app's origin.
+
+    The upload validators now refuse these, but a file stored before they did is
+    still on disk; the response header is what keeps a direct visit inert.
+    """
+    with tempfile.TemporaryDirectory() as media_root:
+        probe = Path(media_root) / "workspaces" / "icons" / "2026" / "11" / "probe.html"
+        probe.parent.mkdir(parents=True)
+        probe.write_bytes(b"<script>document.title='pwned'</script>")
+
+        with urlconf_built_with(SERVE_MEDIA=True, MEDIA_URL="/media/", MEDIA_ROOT=media_root):
+            response = Client().get("/media/workspaces/icons/2026/11/probe.html")
+
+            assert response.status_code == 200
+            assert response["Content-Security-Policy"] == MEDIA_CONTENT_SECURITY_POLICY
+            assert "script-src 'none'" in MEDIA_CONTENT_SECURITY_POLICY
+            assert response["X-Content-Type-Options"] == "nosniff"
 
 
 def test_a_file_outside_the_public_prefixes_is_not_served():

@@ -1,10 +1,12 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.http import Http404
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_http_methods, require_POST
 
+from apps.media_library.validators import image_upload_name
 from apps.members.decorators import require_org_role
 from apps.members.models import OrgMembership, WorkspaceMembership
 
@@ -64,6 +66,9 @@ def workspace_settings(request, workspace_id):
         WorkspaceMembership.WorkspaceRole.OWNER,
         WorkspaceMembership.WorkspaceRole.MANAGER,
     )
+    # Name and logo: owners and managers, plus any (custom) role granted
+    # manage_workspace_settings. Archive and delete stay owner/manager only.
+    can_edit_settings = is_owner_or_manager or membership.effective_permissions.get("manage_workspace_settings", False)
 
     if request.method == "POST":
         action = request.POST.get("action")
@@ -104,6 +109,11 @@ def workspace_settings(request, workspace_id):
             messages.success(request, f'Workspace "{workspace_name}" has been permanently deleted.')
             return redirect("organizations:workspaces")
 
+        # Falling through to here used to let any member, viewers and portal
+        # clients included, rename the workspace and replace its logo.
+        if not can_edit_settings:
+            raise PermissionDenied("You do not have permission to change workspace settings.")
+
         name = request.POST.get("name", "").strip()
 
         if name:
@@ -117,11 +127,13 @@ def workspace_settings(request, workspace_id):
         elif "icon" in request.FILES:
             icon = request.FILES["icon"]
 
-            # Validate file type
-            allowed_types = ("image/jpeg", "image/png", "image/webp", "image/gif")
-            if icon.content_type not in allowed_types:
+            # Validate file type by its bytes, not the client's Content-Type,
+            # and store it under the extension those bytes justify.
+            safe_name = image_upload_name(icon)
+            if safe_name is None:
                 messages.error(request, "Logo must be a JPEG, PNG, WebP, or GIF image.")
                 return redirect("workspaces:settings", workspace_id=workspace.id)
+            icon.name = safe_name
 
             # Validate file size (2 MB max)
             max_size = 2 * 1024 * 1024
@@ -150,6 +162,7 @@ def workspace_settings(request, workspace_id):
             "workspace": workspace,
             "settings_active": "general",
             "is_owner_or_manager": is_owner_or_manager,
+            "can_edit_settings": can_edit_settings,
             "can_archive": can_archive,
             "can_delete": can_delete,
         },

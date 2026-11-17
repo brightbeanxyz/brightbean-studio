@@ -52,8 +52,8 @@
 
     <div id="entries-list" class="space-y-2">
         {% for entry in entries %}
-        <div class="group flex items-center gap-3 p-3 bg-white rounded-lg border border-stone-200 hover:border-stone-300 transition-colors cursor-grab active:cursor-grabbing"
-             draggable="true"
+        <div class="group flex items-center gap-3 p-3 bg-white rounded-lg border border-stone-200 hover:border-stone-300 transition-colors{% if can_reorder %} cursor-grab active:cursor-grabbing{% endif %}"
+             draggable="{{ can_reorder|yesno:'true,false' }}"
              data-entry-id="{{ entry.id }}"
              @dragstart="onDragStart($event, '{{ entry.id }}')"
              @dragover="onDragOver($event)"
@@ -100,6 +100,7 @@
             </div>
 
             <!-- Remove from queue (leaves a gap; the slot frees up) -->
+            {% if entry.id in removable_entry_ids %}
             <button type="button"
                     class="text-stone-300 hover:text-red-500 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
                     hx-post="{% url 'calendar:queue_entry_remove' workspace_id=workspace.id queue_id=queue.id entry_id=entry.id %}"
@@ -109,6 +110,7 @@
                     title="Remove from queue">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
+            {% endif %}
         </div>
         {% empty %}
         <div class="text-center py-16">

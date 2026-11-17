@@ -30,6 +30,12 @@
     </p>
     {% endif %}
 
+    {% if review_required and created_count > 0 %}
+    <p class="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-4 max-w-md mx-auto">
+        This workspace requires approval, so dated posts were saved as drafts on their dates. Submit them for review to schedule them.
+    </p>
+    {% endif %}
+
     <p class="text-sm text-stone-500 mb-6">
         {% if created_count > 0 %}
         Your imported posts are now on the calendar.

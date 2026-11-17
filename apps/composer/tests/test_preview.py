@@ -5,6 +5,7 @@ from django.test import RequestFactory
 from django.urls import reverse
 
 from apps.composer.views import preview
+from apps.members.models import WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
 
 from .test_unsplash import ComposerTestCase
@@ -25,6 +26,9 @@ class ComposerPreviewTests(ComposerTestCase):
     def _preview_post(self, data):
         request = self.factory.post(self.preview_url, data)
         request.user = self.user
+        # RequestFactory skips the middleware stack; preview now checks
+        # create_posts, which reads what RBACMiddleware would have attached.
+        request.workspace_membership = WorkspaceMembership.objects.get(user=self.user, workspace=self.workspace)
         SessionMiddleware(lambda req: None).process_request(request)
         request.session.save()
         return preview(request, self.workspace.id)

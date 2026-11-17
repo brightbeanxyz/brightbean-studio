@@ -99,11 +99,17 @@ def _handle_photo_update(request, user):
 
     avatar = request.FILES["avatar"]
 
-    # Validate file type
-    allowed_types = ("image/jpeg", "image/png", "image/webp", "image/gif")
-    if avatar.content_type not in allowed_types:
+    # Validate file type by its bytes, not the client's Content-Type, and store
+    # it under the extension those bytes justify: a GIF/HTML polyglot named
+    # "x.html" opens fine in Pillow, and would otherwise be served back as a
+    # page on the app's origin.
+    from apps.media_library.validators import image_upload_name
+
+    safe_name = image_upload_name(avatar)
+    if safe_name is None:
         messages.error(request, "Photo must be a JPEG, PNG, WebP, or GIF image.")
         return
+    avatar.name = safe_name
 
     # Validate file size (2 MB max)
     max_size = 2 * 1024 * 1024

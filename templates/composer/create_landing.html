@@ -673,7 +673,7 @@
                 <div class="idea-modal-body" @click="createGroupDropdownOpen = false; createTagDropdownOpen = false">
                     <input type="text" name="title" required class="idea-title-input" placeholder="Give your idea a title">
                     <textarea name="description" class="idea-desc-input" placeholder="Let it flow... or"></textarea>
-                    <input type="file" name="media" x-ref="ideaFileInput" accept="image/*,video/*,.gif" style="display:none" multiple
+                    <input type="file" name="media" x-ref="ideaFileInput" accept="{{ media_input_accept }}" style="display:none" multiple
                            @change="_handleFileSelect($event)">
 
                     <div class="idea-media-strip-layout">
@@ -873,7 +873,7 @@
                            class="idea-title-input" placeholder="Give your idea a title">
                     <textarea name="description" class="idea-desc-input" placeholder="Let it flow... or"
                               x-text="editingIdea?.description || ''"></textarea>
-                    <input type="file" name="media" x-ref="editIdeaFileInput" accept="image/*,video/*,.gif" style="display:none" multiple
+                    <input type="file" name="media" x-ref="editIdeaFileInput" accept="{{ media_input_accept }}" style="display:none" multiple
                            @change="_handleEditFileSelect($event)">
 
                     <div class="idea-media-strip-layout">
