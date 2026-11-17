@@ -1,0 +1,5 @@
+{% if pp.social_account.platform == 'instagram' or pp.social_account.platform == 'instagram_login' %}
+{% if pp.platform_extra.trial_reel_graduation_strategy %}
+<span class="text-xs text-stone-600">{{ pp.social_account.account_name }}: Trial Reel · {% if pp.platform_extra.trial_reel_graduation_strategy == 'MANUAL' %}manual sharing{% elif pp.platform_extra.trial_reel_graduation_strategy == 'SS_PERFORMANCE' %}automatic sharing if it performs well{% else %}invalid sharing mode{% endif %}</span>
+{% endif %}
+{% endif %}

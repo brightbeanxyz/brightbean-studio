@@ -928,3 +928,21 @@ To report a security vulnerability, see [SECURITY.md](SECURITY.md). Do not open 
 ## License
 
 [AGPL-3.0](LICENSE) - see LICENSE for details.
+
+### Instagram Trial Reels
+
+In the composer, choose **Instagram audience → Trial Reel · share with followers manually in Instagram**
+for a single video. This sends `trial_params: {"graduation_strategy": "MANUAL"}` through either
+Instagram connection type. **Automatically share if it performs well** explicitly selects
+`SS_PERFORMANCE`; regular posts remain the default.
+
+The sharing mode is saved with the channel draft, survives autosave and cloning, appears in
+internal/client review, and changing it on an approved post requires fresh review. Scheduled,
+client-review and held posts must be moved to draft before changing their Instagram audience. A Trial
+selection on invalid media fails rather than falling back to an ordinary public Reel. Meta
+still decides account eligibility, and its publishing errors remain visible. Manual graduation
+is performed in the Instagram app, not Brightbean. The REST/MCP draft schemas do not expose
+this composer setting yet.
+
+Reference: [Meta IG User Media](https://developers.facebook.com/documentation/instagram-platform/instagram-graph-api/reference/ig-user/media),
+`trial_params`. Provider tests use mocked Meta responses; no live Trial Reel is published by tests.
