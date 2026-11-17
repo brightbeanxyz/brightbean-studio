@@ -88,6 +88,31 @@ def require_permission(permission_key):
     return decorator
 
 
+def membership_permissions(request):
+    """The caller's effective permission dict for the request's workspace, or ``{}`` outside one."""
+    membership = getattr(request, "workspace_membership", None)
+    return membership.effective_permissions if membership else {}
+
+
+def can_edit_post(request, post):
+    """Whether the caller may change ``post``: their own needs ``create_posts``, anyone else's ``edit_others_posts``.
+
+    The same rule the composer's save/autosave paths apply. Every endpoint that
+    mutates a post or its children has to ask it too — membership alone lets a
+    viewer or a portal client through.
+    """
+    perms = membership_permissions(request)
+    if not perms.get("create_posts", False):
+        return False
+    return post.author_id == request.user.id or perms.get("edit_others_posts", False)
+
+
+def require_post_edit(request, post):
+    """Raise ``PermissionDenied`` unless :func:`can_edit_post` allows the caller to change ``post``."""
+    if not can_edit_post(request, post):
+        raise PermissionDenied("You do not have permission to edit this post.")
+
+
 def require_org_permission(permission_key):
     """Decorator that gates a view on an org-level permission key.
 

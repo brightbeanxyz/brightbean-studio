@@ -9,14 +9,28 @@
     # With STORAGE_BACKEND=s3 the volume is empty and this block just 404s;
     # the app never emits /media/ URLs in that mode.
     handle_path /media/* {
+        # Only the subtrees config/urls.py lists in PUBLIC_MEDIA_PREFIXES are
+        # public; keep the two lists in step. comment_attachments/ (internal
+        # comments are withheld from portal clients and served behind a
+        # membership check) and csv_imports/ live on the same volume and must
+        # not be reachable here. The prefix is already stripped at this point.
+        @private_media not path /media_library/* /avatars/* /workspaces/icons/*
+        respond @private_media 404
+
         # These bypass Django, so SecurityMiddleware never sees them. Repeat
         # the two headers config/settings/production.py would have set, or
         # uploads become the one public path on the origin served without
         # them. Keep in step with SECURE_CONTENT_TYPE_NOSNIFF and
         # SECURE_HSTS_* there.
+        #
+        # The CSP is config.urls.MEDIA_CONTENT_SECURITY_POLICY: an HTML or SVG
+        # file that reaches the volume (an upload stored before the validators
+        # refused it) must not run script on this origin when visited directly.
+        # It doesn't affect <img>/<video> embedding.
         header {
             X-Content-Type-Options nosniff
             Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+            Content-Security-Policy "script-src 'none'"
         }
 
         # MEDIA_ROOT is an env var everywhere else, but the media_data volume

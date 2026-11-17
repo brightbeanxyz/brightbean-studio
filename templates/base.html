@@ -662,7 +662,7 @@
                 </a>
 
                 {% if request.workspace %}
-                {% if analytics_enabled_platforms %}
+                {% if analytics_enabled_platforms and sidebar_can_view_analytics %}
                 <a href="{% url 'analytics:index' workspace_id=request.workspace.id %}" class="mb-1 sidebar-nav-item {% if request.resolver_match.app_name == 'analytics' %}active{% endif %}">
                     <svg class="flex-shrink-0" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 12l4-4 4 4 6-6"/></svg>
                     <span class="sidebar-nav-label">Analytics</span>

@@ -15,7 +15,7 @@ from django.views.decorators.http import require_POST
 
 from apps.common.validators import is_valid_hex_color
 from apps.composer.models import ContentCategory, PlatformPost, Post
-from apps.members.decorators import require_permission
+from apps.members.decorators import can_edit_post, membership_permissions, require_permission, require_post_edit
 from apps.members.models import WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
@@ -1107,7 +1107,7 @@ def publish_tab_sent(request, workspace_id):
 @require_POST
 def reschedule_post(request, workspace_id):
     """HTMX endpoint for drag-and-drop rescheduling of a single PlatformPost."""
-    from apps.composer.services import require_publishable, sync_post_scheduled_at
+    from apps.composer.services import _require_approval_gate_passes, require_publishable, sync_post_scheduled_at
 
     workspace = _get_workspace(request, workspace_id)
     platform_post_id = request.POST.get("platform_post_id") or request.POST.get("post_id")
@@ -1128,11 +1128,8 @@ def reschedule_post(request, workspace_id):
         return JsonResponse({"error": "Post cannot be rescheduled in its current status."}, status=400)
 
     # Check RBAC
-    membership = request.workspace_membership
-    perms = membership.effective_permissions if membership else {}
-    is_own_post = post.author_id == request.user.id
-    can_edit = is_own_post or perms.get("edit_others_posts", False)
-    if not can_edit:
+    perms = membership_permissions(request)
+    if not can_edit_post(request, post):
         return JsonResponse({"error": "Permission denied."}, status=403)
     # Dropping a draft/failed chip promotes it to "scheduled" below, which is the
     # publish privilege every other scheduling path gates on (the composer's chip
@@ -1140,6 +1137,13 @@ def reschedule_post(request, workspace_id):
     # than silently degrading the drop to a time-only move.
     if pp.status in _IMPLICIT_SCHEDULE_STATUSES and not perms.get("publish_directly", False):
         return JsonResponse({"error": "You do not have permission to schedule this post."}, status=403)
+    # A dropped draft has not been reviewed; where approval is required it
+    # can't go to the publisher this way (a failed row got there through it).
+    if pp.status == "draft":
+        try:
+            _require_approval_gate_passes(workspace)
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
     # The same drop hands the row to the publisher, so refuse one that can only
     # fail there — an image-only TikTok draft, a pin with no board or image.
     # Checked out here because the ValueError handler below would report it as
@@ -1276,7 +1280,12 @@ def bulk_platform_action(request, workspace_id):
     from django.db.models.functions import Coalesce
     from django.utils import timezone as _tz
 
-    from apps.composer.services import media_types_by_post, require_publishable, sync_post_scheduled_at
+    from apps.composer.services import (
+        _require_approval_gate_passes,
+        media_types_by_post,
+        require_publishable,
+        sync_post_scheduled_at,
+    )
 
     workspace = _get_workspace(request, workspace_id)
     action = request.POST.get("action")
@@ -1284,8 +1293,7 @@ def bulk_platform_action(request, workspace_id):
     if action not in ("draft", "delete", "publish") or not pp_ids:
         return JsonResponse({"error": "action and platform_post_ids required"}, status=400)
 
-    membership = getattr(request, "workspace_membership", None)
-    perms = membership.effective_permissions if membership else {}
+    perms = membership_permissions(request)
     # Publishing now hands rows straight to the publisher's poll loop, skipping
     # the approval workflow — the privilege the composer's chip transition,
     # save_post's publish-now branch and REST /schedule all gate on. Draft and
@@ -1304,8 +1312,7 @@ def bulk_platform_action(request, workspace_id):
         .annotate(effective_at=Coalesce("scheduled_at", "post__scheduled_at"))
         .order_by(F("effective_at").asc(nulls_last=True), "post__created_at", "id")
     )
-    can_edit_others = perms.get("edit_others_posts", False)
-    pps = [pp for pp in pps if pp.post.author_id == request.user.id or can_edit_others]
+    pps = [pp for pp in pps if can_edit_post(request, pp.post)]
 
     if action == "publish":
         # Refuse the whole batch rather than skip the rows that can't publish:
@@ -1314,6 +1321,12 @@ def bulk_platform_action(request, workspace_id):
         # Rows already ``scheduled`` are left alone — they were committed
         # before, and publishing now only moves them in time.
         promoting = [pp for pp in pps if _promotes_to_scheduled(pp)]
+        # Unreviewed drafts can't skip a required approval workflow.
+        if any(pp.status == "draft" for pp in promoting):
+            try:
+                _require_approval_gate_passes(workspace)
+            except ValueError as exc:
+                return JsonResponse({"error": str(exc)}, status=400)
         media_by_post = media_types_by_post({pp.post_id for pp in promoting})
         blocked = []
         for pp in promoting:
@@ -1611,6 +1624,7 @@ def queue_list(request, workspace_id):
         connection_status=SocialAccount.ConnectionStatus.CONNECTED,
     )
     categories = ContentCategory.objects.for_workspace(workspace.id)
+    perms = membership_permissions(request)
 
     return render(
         request,
@@ -1620,11 +1634,17 @@ def queue_list(request, workspace_id):
             "queues": queues,
             "accounts": accounts,
             "categories": categories,
+            # Mirrors the decorators on queue_create / queue_delete. Queues hold
+            # everyone's posts, so managing them is an editor's right
+            # (edit_others_posts), the same as reordering one.
+            "can_manage_queues": perms.get("create_posts", False) and perms.get("edit_others_posts", False),
         },
     )
 
 
 @login_required
+@require_permission("create_posts")
+@require_permission("edit_others_posts")
 @require_POST
 def queue_create(request, workspace_id):
     """Create a new queue."""
@@ -1665,11 +1685,12 @@ def queue_detail(request, workspace_id, queue_id):
     queue = get_object_or_404(Queue, id=queue_id, workspace=workspace)
     # Slot datetime is the source of truth for order now (positions can be sparse
     # after gap-fills); show entries chronologically, unslotted ones last.
-    entries = (
+    entries = list(
         queue.entries.select_related("post__author")
         .prefetch_related("post__platform_posts__social_account")
         .order_by(F("assigned_slot_datetime").asc(nulls_last=True), "position")
     )
+    perms = membership_permissions(request)
 
     return render(
         request,
@@ -1678,11 +1699,17 @@ def queue_detail(request, workspace_id, queue_id):
             "workspace": workspace,
             "queue": queue,
             "entries": entries,
+            # Mirror the checks on queue_reorder and queue_entry_remove, so the
+            # controls only render for someone the endpoints will let through.
+            "can_reorder": perms.get("create_posts", False) and perms.get("edit_others_posts", False),
+            "removable_entry_ids": {entry.id for entry in entries if can_edit_post(request, entry.post)},
         },
     )
 
 
 @login_required
+@require_permission("create_posts")
+@require_permission("edit_others_posts")
 @require_POST
 def queue_delete(request, workspace_id, queue_id):
     """Delete a queue."""
@@ -1696,6 +1723,8 @@ def queue_delete(request, workspace_id, queue_id):
 
 
 @login_required
+@require_permission("create_posts")
+@require_permission("edit_others_posts")
 @require_POST
 def queue_reorder(request, workspace_id, queue_id):
     """Reorder queue entries via HTMX drag-and-drop."""
@@ -1715,12 +1744,15 @@ def queue_reorder(request, workspace_id, queue_id):
 
 
 @login_required
+@require_permission("create_posts")
 @require_POST
 def queue_entry_remove(request, workspace_id, queue_id, entry_id):
     """Remove a single post from a queue, leaving a gap (comment §3).
 
     Workspace-scoped and idempotent: a vanished entry (stale page, double-click)
     still refreshes the list via the ``queueReordered`` trigger instead of 404ing.
+    Removing unschedules the post, so it takes the same edit right as
+    ``reschedule_post``: own post, or ``edit_others_posts``.
     """
     workspace = _get_workspace(request, workspace_id)
     entry = (
@@ -1729,6 +1761,8 @@ def queue_entry_remove(request, workspace_id, queue_id, entry_id):
         .first()
     )
     if entry is not None:
+        require_post_edit(request, entry.post)
+
         from .services import remove_from_queue
 
         remove_from_queue(entry)
@@ -1739,6 +1773,7 @@ def queue_entry_remove(request, workspace_id, queue_id, entry_id):
 
 
 @login_required
+@require_permission("create_posts")
 @require_POST
 def queue_entry_reslot(request, workspace_id, queue_id, entry_id):
     """Move a queued post to the queue's next open slot (comment §4)."""
@@ -1749,6 +1784,7 @@ def queue_entry_reslot(request, workspace_id, queue_id, entry_id):
         queue_id=queue_id,
         queue__workspace=workspace,
     )
+    require_post_edit(request, entry.post)
 
     from .services import QueueFullError, reslot_to_next_available
 

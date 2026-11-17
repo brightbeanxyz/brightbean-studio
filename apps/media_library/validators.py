@@ -104,6 +104,12 @@ def storage_filename(original_name, sniffed_mime):
     return f"{stem or 'upload'}.{extension}"
 
 
+_STILL_IMAGE_FTYP_BRANDS = frozenset(
+    {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1", b"msf1", b"avif", b"avis"}
+)
+_LEGACY_QUICKTIME_ATOMS = frozenset({b"moov", b"mdat", b"wide", b"free", b"skip", b"pnot"})
+
+
 # Magic-byte signatures for sniffing the *real* MIME of an uploaded file.
 # Trusting `uploaded_file.content_type` is unsafe because that value is set by
 # the client. Sniffing the first bytes prevents masquerade attacks (e.g. an
@@ -144,9 +150,17 @@ def sniff_mime(file_obj):
         # ISO Base Media: covers MP4, MOV/QuickTime, M4V. Brand-sniffing would
         # let us split mov from mp4, but our allow-list treats both as video.
         brand = head[8:12]
+        if brand in _STILL_IMAGE_FTYP_BRANDS:
+            # HEIC/AVIF photos share the container. Calling them video/mp4
+            # stored an iPhone photo as a broken .mp4 that failed processing
+            # and publishing; refusing says plainly that the format is unsupported.
+            return None
         if brand in (b"qt  ",):
             return "video/quicktime"
         return "video/mp4"
+    if head[4:8] in _LEGACY_QUICKTIME_ATOMS:
+        # Older QuickTime files open with a moov/mdat/wide/free atom and no ftyp.
+        return "video/quicktime"
     if head.startswith(b"\x1aE\xdf\xa3"):
         return "video/webm"
     if head.startswith(b"RIFF") and head[8:12] == b"AVI ":
@@ -154,6 +168,20 @@ def sniff_mime(file_obj):
     if head.startswith(b"%PDF-"):
         return "application/pdf"
     return None
+
+
+def image_upload_name(uploaded_file):
+    """The name to store a small image upload under, or None if it isn't one.
+
+    For the uploads that skip ``create_asset`` (avatars, workspace logos):
+    decide by the sniffed bytes rather than the client's Content-Type, and
+    rename to the extension those bytes justify, so a logo can't be stored as
+    "probe.html" and served back as a page on the app's origin.
+    """
+    sniffed = sniff_mime(uploaded_file)
+    if sniffed not in ALLOWED_MIME_TYPES["image"]:
+        return None
+    return storage_filename(uploaded_file.name, sniffed)
 
 
 def validate_file(uploaded_file):
@@ -230,6 +258,12 @@ def _image_pixel_errors(uploaded_file) -> list[str]:
             uploaded_file.seek(0)
 
 
-def get_accepted_file_types():
-    """Return a comma-separated string of accepted MIME types for HTML file input."""
-    return ",".join(sorted(ALL_ALLOWED_MIMES))
+def get_accepted_file_types(*kinds):
+    """Return a comma-separated string of accepted MIME types for HTML file input.
+
+    With ``kinds`` (e.g. ``"image", "video"``), only those groups of
+    ``ALLOWED_MIME_TYPES``; otherwise everything the library accepts.
+    """
+    if not kinds:
+        return ",".join(sorted(ALL_ALLOWED_MIMES))
+    return ",".join(sorted(mime for kind in kinds for mime in ALLOWED_MIME_TYPES[kind]))

@@ -141,8 +141,17 @@ def sidebar_context(request):
         "sidebar_idea_columns": sidebar_idea_columns,
         "sidebar_idea_tags": sidebar_idea_tags,
         "analytics_enabled_platforms": analytics_enabled_platforms,
+        # The analytics views require view_analytics; hide the link from a role
+        # (built-in contributor, or a custom role) that would only get a 403.
+        "sidebar_can_view_analytics": _can_view_analytics(request),
         "show_review_banner": show_review_banner,
     }
+
+
+def _can_view_analytics(request):
+    from apps.members.decorators import membership_permissions
+
+    return bool(membership_permissions(request).get("view_analytics", False))
 
 
 # Display order for the sidebar's connect shortcuts, most-asked-for first.

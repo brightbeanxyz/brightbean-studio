@@ -10,15 +10,17 @@
         <div class="flex items-end gap-4">
             <div class="flex-1">
                 <label for="name" class="block text-sm font-semibold mb-2" style="color: var(--text-primary);">Workspace Name</label>
-                <input type="text" id="name" name="name" value="{{ workspace.name }}" required maxlength="100"
+                <input type="text" id="name" name="name" value="{{ workspace.name }}" required maxlength="100"{% if not can_edit_settings %} disabled{% endif %}
                        class="input-focus w-full px-3 py-2 text-sm rounded-lg outline-none transition-colors"
                        style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
             </div>
+            {% if can_edit_settings %}
             <button type="submit"
                     class="btn-neutral px-5 py-2 text-sm font-medium rounded-full cursor-pointer whitespace-nowrap"
                     style="background: var(--neutral-100); color: var(--text-primary);">
                 Save Changes
             </button>
+            {% endif %}
         </div>
     </form>
 
@@ -38,6 +40,7 @@
                 <template x-if="preview">
                     <div class="relative">
                         <img :src="preview" alt="Workspace logo" class="w-16 h-16 rounded-lg object-cover border" style="border-color: var(--border);">
+                        {% if can_edit_settings %}
                         <button type="button"
                                 @click="preview = ''; $refs.fileInput.value = ''; fileName = ''"
                                 class="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center cursor-pointer"
@@ -45,6 +48,7 @@
                                 title="Remove logo">
                             <svg width="10" height="10" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                         </button>
+                        {% endif %}
                     </div>
                 </template>
                 <template x-if="!preview">
@@ -59,6 +63,7 @@
                 </div>
             </div>
 
+            {% if can_edit_settings %}
             <label class="btn-surface-neutral-50 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-full cursor-pointer"
                    style="border: 1px solid var(--border); color: var(--text-primary); background: var(--surface-0);">
                 <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -66,6 +71,7 @@
                 <input type="file" name="icon" accept="image/jpeg,image/png,image/webp,image/gif" class="hidden" x-ref="fileInput"
                        @change="if ($el.files[0]) { preview = URL.createObjectURL($el.files[0]); fileName = $el.files[0].name; hasExisting = true; $el.closest('form').requestSubmit(); }">
             </label>
+            {% endif %}
         </div>
     </form>
 

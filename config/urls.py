@@ -140,6 +140,24 @@ PUBLIC_MEDIA_PREFIXES = (
     "workspaces/icons/",
 )
 
+# Uploads are only ever embedded (<img>, <video>) or fetched by the platforms,
+# never meant to run as a page. If an HTML or SVG file reaches the media tree
+# anyway, through a validator gap or an upload stored before one was closed,
+# this keeps a direct visit from executing script on the app's origin. It does
+# not affect embedding: a response's CSP only governs that response as a
+# document. Keep in step with the Caddyfile's /media/ block.
+MEDIA_CONTENT_SECURITY_POLICY = "script-src 'none'"
+
+
+def serve_public_media(request, path, document_root=None):
+    """``django.views.static.serve`` plus the headers that keep an upload inert."""
+    response = serve(request, path, document_root=document_root)
+    # django-csp leaves a CSP header the view already set alone, so this policy
+    # replaces the page one rather than merging with its script-src 'self'.
+    response["Content-Security-Policy"] = MEDIA_CONTENT_SECURITY_POLICY
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
 
 def media_urlpatterns():
     """Route the public subtrees of ``MEDIA_ROOT`` when this process serves media itself."""
@@ -178,7 +196,7 @@ def media_urlpatterns():
     return [
         re_path(
             rf"^{re.escape(prefix)}(?P<path>{re.escape(subtree)}.*)$",
-            serve,
+            serve_public_media,
             {"document_root": document_root},
         )
         for subtree in PUBLIC_MEDIA_PREFIXES
