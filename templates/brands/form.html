@@ -1,0 +1,32 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}{% if brand %}Edit {{ brand.name }}{% else %}New Brand{% endif %} - Brightbean{% endblock %}
+{% block content %}
+<div class="max-w-4xl">
+    <div class="mb-8">
+        <a href="{% url 'brands:list' workspace_id=workspace.id %}" class="text-sm" style="color: var(--text-secondary);">← Brand Profiles</a>
+        <h2 class="text-xl font-semibold mt-3" style="color: var(--text-primary);">{% if brand %}Edit {{ brand.name }}{% else %}New Brand Profile{% endif %}</h2>
+    </div>
+    <form method="post" class="space-y-8">
+        {% csrf_token %}
+        {% if form.non_field_errors %}<div class="p-3 rounded-lg" style="background: #FEE2E2; color: #991B1B;">{{ form.non_field_errors }}</div>{% endif %}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {% for field in form %}
+            <div class="{% if field.name == 'description' or field.name == 'target_audience' or field.name == 'brand_voice' or field.name == 'positioning' or field.name == 'value_proposition' or field.name == 'content_pillars' or field.name == 'cta_strategy' or field.name == 'target_personas' or field.name == 'recruiting_objective' or field.name == 'business_objective' %}md:col-span-2{% endif %}">
+                {% if field.name == 'is_active' %}
+                <label class="flex items-center gap-2 text-sm font-medium">{{ field }} {{ field.label }}</label>
+                {% else %}
+                <label for="{{ field.id_for_label }}" class="block text-sm font-semibold mb-2" style="color: var(--text-primary);">{{ field.label }}</label>
+                {{ field }}
+                {% endif %}
+                {% if field.help_text %}<p class="text-xs mt-1" style="color: var(--text-tertiary);">{{ field.help_text }}</p>{% endif %}
+                {% for error in field.errors %}<p class="text-xs mt-1" style="color: var(--error-500);">{{ error }}</p>{% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+        <div class="flex justify-end gap-3 pt-5" style="border-top: 1px solid var(--border);">
+            <a href="{% url 'brands:list' workspace_id=workspace.id %}" class="px-5 py-2 text-sm font-medium rounded-full" style="background: var(--neutral-100);">Cancel</a>
+            <button type="submit" class="px-5 py-2 text-sm font-semibold rounded-full" style="background: var(--primary); color: white;">Save Brand</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
