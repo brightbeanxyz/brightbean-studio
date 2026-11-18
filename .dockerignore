@@ -1,0 +1,33 @@
+# Brown Creative Studio: keep secrets, client files and build clutter out of the
+# image. Without this file `COPY . .` baked .env (SECRET_KEY, platform secrets)
+# and any local uploads into an image layer. See CHANGES.md.
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Version control: the running commit reaches the image as the SOURCE_COMMIT
+# build argument instead (deploy/deploy.sh), so .git is not needed.
+.git
+.github
+
+# Uploaded and client files never belong in an image
+media/
+test_media/
+backups/
+output/
+
+# Local environments, caches and build output (rebuilt inside the image)
+.venv/
+venv/
+theme/static_src/node_modules/
+theme/static/css/dist/
+staticfiles/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/

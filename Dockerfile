@@ -29,6 +29,12 @@ RUN DJANGO_SETTINGS_MODULE=config.settings.production \
     DATABASE_URL=sqlite:///tmp/build.db \
     python manage.py collectstatic --noinput
 
+# Brown Creative Studio (CHANGES.md): the commit this image was built from, for
+# the AGPL "Source code" link. Declared after the heavy layers so a new commit
+# does not invalidate the dependency cache. deploy/deploy.sh passes it.
+ARG SOURCE_COMMIT=""
+ENV SOURCE_COMMIT=${SOURCE_COMMIT}
+
 EXPOSE 8000
 
 # One worker, threaded. Importing this app costs ~100 MB before serving a

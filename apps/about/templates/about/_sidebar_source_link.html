@@ -1,0 +1,13 @@
+{# Studio sidebar: a quiet, always-present Source code link. Text when expanded, a labelled glyph when collapsed. #}
+<div class="sidebar-source-link px-3 pb-2">
+    <a href="{% url 'about:source' %}"
+       class="flex items-center gap-2 px-2 py-1 rounded-md text-[0.75rem] hover:bg-black/[0.04] transition-colors"
+       style="color: var(--text-secondary);"
+       :class="sidebarCollapsed ? 'justify-center' : ''"
+       title="Source code{% if SOURCE.short_commit %} · version {{ SOURCE.short_commit }}{% endif %}"
+       data-source-code-link>
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="flex-shrink-0"><path d="M8 6l-6 6 6 6M16 6l6 6-6 6"/></svg>
+        <span x-show="!sidebarCollapsed" class="sidebar-nav-label">Source code{% if SOURCE.short_commit %} <span class="tabular-nums" style="color: var(--text-tertiary);">{{ SOURCE.short_commit }}</span>{% endif %}</span>
+        <span x-show="sidebarCollapsed" x-cloak class="sr-only">Source code</span>
+    </a>
+</div>

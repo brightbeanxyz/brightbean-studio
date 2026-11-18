@@ -1,3 +1,9 @@
+> **Brown Creative Studio** is a fork of BrightBean Studio, extended into a multi-client
+> studio workspace and client portal, and licensed under AGPL-3.0 like the original.
+> Fork documentation is in [docs/fork/](docs/fork/README.md), and every change to an
+> upstream file is listed in [CHANGES.md](CHANGES.md). The rest of this README is
+> BrightBean's own and describes the upstream project.
+
 <p align="center">
   <a href="https://github.com/brightbeanxyz/brightbean-studio">
     <img src=".github/assets/brightbean-studio-logo.webp" alt="BrightBean Studio" width="280">

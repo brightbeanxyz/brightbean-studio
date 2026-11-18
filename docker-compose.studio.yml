@@ -1,0 +1,66 @@
+# Brown Creative Studio production overlay. Use it on top of upstream's files:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.studio.yml ...
+#
+# deploy/deploy.sh does this for you. What it changes, and why (CHANGES.md):
+#   - builds the image with SOURCE_COMMIT, so the Source code link names the running commit
+#   - Postgres and Gunicorn are no longer published on the host: upstream exposes 5432
+#     (password "postgres") and 8000 (plain HTTP, bypassing Caddy) to the internet
+#   - the database password comes from .env instead of the hard-coded "postgres"
+#   - Caddy receives APP_DOMAIN, so it requests a certificate for the real domain
+#   - adds a nightly database backup service
+#
+# Needs Docker Compose 2.24+ for the !reset tags.
+
+x-studio-build: &studio-build
+  context: .
+  args:
+    SOURCE_COMMIT: ${SOURCE_COMMIT:-}
+
+services:
+  migrate:
+    build: *studio-build
+    environment:
+      # docker-compose.prod.yml hard-codes the default password here.
+      - DATABASE_URL=${DATABASE_URL:?Set DATABASE_URL in .env}
+
+  app:
+    build: *studio-build
+    ports: !reset []
+
+  worker:
+    build: *studio-build
+
+  postgres:
+    ports: !reset []
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (and use it in DATABASE_URL)}
+
+  caddy:
+    environment:
+      - APP_DOMAIN=${APP_DOMAIN:?Set APP_DOMAIN in .env, e.g. studio.example.com}
+
+  backup:
+    build: ./deploy/backup
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+    volumes:
+      - backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # So the first backup after a fresh start includes the migrated schema.
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # Unhealthy when the last successful backup is more than 26 hours old.
+      test: ["CMD", "studio-backup-healthy"]
+      interval: 1h
+      timeout: 10s
+      start_period: 26h
+    restart: unless-stopped
+
+volumes:
+  backups:

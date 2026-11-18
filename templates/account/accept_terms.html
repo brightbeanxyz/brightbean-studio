@@ -55,9 +55,9 @@
                            style="border-color: var(--border);">
                     <span class="text-sm" style="color: var(--text-primary); line-height: 1.5;">
                         I agree to the
-                        <a href="https://brightbean.xyz/terms-of-service/" target="_blank" rel="noopener" class="font-semibold underline hover:no-underline" style="color: var(--primary);">Terms of Service</a>
+                        <a href="{{ TERMS_URL }}" target="_blank" rel="noopener" class="font-semibold underline hover:no-underline" style="color: var(--primary);">Terms of Service</a>
                         and
-                        <a href="https://brightbean.xyz/privacy-policy/" target="_blank" rel="noopener" class="font-semibold underline hover:no-underline" style="color: var(--primary);">Privacy Policy</a>
+                        <a href="{{ PRIVACY_URL }}" target="_blank" rel="noopener" class="font-semibold underline hover:no-underline" style="color: var(--primary);">Privacy Policy</a>
                     </span>
                 </label>
 
@@ -73,5 +73,6 @@
         </p>
     </div>
 </main>
+{% include "about/_public_footer.html" %}
 </body>
 </html>
