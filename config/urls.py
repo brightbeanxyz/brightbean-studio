@@ -74,6 +74,8 @@ urlpatterns = [
     path("notifications/", include("apps.notifications.urls")),
     path("onboarding/", include("apps.onboarding.urls")),
     path("organizations/media/", include("apps.media_library.urls_org")),
+    # Brown Creative Studio: source page (AGPL-3.0) and legal pages. See CHANGES.md.
+    path("", include("apps.about.urls")),
     path("", include("apps.accounts.urls_root")),
 ]
 

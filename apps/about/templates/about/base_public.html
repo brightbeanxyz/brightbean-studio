@@ -1,0 +1,19 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ SITE_NAME }}{% endblock %}</title>
+    <link rel="icon" href="{% static 'favicon/favicon.ico' %}" sizes="any">
+    <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
+</head>
+<body class="min-h-screen flex flex-col" style="background: var(--surface-page); color: var(--text-primary); font-family: var(--font-body);">
+    <header class="w-full max-w-2xl mx-auto px-4 pt-10 pb-6">
+        <p class="text-[1.25rem]" style="font-family: var(--font-display);">{{ SITE_NAME }}</p>
+    </header>
+    <main class="w-full max-w-2xl mx-auto px-4 flex-1">
+        {% block content %}{% endblock %}
+    </main>
+    {% include "about/_public_footer.html" %}
+</body>
+</html>

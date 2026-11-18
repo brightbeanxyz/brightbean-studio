@@ -15,6 +15,10 @@ repos:
         exclude: \.md$
       - id: end-of-file-fixer
       - id: check-yaml
+        # Brown Creative Studio (CHANGES.md): the production overlay uses Compose's
+        # !reset tag, which a plain YAML loader rejects. `docker compose config`
+        # validates that file instead.
+        exclude: ^docker-compose\.studio\.yml$
       - id: check-toml
       - id: check-json
       - id: check-added-large-files

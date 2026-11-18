@@ -1,0 +1,12 @@
+{% extends "about/base_public.html" %}
+{% block title %}{{ document_title }} · {{ SITE_NAME }}{% endblock %}
+
+{% block content %}
+<article class="rounded-[10px] border p-6 sm:p-8" style="background: var(--surface-0); border-color: var(--border);">
+    <h1 class="text-[2rem] leading-tight mb-3" style="font-family: var(--font-display);">{{ document_title }}</h1>
+    <p class="text-[0.9375rem] leading-relaxed" style="color: var(--text-secondary);">
+        {{ SITE_NAME }} has not published this document here yet.
+        {% if SUPPORT_EMAIL %}Write to <a href="mailto:{{ SUPPORT_EMAIL }}" class="underline underline-offset-2" style="color: var(--text-primary);">{{ SUPPORT_EMAIL }}</a> for a copy.{% endif %}
+    </p>
+</article>
+{% endblock %}

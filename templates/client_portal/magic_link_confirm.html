@@ -12,7 +12,7 @@
     <link rel="manifest" href="{% static 'favicon/site.webmanifest' %}">
     <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
 </head>
-<body class="min-h-screen flex items-center justify-center px-4" style="background: var(--surface-1); font-family: var(--font-body);">
+<body class="min-h-screen flex flex-col items-center justify-center px-4" style="background: var(--surface-1); font-family: var(--font-body);">
     <div class="w-full max-w-sm text-center">
         <div class="rounded-2xl border p-8" style="background: var(--surface-0); border-color: var(--border); box-shadow: var(--shadow-lg);">
             <!-- Icon -->
@@ -37,5 +37,6 @@
             </form>
         </div>
     </div>
+{% include "about/_public_footer.html" %}
 </body>
 </html>

@@ -1,0 +1,10 @@
+{# Source, terms and privacy links for pages outside the studio sidebar: sign-in, portal, standalone pages. #}
+{# Inline styles with fallbacks on purpose: several standalone pages do not load the Tailwind stylesheet. #}
+<footer class="about-public-footer" style="width: 100%; box-sizing: border-box; padding: 24px 16px; text-align: center; font-size: 13px; line-height: 1.6; font-family: var(--font-body, system-ui, sans-serif); color: var(--text-secondary, #675749);">
+    <nav aria-label="Legal and source">
+        <span style="margin: 0 8px;">{{ SITE_NAME }}</span>
+        <a href="{% url 'about:source' %}" style="margin: 0 8px; color: inherit; text-decoration: underline; text-underline-offset: 2px;" data-source-code-link>Source code</a>
+        <a href="{{ TERMS_URL }}" style="margin: 0 8px; color: inherit; text-decoration: underline; text-underline-offset: 2px;">Terms</a>
+        <a href="{{ PRIVACY_URL }}" style="margin: 0 8px; color: inherit; text-decoration: underline; text-underline-offset: 2px;">Privacy</a>
+    </nav>
+</footer>

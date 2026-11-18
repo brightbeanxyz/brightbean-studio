@@ -2,6 +2,16 @@ from .base import *  # noqa: F401, F403
 
 DEBUG = False
 
+# Brown Creative Studio: a production deployment must never accept public
+# sign-ups. "invite" (the fork's default) or "closed" only. See CHANGES.md.
+if SIGNUP_MODE == "open":  # noqa: F405
+    from django.core.exceptions import ImproperlyConfigured
+
+    raise ImproperlyConfigured(
+        "SIGNUP_MODE=open is not allowed in production: anyone could create an account. "
+        "Use SIGNUP_MODE=invite (studio invitations only) or SIGNUP_MODE=closed."
+    )
+
 # Security
 SECURE_SSL_REDIRECT = True
 SECURE_HSTS_SECONDS = 31536000

@@ -76,6 +76,8 @@ LOCAL_APPS = [
     "apps.mcp",
     "apps.oauth_server",
     "apps.analytics",
+    # Brown Creative Studio (see CHANGES.md)
+    "apps.about",
     "theme",
 ]
 
@@ -116,6 +118,7 @@ TEMPLATES = [
                 "apps.common.context_processors.sidebar_context",
                 "apps.onboarding.context_processors.onboarding_checklist",
                 "apps.intelligence.context_processors.intelligence_flag",
+                "apps.about.context_processors.site_identity",
             ],
         },
     },
@@ -280,14 +283,15 @@ if CUSTOM_SIGNUP_URL and (
 # Who may create an account. Applies to both the email form and social
 # logins; signing in with an existing account is never affected.
 #
-#   open    anyone can sign up (default — unchanged behaviour)
+#   open    anyone can sign up (BrightBean's default; not this fork's)
 #   invite  only visitors who followed a valid invitation link
 #   closed  nobody; accounts are created in the Django admin
 #
 # A deployment reachable from the internet — which it has to be, so the
 # platforms can deliver OAuth callbacks and webhooks — is open to the world
 # on "open". Self-hosters usually want "invite".
-SIGNUP_MODE = env("SIGNUP_MODE", default="open").strip().lower()
+# Brown Creative Studio: defaults to "invite" (fail closed). See CHANGES.md.
+SIGNUP_MODE = env("SIGNUP_MODE", default="invite").strip().lower()
 if SIGNUP_MODE not in {"open", "invite", "closed"}:
     from django.core.exceptions import ImproperlyConfigured
 
@@ -765,3 +769,7 @@ if INTELLIGENCE_ENABLED:
                 f"localhost / 127.0.0.1 dev tunnels) — current value would "
                 f"leak Intelligence API keys in transit."
             )
+
+
+# Brown Creative Studio settings. Last, so they can build on everything above.
+from .studio import *  # noqa: E402, F401, F403

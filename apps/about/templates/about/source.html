@@ -1,0 +1,49 @@
+{% extends "about/base_public.html" %}
+{% block title %}Source code · {{ SITE_NAME }}{% endblock %}
+
+{% block content %}
+<article class="rounded-[10px] border p-6 sm:p-8" style="background: var(--surface-0); border-color: var(--border);">
+    <h1 class="text-[2rem] leading-tight mb-3" style="font-family: var(--font-display);">Source code</h1>
+    <p class="text-[0.9375rem] leading-relaxed mb-6" style="color: var(--text-secondary);">
+        {{ SITE_NAME }} runs on free software licensed under the
+        <a href="https://www.gnu.org/licenses/agpl-3.0.html" class="underline underline-offset-2" style="color: var(--text-primary);">GNU Affero General Public License v3.0</a>.
+        You may read, download, change and share the source of the version you are using.
+    </p>
+
+    <section aria-labelledby="this-version" class="border-t pt-6 mb-6" style="border-color: var(--border);">
+        <h2 id="this-version" class="text-[0.9375rem] font-semibold mb-3">This version</h2>
+        {% if SOURCE.is_pinned %}
+        <p class="text-[0.875rem] mb-4" style="color: var(--text-secondary);">
+            Built from commit <code class="tabular-nums px-1.5 py-0.5 rounded" style="background: var(--surface-2); color: var(--text-primary); font-family: var(--font-mono);" data-running-commit="{{ SOURCE.commit }}">{{ SOURCE.short_commit }}</code>.
+        </p>
+        <div class="flex flex-wrap gap-2 mb-5">
+            <a href="{{ SOURCE.browse_url }}" class="btn-brand !w-auto" data-source-browse>Browse this version</a>
+            <a href="{{ SOURCE.archive_url }}" class="btn-outline !w-auto">Download .zip</a>
+        </div>
+        <p class="text-[0.8125rem] mb-2" style="color: var(--text-secondary);">Or copy it with Git:</p>
+        <pre class="text-[0.8125rem] p-3 rounded-md overflow-x-auto" style="background: var(--surface-2); font-family: var(--font-mono);">git clone {{ SOURCE.clone_url }}
+git -C {{ SOURCE.clone_dir }} checkout {{ SOURCE.commit }}</pre>
+        {% elif SOURCE.repository_url %}
+        <p class="text-[0.875rem] mb-4" style="color: var(--text-secondary);">
+            The exact version running here could not be determined, so this link opens the repository rather than this version.
+            {% if SUPPORT_EMAIL %}Write to <a href="mailto:{{ SUPPORT_EMAIL }}" class="underline underline-offset-2" style="color: var(--text-primary);">{{ SUPPORT_EMAIL }}</a> for the exact source.{% endif %}
+        </p>
+        <a href="{{ SOURCE.browse_url }}" class="btn-outline !w-auto" data-source-browse>Open the repository</a>
+        {% else %}
+        <p class="text-[0.875rem]" style="color: var(--text-secondary);">
+            The source repository has not been configured on this installation yet.
+            {% if SUPPORT_EMAIL %}Write to <a href="mailto:{{ SUPPORT_EMAIL }}" class="underline underline-offset-2" style="color: var(--text-primary);">{{ SUPPORT_EMAIL }}</a> and the studio will send it to you.{% endif %}
+        </p>
+        {% endif %}
+    </section>
+
+    <section aria-labelledby="credits" class="border-t pt-6" style="border-color: var(--border);">
+        <h2 id="credits" class="text-[0.9375rem] font-semibold mb-3">Credits</h2>
+        <p class="text-[0.875rem] leading-relaxed" style="color: var(--text-secondary);">
+            Based on <a href="{{ SOURCE.upstream_url }}" class="underline underline-offset-2" style="color: var(--text-primary);">{{ SOURCE.upstream_name }}</a>,
+            used and modified under the {{ SOURCE.license_name }} license.
+            {% if SOURCE.license_url %}The full license text and copyright notices ship with the source in the <a href="{{ SOURCE.license_url }}" class="underline underline-offset-2" style="color: var(--text-primary);">LICENSE</a> file.{% endif %}
+        </p>
+    </section>
+</article>
+{% endblock %}

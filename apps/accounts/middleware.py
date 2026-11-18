@@ -30,6 +30,10 @@ EXEMPT_PATH_PREFIXES = (
     # attachment URLs server-side (see config/urls.py) are anonymous anyway.
     "/media/",
     "/admin/",
+    # Brown Creative Studio (CHANGES.md): the policies a user is asked to accept,
+    # and the AGPL source page, must be readable before accepting.
+    "/legal/",
+    "/about/",
 )
 
 
