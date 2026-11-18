@@ -32,11 +32,13 @@ PRIVACY_URL = _env("PRIVACY_URL", default="").strip()
 # ── Corresponding source (AGPL-3.0 section 13) ───────────────────────────────
 # Every studio and portal user sees a "Source code" link. It must lead to the
 # source of the version that is actually running, so it is built from:
-#   SOURCE_CODE_URL  the public fork, e.g. https://github.com/<owner>/<repo>
+#   SOURCE_CODE_URL  the public fork (defaults to this repository on GitHub)
 #   SOURCE_COMMIT    the commit the image was built from. The Docker build sets
 #                    it from a build argument; without it, apps.about reads
 #                    .git in the working copy (development only).
-SOURCE_CODE_URL = _env("SOURCE_CODE_URL", default="").strip().rstrip("/")
+SOURCE_CODE_URL = (
+    _env("SOURCE_CODE_URL", default="https://github.com/juliemangoes/brown-creative-studio").strip().rstrip("/")
+)
 SOURCE_COMMIT = _env("SOURCE_COMMIT", default="").strip()
 
 # The project this fork is based on, credited on the source page.

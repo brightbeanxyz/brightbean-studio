@@ -24,7 +24,7 @@ Only Caddy listens on the internet, on ports 80 and 443.
 ## 2. Configure
 
 ```bash
-git clone https://github.com/<owner>/<fork>.git brown-creative-studio
+git clone https://github.com/juliemangoes/brown-creative-studio.git
 cd brown-creative-studio
 cp .env.example .env
 ```
@@ -44,7 +44,7 @@ Edit `.env`. The values that must change for production:
 | `EMAIL_BACKEND_TYPE`, `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL` | `smtp` and the provider's settings; the from address on the studio's domain |
 | `SENTRY_DSN` | The Sentry project's DSN |
 | `SITE_NAME`, `SUPPORT_EMAIL`, `TERMS_URL`, `PRIVACY_URL` | The studio's name, support address and published policies |
-| `SOURCE_CODE_URL` | `https://github.com/<owner>/<fork>` |
+| `SOURCE_CODE_URL` | `https://github.com/juliemangoes/brown-creative-studio` (the default) |
 | `BACKUP_S3_*` | The backup bucket. Without it, backups stay on the server only. |
 | `INTELLIGENCE_*`, `STUDIO_*` | Leave blank |
 

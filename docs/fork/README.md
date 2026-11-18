@@ -30,7 +30,7 @@ django-background-tasks) and under its license (AGPL-3.0).
 
 ```bash
 git remote -v
-# origin    https://github.com/<owner>/<fork>.git   (the public fork: push here)
+# origin    https://github.com/juliemangoes/brown-creative-studio (the public fork: push here)
 # upstream  https://github.com/brightbeanxyz/brightbean-studio (fetch only)
 ```
 
