@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import logging
 
-from .linkedin import API_BASE, LINKEDIN_HEADERS, LinkedInProvider
+from .exceptions import APIError
+from .linkedin import API_BASE, LINKEDIN_HEADERS, LinkedInProvider, _encode_urn
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,42 @@ class LinkedInCompanyProvider(LinkedInProvider):
             "r_organization_social",
             "rw_organization_admin",
         ]
+
+    def _inbox_author_urn(self, access_token: str) -> str | None:
+        # A Company Page's posts are authored by the organization. Asking for
+        # the member's posts with a Page token fails with HTTP 400.
+        org_id = self.credentials.get("organization_id")
+        return f"urn:li:organization:{org_id}" if org_id else None
+
+    # Set once the versioned comments endpoint answered 403 for this app.
+    _legacy_comments = False
+
+    def _inbox_comments_page(self, access_token: str, post_urn: str, start: int):
+        # The versioned /rest comments endpoint answers 403 for apps that lack the
+        # partner social-actions product. The /v2 endpoint returns the same data,
+        # so fall back to it and stay on it for the rest of this poll.
+        if not self._legacy_comments:
+            try:
+                return super()._inbox_comments_page(access_token, post_urn, start)
+            except APIError as exc:
+                if exc.status_code != 403:
+                    raise
+                self._legacy_comments = True
+        return self._request(
+            "GET",
+            f"{API_BASE}/v2/socialActions/{_encode_urn(post_urn)}/comments",
+            access_token=access_token,
+            headers=LINKEDIN_HEADERS,
+            params={"start": start, "count": 100},
+        )
+
+    def _inbox_own_actors(self, access_token: str, author: str) -> set[str]:
+        # The Page itself and the admin who posts first comments through us.
+        actors = {author}
+        profile = self.get_profile(access_token)
+        if profile.platform_id:
+            actors.add(f"urn:li:person:{profile.platform_id}")
+        return actors
 
     def get_user_pages(self, access_token: str) -> list[dict]:
         resp = self._request(
