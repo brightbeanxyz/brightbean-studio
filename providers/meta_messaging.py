@@ -13,6 +13,8 @@ import time
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
+import httpx
+
 from .exceptions import APIError, MessagingError, OAuthError, RateLimitError, TokenExpiredError
 from .types import InboxMessage
 
@@ -124,6 +126,13 @@ def meta_subscription_needs_reconnect(exc: Exception) -> bool:
     return isinstance(error, str) and error in {"invalid_token", "invalid_grant", "ExpiredToken", "InvalidToken"}
 
 
+# Graph answers a conversation page in 2-4 s and the conversation list in up to
+# ~9 s, so a request needs its full timeout. Shrinking it as the walk budget runs
+# out made the last call of every poll time out, which threw the whole poll away.
+DM_WALK_BUDGET_SECONDS = 20
+DM_REQUEST_TIMEOUT_SECONDS = 10
+
+
 def fetch_instagram_page_messages(
     request, *, base_url, page_id, owner_id, access_token, since=None, poll_state=None
 ) -> InstagramMessageBatch:
@@ -136,6 +145,7 @@ def fetch_instagram_page_messages(
     """
     started = time.monotonic()
     remaining_calls = 100
+    completed_calls = 0
     messages = []
     state = poll_state if isinstance(poll_state, dict) else {}
     if state.get("page_id") != str(page_id) or state.get("owner_id") != str(owner_id):
@@ -158,7 +168,7 @@ def fetch_instagram_page_messages(
             url,
             access_token=access_token,
             params=query,
-            timeout=max(0.1, min(20 - (time.monotonic() - started), 10)),
+            timeout=DM_REQUEST_TIMEOUT_SECONDS,
         ).json()
 
     def next_cursor(data, seen):
@@ -169,25 +179,41 @@ def fetch_instagram_page_messages(
         seen.add(after)
         return after
 
-    while remaining_calls and time.monotonic() - started < 20:
+    while remaining_calls and time.monotonic() - started < DM_WALK_BUDGET_SECONDS:
         if not conversations:
             if listed_conversations and not conversation_after:
                 break
-            data = page(
-                f"{base_url}/{page_id}/conversations",
-                {"platform": "instagram", "fields": "id"},
-                conversation_after,
-            )
+            try:
+                data = page(
+                    f"{base_url}/{page_id}/conversations",
+                    {"platform": "instagram", "fields": "id"},
+                    conversation_after,
+                )
+            except httpx.TimeoutException:
+                if not completed_calls:
+                    raise
+                logger.warning("Instagram DM poll timed out; keeping progress for the next poll")
+                break
+            completed_calls += 1
             conversations = [str(convo["id"]) for convo in data.get("data", []) if convo.get("id")]
             conversation_after = next_cursor(data, seen_conversation_cursors)
             listed_conversations = True
             continue
         convo_id = conversations[0]
-        data = page(
-            f"{base_url}/{convo_id}/messages",
-            {"fields": "id,message,from,created_time,attachments"},
-            message_after,
-        )
+        try:
+            data = page(
+                f"{base_url}/{convo_id}/messages",
+                {"fields": "id,message,from,created_time,attachments"},
+                message_after,
+            )
+        except httpx.TimeoutException:
+            # Keep the messages and cursor gathered so far. Raising here would
+            # discard them and restart the same walk on the next poll.
+            if not completed_calls:
+                raise
+            logger.warning("Instagram DM poll timed out; keeping progress for the next poll")
+            break
+        completed_calls += 1
         for msg in data.get("data", []):
             sender = msg.get("from") or {}
             sender_id = str(sender.get("id") or "")
