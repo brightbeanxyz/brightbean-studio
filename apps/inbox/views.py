@@ -167,7 +167,7 @@ def inbox_feed(request, workspace_id):
     social_accounts = SocialAccount.objects.filter(
         workspace=workspace,
         connection_status=SocialAccount.ConnectionStatus.CONNECTED,
-    )
+    ).order_by("platform", "account_name")
 
     context = {
         "workspace": workspace,

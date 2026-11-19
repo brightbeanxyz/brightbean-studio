@@ -22,7 +22,7 @@
     </a>
     {% endif %}
 
-    {% if active_filters.q or active_filters.platform or active_filters.type or active_filters.status or active_filters.sentiment %}
+    {% if active_filters.q or active_filters.platform or active_filters.account or active_filters.type or active_filters.status or active_filters.sentiment %}
     <div class="mt-4 pt-4 border-t border-stone-100">
         <p class="text-[12px] text-stone-400 mb-2">No messages match your current filters.</p>
         <a href="{% url 'inbox:feed' workspace_id=workspace.id %}"

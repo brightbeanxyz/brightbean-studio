@@ -13,18 +13,18 @@
                hx-target="#inbox-message-list"
                hx-swap="innerHTML"
                hx-trigger="keyup changed delay:400ms"
-               hx-include="[name='platform'],[name='type'],[name='status'],[name='sentiment']">
+               hx-include="[name='account'],[name='type'],[name='status'],[name='sentiment']">
     </div>
 
-    <!-- Platform filter -->
-    <select name="platform" class="filter-select"
+    <!-- Account filter: platform plus profile name, so two Facebook pages are told apart -->
+    <select name="account" class="filter-select"
             hx-get="{% url 'inbox:feed' workspace_id=workspace.id %}"
             hx-target="#inbox-message-list"
             hx-swap="innerHTML"
             hx-include="[name='q'],[name='type'],[name='status'],[name='sentiment']">
-        <option value="">All platforms</option>
+        <option value="">All accounts</option>
         {% for account in social_accounts %}
-        <option value="{{ account.platform }}" {% if account.platform in active_filters.platform %}selected{% endif %}>{% if account.platform == "youtube" %}YouTube{% else %}{{ account.get_platform_display|default:account.platform|title }}{% endif %}</option>
+        <option value="{{ account.id }}" {% if account.id|stringformat:"s" in active_filters.account %}selected{% endif %}>{% if account.platform == "youtube" %}YouTube{% else %}{{ account.get_platform_display|default:account.platform|title }}{% endif %} - {{ account.display_label }}</option>
         {% endfor %}
     </select>
 
@@ -33,7 +33,7 @@
             hx-get="{% url 'inbox:feed' workspace_id=workspace.id %}"
             hx-target="#inbox-message-list"
             hx-swap="innerHTML"
-            hx-include="[name='q'],[name='platform'],[name='status'],[name='sentiment']">
+            hx-include="[name='q'],[name='account'],[name='status'],[name='sentiment']">
         <option value="">All types</option>
         <option value="comment" {% if 'comment' in active_filters.type %}selected{% endif %}>Comments</option>
         <option value="mention" {% if 'mention' in active_filters.type %}selected{% endif %}>Mentions</option>
@@ -46,7 +46,7 @@
             hx-get="{% url 'inbox:feed' workspace_id=workspace.id %}"
             hx-target="#inbox-message-list"
             hx-swap="innerHTML"
-            hx-include="[name='q'],[name='platform'],[name='type'],[name='sentiment']">
+            hx-include="[name='q'],[name='account'],[name='type'],[name='sentiment']">
         <option value="">All statuses</option>
         <option value="unread" {% if 'unread' in active_filters.status %}selected{% endif %}>Unread</option>
         <option value="open" {% if 'open' in active_filters.status %}selected{% endif %}>Open</option>
@@ -59,7 +59,7 @@
             hx-get="{% url 'inbox:feed' workspace_id=workspace.id %}"
             hx-target="#inbox-message-list"
             hx-swap="innerHTML"
-            hx-include="[name='q'],[name='platform'],[name='type'],[name='status']">
+            hx-include="[name='q'],[name='account'],[name='type'],[name='status']">
         <option value="">All sentiment</option>
         <option value="positive" {% if 'positive' in active_filters.sentiment %}selected{% endif %}>Positive</option>
         <option value="neutral" {% if 'neutral' in active_filters.sentiment %}selected{% endif %}>Neutral</option>
