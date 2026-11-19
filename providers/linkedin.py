@@ -544,10 +544,29 @@ class LinkedInProvider(SocialProvider):
     # Inbox
     # ------------------------------------------------------------------
 
-    def get_messages(self, access_token: str, since: datetime | None = None) -> list[InboxMessage]:
-        # Determine author URN
+    def _inbox_author_urn(self, access_token: str) -> str | None:
+        """Whose posts the inbox poll reads comments on. A member by default."""
         profile = self.get_profile(access_token)
-        author = f"urn:li:person:{profile.platform_id}"
+        return f"urn:li:person:{profile.platform_id}"
+
+    def _inbox_comments_page(self, access_token: str, post_urn: str, start: int):
+        return self._request(
+            "GET",
+            f"{API_BASE}/rest/socialActions/{_encode_urn(post_urn)}/comments",
+            access_token=access_token,
+            headers=LINKEDIN_HEADERS,
+            params={"start": start, "count": 100},
+        )
+
+    def _inbox_own_actors(self, access_token: str, author: str) -> set[str]:
+        """Actor URNs whose comments are our own and must not reach the inbox."""
+        return set()
+
+    def get_messages(self, access_token: str, since: datetime | None = None) -> list[InboxMessage]:
+        author = self._inbox_author_urn(access_token)
+        if not author:
+            return []
+        own_actors = self._inbox_own_actors(access_token, author)
 
         # Fetch recent posts by this author
         params: dict = {"q": "author", "author": author, "count": 20}
@@ -570,13 +589,7 @@ class LinkedInProvider(SocialProvider):
             # Fetch comments on this post
             start = 0
             while True:
-                c_resp = self._request(
-                    "GET",
-                    f"{API_BASE}/rest/socialActions/{_encode_urn(post_urn)}/comments",
-                    access_token=access_token,
-                    headers=LINKEDIN_HEADERS,
-                    params={"start": start, "count": 100},
-                )
+                c_resp = self._inbox_comments_page(access_token, post_urn, start)
                 c_data = c_resp.json()
                 elements = c_data.get("elements", [])
                 if not elements:
@@ -590,6 +603,8 @@ class LinkedInProvider(SocialProvider):
                         continue
 
                     actor_urn = comment.get("actor", "")
+                    if actor_urn in own_actors:
+                        continue
                     comment_urn = comment.get("$URN", comment.get("id", ""))
                     comment_text = comment.get("message", {}).get("text", "")
 
