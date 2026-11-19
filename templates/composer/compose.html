@@ -595,6 +595,38 @@
                     </div>
                 </template>
 
+                <!-- Instagram destination: feed post / Reel by default, or a Story (one image or video) -->
+                <template x-for="accId in selectedAccounts" :key="'instagram-story-settings-' + accId">
+                    <div x-show="['instagram', 'instagram_login'].includes(charLimits[accId]?.platform) && hasSingleMediaAttached"
+                         x-data="{ instagramPostType: platformExtras[accId]?.post_type === 'story' ? 'story' : 'feed' }"
+                         class="border border-stone-200 rounded-xl bg-white p-4 space-y-3">
+                        {% comment %}
+                        Same marker contract as the Facebook panel: present for every
+                        selected Instagram account so a save can clear a stale Story
+                        choice, while a non-composer save never touches it.
+                        {% endcomment %}
+                        <input type="hidden" :name="'instagram_panel_' + accId" value="1"
+                               :disabled="!['instagram', 'instagram_login'].includes(charLimits[accId]?.platform)">
+                        <div class="flex items-center gap-2">
+                            <span class="platform-icon w-5 h-5 rounded-[5px] flex items-center justify-center"
+                                  :class="'pi-' + (charLimits[accId]?.platform || '')"
+                                  x-html="platformIconSvg(charLimits[accId]?.platform || '')"></span>
+                            <span class="text-xs font-semibold text-stone-600" x-text="charLimits[accId]?.name + ' - Instagram Settings'"></span>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-1">Publish as</label>
+                            <select :name="'instagram_post_type_' + accId"
+                                    x-model="instagramPostType"
+                                    :disabled="!['instagram', 'instagram_login'].includes(charLimits[accId]?.platform) || !hasSingleMediaAttached"
+                                    class="w-full text-sm px-3 py-2 rounded-lg border border-stone-200 bg-white outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100 transition-all">
+                                <option value="feed">Feed post / Reel</option>
+                                <option value="story">Story</option>
+                            </select>
+                            <p class="text-[11px] text-stone-400 mt-1">A Story shows for 24 hours and takes one image or video (9:16 works best). The caption and first comment are not posted with a Story; stickers, links and music have to be added in the Instagram app.</p>
+                        </div>
+                    </div>
+                </template>
+
                 <!-- Pinterest settings (auto-visible when any Pinterest account is selected) -->
                 <template x-for="accId in selectedAccounts" :key="'pin-settings-' + accId">
                     <div x-show="charLimits[accId]?.platform === 'pinterest'"
@@ -2080,6 +2112,7 @@ function composerApp() {
         hasMediaAttached: false,
         hasVideoAttached: false,
         hasSingleVideoAttached: false,
+        hasSingleMediaAttached: false,
         showFramePicker: false,
         framePickerAccId: null,
         framePickerMode: 'upload',
@@ -2250,6 +2283,7 @@ function composerApp() {
                 this.hasMediaAttached = thumbs.length > 0;
                 this.hasVideoAttached = videoCount > 0;
                 this.hasSingleVideoAttached = thumbs.length === 1 && videoCount === 1;
+                this.hasSingleMediaAttached = thumbs.length === 1;
             };
             this.$nextTick(syncVideoAttached);
             document.body.addEventListener('previewUpdate', syncVideoAttached);

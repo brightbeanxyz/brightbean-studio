@@ -342,7 +342,8 @@ class InstagramProvider(SocialProvider):
         """Publish a single image, reel, or story."""
         payload: dict = {}
 
-        if content.text:
+        # A Story shows no caption, so only feed posts and Reels carry one.
+        if content.text and content.post_type != PostType.STORY:
             payload["caption"] = content.text
 
         # Route on what the asset *is*, not only on which post types name a
