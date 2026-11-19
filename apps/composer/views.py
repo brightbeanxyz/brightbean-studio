@@ -295,6 +295,22 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
                 extra.pop("post_type", None)
             pp.platform_extra = extra
 
+        elif account.platform in ("instagram", "instagram_login") and f"instagram_panel_{acc_id}" in request.POST:
+            # Same contract as the Facebook Reel selector above: gated on the
+            # panel's hidden marker, and a Story is only recorded while exactly
+            # one image or video is attached. Anything else (feed, a stale
+            # choice after the media changed) clears the hint, so the post
+            # resolves from its media as a feed post, Reel or carousel.
+            extra = {**(pp.platform_extra or {})}
+            instagram_post_type = request.POST.get(f"instagram_post_type_{acc_id}", "").strip()
+            media_types = list(post.media_attachments.values_list("media_asset__media_type", flat=True)[:2])
+            has_exactly_one_visual = len(media_types) == 1 and media_types[0] in ("image", "video")
+            if instagram_post_type == "story" and has_exactly_one_visual:
+                extra["post_type"] = "story"
+            else:
+                extra.pop("post_type", None)
+            pp.platform_extra = extra
+
         elif account.platform == "youtube":
             tags_list = parse_and_truncate_youtube_tag_string(request.POST.get(f"yt_tags_{acc_id}", ""))
             privacy_status = request.POST.get(f"yt_privacy_status_{acc_id}", "public")

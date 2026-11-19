@@ -550,6 +550,9 @@ class PublishEngine:
             return
         if not platform_post.social_account.supports_first_comment():
             return
+        if (platform_post.platform_extra or {}).get("post_type") == PostType.STORY.value:
+            # Stories take no comments; queueing one would only fail later.
+            return
         if not platform_post.effective_first_comment:
             return
         if platform_post.first_comment_status in (
@@ -936,6 +939,9 @@ class PublishEngine:
         if hint is PostType.VIDEO:
             # _publish_video posts media_urls[0] to the video endpoint as-is.
             return first_media_type == "video"
+        if hint is PostType.STORY:
+            # A Story container takes exactly one image or video.
+            return media_count == 1 and first_media_type in ("image", "video")
         return True
 
     @staticmethod
