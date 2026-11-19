@@ -92,6 +92,15 @@ def _get_workspace(request, workspace_id):
 # --- Main Feed ---
 
 
+def _filter_values(request, name):
+    """Selected values for a filter, without the blanks.
+
+    Every filter dropdown submits its field even when "All ..." is chosen, as an
+    empty string. Treating that as a value matched no message at all.
+    """
+    return [value for value in request.GET.getlist(name) if value]
+
+
 @login_required
 @require_permission("use_inbox")
 def inbox_feed(request, workspace_id):
@@ -108,19 +117,19 @@ def inbox_feed(request, workspace_id):
         qs = qs.filter(assigned_to__isnull=True)
 
     # Filters
-    platforms = request.GET.getlist("platform")
+    platforms = _filter_values(request, "platform")
     if platforms:
         qs = qs.filter(social_account__platform__in=platforms)
 
-    accounts = request.GET.getlist("account")
+    accounts = _filter_values(request, "account")
     if accounts:
         qs = qs.filter(social_account_id__in=accounts)
 
-    types = request.GET.getlist("type")
+    types = _filter_values(request, "type")
     if types:
         qs = qs.filter(message_type__in=types)
 
-    statuses = request.GET.getlist("status")
+    statuses = _filter_values(request, "status")
     if statuses:
         qs = qs.filter(status__in=statuses)
 
@@ -128,7 +137,7 @@ def inbox_feed(request, workspace_id):
     if assigned:
         qs = qs.filter(assigned_to__isnull=True) if assigned == "unassigned" else qs.filter(assigned_to_id=assigned)
 
-    sentiments = request.GET.getlist("sentiment")
+    sentiments = _filter_values(request, "sentiment")
     if sentiments:
         qs = qs.filter(sentiment__in=sentiments)
 
@@ -158,7 +167,7 @@ def inbox_feed(request, workspace_id):
     social_accounts = SocialAccount.objects.filter(
         workspace=workspace,
         connection_status=SocialAccount.ConnectionStatus.CONNECTED,
-    )
+    ).order_by("platform", "account_name")
 
     context = {
         "workspace": workspace,
