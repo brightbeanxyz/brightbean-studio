@@ -126,8 +126,10 @@ def test_instagram_poll_continuation_survives_a_fresh_worker(connected_account, 
 
     connected_account.refresh_from_db()
     assert connected_account.instagram_dm_poll_state == {}
-    assert calls[100][0].endswith("/busy/messages")
-    assert calls[100][1] == "99"
+    # Each poll first lists the newest chats, then resumes the half-read one.
+    assert calls[100][0].endswith("/conversations")
+    assert calls[101][0].endswith("/busy/messages")
+    assert calls[101][1] == "99"
     assert InboxMessage.objects.filter(social_account=connected_account, platform_message_id="later-dm").exists()
 
 

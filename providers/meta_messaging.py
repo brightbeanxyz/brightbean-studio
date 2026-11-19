@@ -142,6 +142,11 @@ def fetch_instagram_page_messages(
     cursor. A later worker resumes that exact walk instead of spending every
     poll's budget on the same early history. Rebuild URLs locally, never follow
     platform-provided URLs, and ignore the shared comment/DM high-water mark.
+
+    The walk covers the whole history, which takes many polls. So every poll
+    first lists the newest conversations and queues the ones updated since the
+    last poll at the front. Without that, a new message in a recent chat waits
+    until the history walk ends.
     """
     started = time.monotonic()
     remaining_calls = 100
@@ -153,7 +158,8 @@ def fetch_instagram_page_messages(
     conversations = list(state.get("conversations") or [])
     conversation_after = state.get("conversation_after")
     message_after = state.get("message_after")
-    listed_conversations = bool(conversations or conversation_after)
+    recent_watermark = message_timestamp(state.get("recent_watermark"))
+    listed_conversations = bool(conversations or conversation_after or recent_watermark)
     seen_conversation_cursors = {conversation_after} if conversation_after else set()
     seen_message_cursors = {message_after} if message_after else set()
 
@@ -179,6 +185,37 @@ def fetch_instagram_page_messages(
         seen.add(after)
         return after
 
+    def newest_update(data):
+        stamps = [message_timestamp(convo.get("updated_time")) for convo in data.get("data", [])]
+        return max((stamp for stamp in stamps if stamp), default=None)
+
+    if listed_conversations:
+        # Newest conversations first. A timeout here must not block the backlog.
+        try:
+            data = page(
+                f"{base_url}/{page_id}/conversations", {"platform": "instagram", "fields": "id,updated_time"}, None
+            )
+        except httpx.TimeoutException:
+            logger.warning("Instagram DM poll could not list recent conversations; will retry next poll")
+        else:
+            completed_calls += 1
+            queued = set(conversations)
+            fresh = []
+            for convo in data.get("data", []):
+                stamp = message_timestamp(convo.get("updated_time"))
+                convo_id = str(convo.get("id") or "")
+                if (
+                    convo_id
+                    and stamp
+                    and (recent_watermark is None or stamp > recent_watermark)
+                    and convo_id not in queued
+                ):
+                    fresh.append(convo_id)
+            # Conversation 0 may be half read (message_after), so queue behind it.
+            at = 1 if conversations and message_after else 0
+            conversations[at:at] = fresh
+            recent_watermark = newest_update(data) or recent_watermark
+
     while remaining_calls and time.monotonic() - started < DM_WALK_BUDGET_SECONDS:
         if not conversations:
             if listed_conversations and not conversation_after:
@@ -186,7 +223,7 @@ def fetch_instagram_page_messages(
             try:
                 data = page(
                     f"{base_url}/{page_id}/conversations",
-                    {"platform": "instagram", "fields": "id"},
+                    {"platform": "instagram", "fields": "id,updated_time"},
                     conversation_after,
                 )
             except httpx.TimeoutException:
@@ -195,6 +232,8 @@ def fetch_instagram_page_messages(
                 logger.warning("Instagram DM poll timed out; keeping progress for the next poll")
                 break
             completed_calls += 1
+            if not conversation_after and not recent_watermark:
+                recent_watermark = newest_update(data)
             conversations = [str(convo["id"]) for convo in data.get("data", []) if convo.get("id")]
             conversation_after = next_cursor(data, seen_conversation_cursors)
             listed_conversations = True
@@ -239,16 +278,20 @@ def fetch_instagram_page_messages(
         if not message_after:
             conversations.pop(0)
             seen_message_cursors.clear()
-    continuation = {}
     if conversations or conversation_after or not listed_conversations:
         logger.warning("Instagram DM poll reached its bounded request/time budget")
-        continuation = {
-            "page_id": str(page_id),
-            "owner_id": str(owner_id),
-            "conversations": conversations,
-            "conversation_after": conversation_after,
-            "message_after": message_after,
-        }
+    # Keep the watermark even when the walk is done, so the next poll only
+    # checks recent conversations instead of walking the whole history again.
+    if not (conversations or conversation_after or recent_watermark):
+        return InstagramMessageBatch(messages, poll_state={})
+    continuation = {
+        "page_id": str(page_id),
+        "owner_id": str(owner_id),
+        "conversations": conversations,
+        "conversation_after": conversation_after,
+        "message_after": message_after,
+        "recent_watermark": recent_watermark.isoformat() if recent_watermark else None,
+    }
     return InstagramMessageBatch(messages, poll_state=continuation)
 
 
