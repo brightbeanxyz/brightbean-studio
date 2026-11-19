@@ -20,6 +20,7 @@ from urllib.parse import urlencode
 
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, ProviderError, PublishError
+from .instagram_publish import ai_disclosure_fields, reel_cover_fields
 from .meta_comments import (
     fetch_instagram_comments,
     find_own_instagram_comment,
@@ -342,8 +343,11 @@ class InstagramLoginProvider(SocialProvider):
             # single item.
             payload["media_type"] = "REELS"
             payload["video_url"] = url
+            payload.update(reel_cover_fields(content.extra))
+            payload.update(ai_disclosure_fields(content.extra))
         else:
             payload["image_url"] = url
+            payload.update(ai_disclosure_fields(content.extra))
 
         container_id = self._create_container(access_token, payload)
         self._wait_for_container(access_token, container_id)
@@ -370,6 +374,8 @@ class InstagramLoginProvider(SocialProvider):
         }
         if content.text:
             carousel_payload["caption"] = content.text
+        # On the parent only: Instagram rejects the field on carousel children.
+        carousel_payload.update(ai_disclosure_fields(content.extra))
 
         carousel_id = self._create_container(access_token, carousel_payload)
         self._wait_for_container(access_token, carousel_id)

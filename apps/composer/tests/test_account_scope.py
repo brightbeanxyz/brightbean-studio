@@ -754,3 +754,119 @@ class TikTokComposerDefaultsTests(AccountScopeTestsBase):
         self.assertIn("ttAllowComment: platformExtras[accId]?.disable_comment === false", html)
         self.assertIn("ttAllowDuet: platformExtras[accId]?.disable_duet === false", html)
         self.assertIn("ttAllowStitch: platformExtras[accId]?.disable_stitch === false", html)
+
+
+class InstagramSettingsTests(AccountScopeTestsBase):
+    def setUp(self):
+        super().setUp()
+        self.instagram = SocialAccount.objects.create(
+            workspace=self.workspace,
+            platform="instagram_login",
+            account_platform_id="ig-1",
+            account_name="Instagram Account",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        self.instagram_pp = PlatformPost.objects.create(
+            post=self.post,
+            social_account=self.instagram,
+            status=PlatformPost.Status.DRAFT,
+        )
+        self._attach(MediaAsset.MediaType.VIDEO, "reel.mp4", post=self.post)
+
+    def _instagram_payload(self, **instagram_fields):
+        """A composer submit for the Instagram account.
+
+        The hidden ``instagram_panel_<id>`` marker is rendered for every
+        selected Instagram account; the cover input only while a single video
+        is attached, and the toggle only submits when switched on.
+        """
+        account_id = str(self.instagram.id)
+        fields = {f"instagram_panel_{account_id}": "1"}
+        fields.update({f"instagram_{key}_{account_id}": value for key, value in instagram_fields.items()})
+        return self._payload(selected_accounts=account_id, account_scope=account_id, **fields)
+
+    def test_ai_disclosure_and_cover_round_trip_into_platform_extra(self):
+        response = self.client.post(
+            self.save_url,
+            data=self._instagram_payload(is_ai_generated="true", video_cover_timestamp_ms="22400"),
+        )
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.instagram_pp.refresh_from_db()
+        self.assertEqual(
+            self.instagram_pp.platform_extra,
+            {"is_ai_generated": True, "video_cover_timestamp_ms": 22400},
+        )
+
+    def test_switching_the_disclosure_off_removes_it_and_keeps_other_extras(self):
+        self.instagram_pp.platform_extra = {"is_ai_generated": True, "audience": "public"}
+        self.instagram_pp.save(update_fields=["platform_extra"])
+
+        response = self.client.post(self.save_url, data=self._instagram_payload())
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.instagram_pp.refresh_from_db()
+        self.assertEqual(self.instagram_pp.platform_extra, {"audience": "public"})
+
+    def test_an_invalid_cover_clears_the_stored_one(self):
+        self.instagram_pp.platform_extra = {"video_cover_timestamp_ms": 1000}
+        self.instagram_pp.save(update_fields=["platform_extra"])
+
+        response = self.client.post(self.save_url, data=self._instagram_payload(video_cover_timestamp_ms="²"))
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.instagram_pp.refresh_from_db()
+        self.assertNotIn("video_cover_timestamp_ms", self.instagram_pp.platform_extra)
+
+    def test_the_cover_is_dropped_when_the_post_is_not_a_single_video(self):
+        """A second attachment makes it a carousel: an offset into one of its
+        videos would be a stale choice, not a cover."""
+        self._attach(MediaAsset.MediaType.IMAGE, "extra.jpg", post=self.post)
+
+        response = self.client.post(
+            self.save_url,
+            data=self._instagram_payload(is_ai_generated="true", video_cover_timestamp_ms="22400"),
+        )
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.instagram_pp.refresh_from_db()
+        self.assertEqual(self.instagram_pp.platform_extra, {"is_ai_generated": True})
+
+    def test_a_save_without_the_panel_leaves_the_extras_untouched(self):
+        self.instagram_pp.platform_extra = {"is_ai_generated": True, "video_cover_timestamp_ms": 22400}
+        self.instagram_pp.save(update_fields=["platform_extra"])
+        account_id = str(self.instagram.id)
+
+        response = self.client.post(
+            self.save_url,
+            data=self._payload(selected_accounts=account_id, account_scope=account_id),
+        )
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.instagram_pp.refresh_from_db()
+        self.assertEqual(
+            self.instagram_pp.platform_extra,
+            {"is_ai_generated": True, "video_cover_timestamp_ms": 22400},
+        )
+
+    def test_the_facebook_login_connection_gets_the_same_panel(self):
+        self.instagram.platform = "instagram"
+        self.instagram.save(update_fields=["platform"])
+
+        response = self.client.post(self.save_url, data=self._instagram_payload(is_ai_generated="true"))
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.instagram_pp.refresh_from_db()
+        self.assertEqual(self.instagram_pp.platform_extra, {"is_ai_generated": True})
+
+    def test_the_composer_renders_the_panel_off_by_default(self):
+        """The disclosure is the creator's statement, so it starts off unless a
+        saved extra turned it on; the inputs carry the names the view reads."""
+        response = self.client.get(reverse("composer:compose", kwargs={"workspace_id": self.workspace.id}))
+
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertIn("igAiGenerated: !!platformExtras[accId]?.is_ai_generated", html)
+        self.assertIn(":name=\"'instagram_panel_' + accId\"", html)
+        self.assertIn(":name=\"'instagram_is_ai_generated_' + accId\"", html)
+        self.assertIn(":name=\"'instagram_video_cover_timestamp_ms_' + accId\"", html)
