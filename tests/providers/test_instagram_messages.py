@@ -301,7 +301,9 @@ def test_capped_poll_resumes_history_and_reaches_later_conversations():
     second.credentials["instagram_dm_poll_state"] = batch.poll_state
     second._request = MagicMock(side_effect=paginated_request)
     resumed = second._fetch_direct_messages("page-token")
-    assert calls[100] == ("busy-conversation", "99")
+    # Each poll first lists the newest chats, then resumes the half-read one.
+    assert calls[100] == ("page-1", None)
+    assert calls[101] == ("busy-conversation", "99")
     assert {message.extra["conversation_id"] for message in resumed} == {
         "busy-conversation",
         "later-conversation",
