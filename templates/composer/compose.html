@@ -122,11 +122,22 @@
         background: transparent;
         color: #1C1917;
         border: none;
-        resize: vertical; min-height: 180px;
+        resize: none; min-height: 180px;
         outline: none;
         width: 100%;
     }
     .caption-editor::placeholder { color: #A8A29E; }
+
+    /* Drag strip at the bottom edge of the caption box: resizes the caption textarea */
+    .caption-resize-handle {
+        height: 14px; cursor: ns-resize; touch-action: none;
+        display: flex; align-items: center; justify-content: center;
+        border-top: 1px solid #F5F5F4; border-radius: 0 0 10px 10px;
+    }
+    .caption-resize-handle::before {
+        content: ""; width: 36px; height: 3px; border-radius: 2px; background: #D6D3D1;
+    }
+    .caption-resize-handle:hover::before, .caption-resize-handle.dragging::before { background: #F97316; }
 
     /* First-comment editor - thinner variant */
     .comment-editor {
@@ -560,6 +571,18 @@
                                   x-text="captionLimit() ? captionCount() + ' / ' + captionLimit() : captionCount()">
                             </span>
                         </div>
+                        <div class="caption-resize-handle" title="Drag to resize the caption"
+                             x-data
+                             @pointerdown.prevent="
+                                const ta = $el.closest('.caption-wrap').querySelector('textarea[name=caption]');
+                                const startY = $event.clientY, startH = ta.offsetHeight;
+                                $el.classList.add('dragging');
+                                $el.setPointerCapture($event.pointerId);
+                                const move = (e) => { const h = Math.max(180, startH + e.clientY - startY); ta.style.height = h + 'px'; };
+                                const up = () => { $el.classList.remove('dragging'); $el.removeEventListener('pointermove', move); $el.removeEventListener('pointerup', up); };
+                                $el.addEventListener('pointermove', move);
+                                $el.addEventListener('pointerup', up);
+                             "></div>
                     </div>
                 </div>
 
