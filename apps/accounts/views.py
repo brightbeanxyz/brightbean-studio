@@ -48,8 +48,7 @@ def dashboard(request):
 @require_http_methods(["GET", "POST"])
 def account_settings(request):
     user = request.user
-    tab = request.GET.get("tab", "profile")
-    settings_active = "preferences" if tab == "preferences" else "profile"
+    settings_active = "profile"
 
     if request.method == "POST":
         action = request.POST.get("action", "")
