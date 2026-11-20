@@ -128,6 +128,17 @@
     }
     .caption-editor::placeholder { color: #A8A29E; }
 
+    /* Drag strip at the bottom edge of the caption box: resizes the caption textarea */
+    .caption-resize-handle {
+        height: 14px; cursor: ns-resize; touch-action: none;
+        display: flex; align-items: center; justify-content: center;
+        border-top: 1px solid #F5F5F4; border-radius: 0 0 10px 10px;
+    }
+    .caption-resize-handle::before {
+        content: ""; width: 36px; height: 3px; border-radius: 2px; background: #D6D3D1;
+    }
+    .caption-resize-handle:hover::before, .caption-resize-handle.dragging::before { background: #F97316; }
+
     /* First-comment editor - thinner variant */
     .comment-editor {
         font-family: system-ui, -apple-system, sans-serif;
@@ -137,7 +148,7 @@
         border-radius: 10px;
         background: #FFFFFF;
         color: #1C1917;
-        resize: none; min-height: 0;
+        resize: vertical; min-height: 0;
         outline: none;
         width: 100%;
         transition: border-color 150ms ease, box-shadow 150ms ease;
@@ -560,6 +571,18 @@
                                   x-text="captionLimit() ? captionCount() + ' / ' + captionLimit() : captionCount()">
                             </span>
                         </div>
+                        <div class="caption-resize-handle" title="Drag to resize the caption"
+                             x-data
+                             @pointerdown.prevent="
+                                const ta = $el.closest('.caption-wrap').querySelector('textarea[name=caption]');
+                                const startY = $event.clientY, startH = ta.offsetHeight;
+                                $el.classList.add('dragging');
+                                $el.setPointerCapture($event.pointerId);
+                                const move = (e) => { const h = Math.max(180, startH + e.clientY - startY); ta.style.height = h + 'px'; };
+                                const up = () => { $el.classList.remove('dragging'); $el.removeEventListener('pointermove', move); $el.removeEventListener('pointerup', up); };
+                                $el.addEventListener('pointermove', move);
+                                $el.addEventListener('pointerup', up);
+                             "></div>
                     </div>
                 </div>
 
@@ -1375,7 +1398,7 @@
                         <span class="text-[10px] font-semibold text-stone-400 bg-stone-100 px-2 py-0.5 rounded-full uppercase tracking-wider">Internal team only</span>
                     </div>
                     <textarea name="internal_notes"
-                              class="w-full text-sm font-normal px-4 py-3 rounded-xl border border-dashed border-stone-200 bg-stone-50/80 text-stone-600 outline-none focus:border-stone-300 transition-all duration-150 resize-none"
+                              class="w-full text-sm font-normal px-4 py-3 rounded-xl border border-dashed border-stone-200 bg-stone-50/80 text-stone-600 outline-none focus:border-stone-300 transition-all duration-150 resize-y"
                               placeholder="Internal team notes - not visible to clients…"
                               rows="2">{{ form.internal_notes.value|default:"" }}</textarea>
                 </div>
