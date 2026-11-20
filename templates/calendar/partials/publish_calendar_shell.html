@@ -3,7 +3,7 @@ Calendar mode shell for the Publish page.
 Toolbar: nav arrows + period + Today + view dropdown | right: filter dropdowns.
 {% endcomment %}
 
-<div class="flex-1 flex flex-col min-h-0 -mx-3 sm:-mx-4 lg:-mx-6"
+<div class="flex-1 flex flex-col min-h-0 -mx-3 sm:-mx-4 lg:-mx-6 -mb-1 lg:-mb-3"
      x-data="{ ...calendarApp(), showEventForm: false, viewOpen: false }"
      @calendar-refresh.window="htmx.trigger('#calendar-content', 'refresh')"
      hx-trigger="calendarRefresh from:body"
@@ -110,16 +110,16 @@ Toolbar: nav arrows + period + Today + view dropdown | right: filter dropdowns.
     </div>
 
     <!-- Status legend -->
-    <div class="px-3 sm:px-4 lg:px-6 pt-2 lg:pt-3">
+    <div class="px-3 sm:px-4 lg:px-6 pt-1 pb-0">
         <div class="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-2 text-[11px]">
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#A8A29E"></span><span style="color:#57534E">Draft</span></span>
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#F97316"></span><span style="color:#C2410C">Pending Review</span></span>
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#14B8A6"></span><span style="color:#0F766E">Approved</span></span>
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#3B82F6"></span><span style="color:#1D4ED8">Scheduled</span></span>
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#6366F1"></span><span style="color:#4338CA">Publishing</span></span>
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#22C55E"></span><span style="color:#15803D">Published</span></span>
-            <!-- <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#EAB308"></span><span style="color:#A16207">Partially Published</span></span> -->
-            <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#EF4444"></span><span style="color:#B91C1C">Failed</span></span>
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#A8A29E"></span><span style="color:#57534E">Draft</span></span>
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#F97316"></span><span style="color:#C2410C">Pending Review</span></span>
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#14B8A6"></span><span style="color:#0F766E">Approved</span></span>
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#3B82F6"></span><span style="color:#1D4ED8">Scheduled</span></span>
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#6366F1"></span><span style="color:#4338CA">Publishing</span></span>
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#22C55E"></span><span style="color:#15803D">Published</span></span>
+            <!-- <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#EAB308"></span><span style="color:#A16207">Partially Published</span></span> -->
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md"><span class="w-3 h-3 rounded-full" style="background:#EF4444"></span><span style="color:#B91C1C">Failed</span></span>
         </div>
     </div>
 </div>
