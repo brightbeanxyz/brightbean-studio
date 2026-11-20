@@ -188,3 +188,14 @@ class PlatformMediaTests(ComposerTestCase):
                 status="draft",
                 platform_overrides={self.instagram.id: {"media_asset_ids": [foreign.id]}},
             )
+
+    def test_composer_gives_each_channel_a_platform_label(self):
+        post = self._save()
+        response = self.client.get(
+            reverse("composer:compose_edit", kwargs={"workspace_id": self.workspace.id, "post_id": post.id})
+        )
+        self.assertEqual(response.status_code, 200)
+        limits = response.context["char_limits"]
+        self.assertEqual(limits[str(self.instagram.id)]["platform_label"], "Instagram")
+        self.assertEqual(limits[str(self.facebook.id)]["platform_label"], "Facebook")
+        self.assertContains(response, "channelLabel(accId)")

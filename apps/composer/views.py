@@ -780,6 +780,7 @@ def compose(request, workspace_id, post_id=None):
             # so the live counter can charge for them as the user types.
             "escaped_chars": acc.escaped_chars,
             "name": acc.account_name or acc.account_handle,
+            "platform_label": acc.get_platform_display(),
             "youtube_url": f"https://www.youtube.com/channel/{acc.account_platform_id}"
             if acc.platform == "youtube"
             else "",
