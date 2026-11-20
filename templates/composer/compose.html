@@ -1150,8 +1150,9 @@
                 </template>
 
                 <!-- Override toggle buttons -->
-                <div class="flex flex-wrap items-center gap-1.5" x-show="selectedAccounts.length > 0">
-                    <span class="text-xs font-medium text-stone-400 mr-0.5">Customize:</span>
+                <div x-show="selectedAccounts.length > 0">
+                    <label class="block text-sm font-semibold text-stone-500 uppercase tracking-wider mb-2">Customize</label>
+                    <div class="flex flex-wrap items-center gap-1.5">
                     <template x-for="accId in selectedAccounts" :key="'toggle-' + accId">
                         <button type="button"
                                 class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-full border transition-all duration-150 cursor-pointer"
@@ -1166,6 +1167,7 @@
                             <span x-text="charLimits[accId]?.name"></span>
                         </button>
                     </template>
+                    </div>
                 </div>
 
                 <!-- Platform-specific overrides -->
