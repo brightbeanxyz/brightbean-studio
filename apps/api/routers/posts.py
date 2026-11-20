@@ -183,6 +183,7 @@ def create(request, payload: CreatePostRequest):
             "title": ov.title,
             "caption": ov.caption,
             "first_comment": ov.first_comment,
+            "media_asset_ids": ov.media_asset_ids,
         }
 
     # ---- Atomic claim-first idempotency. Three early-out branches

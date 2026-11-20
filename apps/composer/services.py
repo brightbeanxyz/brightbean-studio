@@ -172,18 +172,35 @@ def create_post(
         if missing:
             raise ValueError(f"Media asset(s) not found in workspace {workspace.id}: {missing}")
 
+    override = (platform_overrides or {}).get(social_account.id) or {}
+    # Media chosen for this account only. Same workspace rule as the post media.
+    own_media_ids: list[str] = []
+    own_assets: list[MediaAsset] = []
+    requested_own = list(override.get("media_asset_ids") or [])
+    if requested_own:
+        wanted = []
+        for raw in requested_own:
+            try:
+                wanted.append(raw if isinstance(raw, uuid.UUID) else uuid.UUID(str(raw)))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise ValueError(f"Media asset(s) not found in workspace {workspace.id}: {[raw]}") from exc
+        by_id = {a.id: a for a in MediaAsset.objects.filter(id__in=wanted, workspace=workspace)}
+        missing = [str(w) for w in wanted if w not in by_id]
+        if missing:
+            raise ValueError(f"Media asset(s) not found in workspace {workspace.id}: {missing}")
+        own_assets = [by_id[w] for w in wanted]
+        own_media_ids = [str(a.id) for a in own_assets]
+
     if status == "scheduled":
         # A new post has no platform_extra, so a Pinterest pin has no board
         # yet and is refused here: it can be created as a draft, given a
         # board in the composer, and scheduled from there.
         reason = publish_blocker(
             social_account,
-            media_types=usable_media_types(asset_map.values()),
+            media_types=usable_media_types(own_assets or asset_map.values()),
         )
         if reason:
             raise ValueError(reason)
-
-    override = (platform_overrides or {}).get(social_account.id) or {}
 
     with transaction.atomic():
         post = Post.objects.create(
@@ -211,6 +228,7 @@ def create_post(
             platform_specific_title=override.get("title"),
             platform_specific_caption=override.get("caption"),
             platform_specific_first_comment=override.get("first_comment"),
+            platform_specific_media=own_media_ids or None,
         )
         for position, (_mid, u) in enumerate(resolved):
             # ``u`` is validated non-None and present in ``asset_map`` above

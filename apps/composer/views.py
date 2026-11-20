@@ -266,6 +266,10 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
         pp.platform_specific_title = override_title if override_title else None
         pp.platform_specific_caption = override_caption if override_caption else None
         pp.platform_specific_first_comment = override_comment if override_comment else None
+        override_media_ids = _parse_override_media_ids(request, acc_id)
+        if override_media_ids is not None:
+            valid_ids = [str(a.id) for a in _resolve_override_assets(workspace, override_media_ids)]
+            pp.platform_specific_media = valid_ids or None
 
         # Per-platform extras
         if account.platform == "facebook" and f"facebook_panel_{acc_id}" in request.POST:
@@ -452,6 +456,43 @@ def _composer_media_types(request, post, workspace) -> set[str]:
     return media_types
 
 
+def _parse_override_media_ids(request, acc_id):
+    """Asset ids posted as one account's own media; ``None`` when the field is absent.
+
+    ``None`` (field not posted) leaves the stored choice alone, so a save from
+    a client that never rendered the field cannot wipe it. An empty string
+    means "use the post's media" and clears the choice.
+    """
+    key = f"override_media_{acc_id}"
+    if key not in request.POST:
+        return None
+    ids = []
+    for raw in request.POST.get(key, "").split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            ids.append(str(uuid.UUID(raw)))
+        except ValueError:
+            continue
+    return list(dict.fromkeys(ids))
+
+
+def _resolve_override_assets(workspace, ids):
+    """Media assets the workspace may use, in the order of ``ids``."""
+    if not ids:
+        return []
+    assets = MediaAsset.objects.for_workspace_with_shared(workspace.id, workspace.organization_id).filter(id__in=ids)
+    by_id = {str(a.id): a for a in assets}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+def _asset_preview_url(asset):
+    if asset.thumbnail:
+        return asset.thumbnail.url
+    return asset.file.url if asset.file else ""
+
+
 def _validate_required_media(request, post, workspace, action):
     """Refuse to schedule a post without the media a selected platform needs.
 
@@ -471,7 +512,16 @@ def _validate_required_media(request, post, workspace, action):
     if not any(requires_media(account.platform) for account in accounts):
         return None
     media_types = _composer_media_types(request, post, workspace)
-    blocked = [account for account in accounts if media_blocker(account, media_types=media_types)]
+    own_media_types = {}
+    for account in accounts:
+        own_ids = _parse_override_media_ids(request, account.id)
+        if own_ids:
+            own_media_types[account.id] = usable_media_types(_resolve_override_assets(workspace, own_ids))
+    blocked = [
+        account
+        for account in accounts
+        if media_blocker(account, media_types=own_media_types.get(account.id, media_types))
+    ]
     if not blocked:
         return None
 
@@ -513,6 +563,7 @@ def _save_version(post, user):
                 "title_override": pp.platform_specific_title,
                 "caption_override": pp.platform_specific_caption,
                 "first_comment_override": pp.platform_specific_first_comment,
+                "media_override": pp.platform_specific_media,
                 "platform_extra": authored_youtube_settings(pp.platform_extra)
                 if pp.social_account.platform == "youtube"
                 else pp.platform_extra or {},
@@ -682,6 +733,16 @@ def compose(request, workspace_id, post_id=None):
         selected_account_ids = []
         media_attachments = []
         platform_extras = {}
+
+    # Media chosen for a single channel, for the composer to show and edit.
+    platform_media = {}
+    for pp in platform_post_list:
+        own_ids = [str(i) for i in pp.platform_specific_media] if isinstance(pp.platform_specific_media, list) else []
+        if own_ids:
+            platform_media[str(pp.social_account_id)] = [
+                {"id": str(a.id), "url": _asset_preview_url(a), "filename": a.filename}
+                for a in _resolve_override_assets(workspace, own_ids)
+            ]
 
     # Clear any stale pending media from previous compose sessions.
     # Each compose page load starts fresh; the upload flow re-populates
@@ -874,6 +935,7 @@ def compose(request, workspace_id, post_id=None):
         "social_accounts": social_accounts,
         "selected_account_ids": [str(aid) for aid in selected_account_ids],
         "platform_extras": platform_extras,
+        "platform_media": platform_media,
         "media_attachments": media_attachments,
         "media_items": media_items,
         "char_limits": char_limits,
@@ -1608,6 +1670,11 @@ def preview(request, workspace_id):
             override_key = f"override_caption_{account.id}"
             effective_title = request.POST.get(override_title_key, "") or title
             effective_caption = request.POST.get(override_key, "") or caption
+            own_ids = _parse_override_media_ids(request, account.id)
+            own_media_items = [
+                {"url": a.file.url if a.file else "", "is_video": a.is_video, "filename": a.filename}
+                for a in _resolve_override_assets(workspace, own_ids or [])
+            ]
             char_limit = account.char_limit
             # Counted after escaping, so the badge matches what gets published.
             char_count = account.caption_wire_length(effective_caption)
@@ -1625,6 +1692,7 @@ def preview(request, workspace_id):
                     if len(effective_caption) > char_limit
                     else effective_caption,
                     "needs_title": field_config["needs_title"],
+                    "media_items": own_media_items,
                 }
             )
 

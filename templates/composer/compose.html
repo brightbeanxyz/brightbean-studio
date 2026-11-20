@@ -1191,6 +1191,36 @@
                                   :placeholder="'Custom ' + (charLimits[accId]?.caption_label || 'caption') + ' for this platform...'"
                                   rows="3"></textarea>
 
+                        <!-- Media for this channel only -->
+                        <div class="mt-3">
+                            <label class="block text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-1">Media for this channel</label>
+                            <input type="hidden" :name="'override_media_' + accId"
+                                   :value="(platformMedia[accId] || []).map(m => m.id).join(',')">
+                            <input type="file" accept="image/*" class="hidden platform-media-upload-input"
+                                   :data-pm-upload-for="accId"
+                                   @change="uploadPlatformMedia(accId, $event)">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <template x-for="(m, idx) in (platformMedia[accId] || [])" :key="m.id">
+                                    <div class="relative w-16 h-16 rounded-lg overflow-hidden border border-stone-200 bg-stone-50">
+                                        <img :src="m.url" :alt="m.filename" class="w-full h-full object-cover">
+                                        <button type="button" title="Remove"
+                                                class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white text-[10px] leading-none flex items-center justify-center cursor-pointer"
+                                                @click="removePlatformMedia(accId, idx)">&times;</button>
+                                    </div>
+                                </template>
+                                <button type="button"
+                                        class="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-stone-200 text-stone-500 hover:text-stone-700 hover:border-stone-300 transition-colors cursor-pointer"
+                                        @click="openPlatformMediaPicker(accId)">Choose from library</button>
+                                <button type="button"
+                                        class="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-stone-200 text-stone-500 hover:text-stone-700 hover:border-stone-300 transition-colors cursor-pointer disabled:opacity-50"
+                                        :disabled="platformMediaUploading[accId]"
+                                        @click="triggerPlatformMediaUpload(accId)"
+                                        x-text="platformMediaUploading[accId] ? 'Uploading…' : 'Upload'"></button>
+                            </div>
+                            <p class="text-[11px] text-stone-400 mt-1"
+                               x-text="(platformMedia[accId] || []).length ? 'These images replace the post media on this channel only.' : 'This channel uses the post media. Add images here to replace them.'"></p>
+                        </div>
+
                     </div>
                 </template>
 
@@ -1752,7 +1782,7 @@
         <div class="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" @click="showThumbnailPicker = false"></div>
         <div class="relative bg-white rounded-2xl shadow-xl border border-stone-200 w-[calc(100vw-1rem)] sm:w-[640px] mx-2 sm:mx-0 max-h-[85vh] sm:max-h-[70vh] overflow-hidden">
             <div class="px-4 sm:px-6 py-4 border-b border-stone-100 flex items-center justify-between">
-                <h2 class="text-base font-semibold text-stone-900">Select Thumbnail</h2>
+                <h2 class="text-base font-semibold text-stone-900" x-text="pickerPurpose === 'platform-media' ? 'Select Image' : 'Select Thumbnail'">Select Thumbnail</h2>
                 <button @click="showThumbnailPicker = false"
                         class="w-8 h-8 rounded-lg border border-stone-200 text-stone-400 hover:text-stone-600 hover:border-stone-300 flex items-center justify-center transition-all duration-150 cursor-pointer">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -2040,6 +2070,7 @@
 {{ selected_account_ids|json_script:"composer-selected-accounts" }}
 {{ char_limits|json_script:"composer-char-limits" }}
 {{ platform_extras|json_script:"composer-platform-extras" }}
+{{ platform_media|json_script:"composer-platform-media" }}
 {{ media_items|json_script:"composer-media-items" }}
 <script nonce="{{ request.csp_nonce }}">
 function composerApp() {
@@ -2055,6 +2086,9 @@ function composerApp() {
         showMediaPicker: false,
         showThumbnailPicker: false,
         thumbnailPickerAccId: null,
+        pickerPurpose: 'thumbnail',
+        platformMedia: JSON.parse(document.getElementById('composer-platform-media').textContent) || {},
+        platformMediaUploading: {},
         thumbnailUploading: {},
         showPreviewPanel: false,
         showSaveToast: false,
@@ -2197,12 +2231,21 @@ function composerApp() {
                 this.overrides[id] = false;
                 this.advancedOpen[id] = false;
                 if (!this.platformExtras[id]) this.platformExtras[id] = {};
+                if (!this.platformMedia[id]) this.platformMedia[id] = [];
+                if (this.platformMedia[id].length) this.overrides[id] = true;
             });
 
             // Listen for thumbnail selection events dispatched from the picker
             this.$root.addEventListener('thumbnail-selected', (e) => {
                 const accId = this.thumbnailPickerAccId;
                 if (!accId) return;
+                if (this.pickerPurpose === 'platform-media') {
+                    this._addPlatformMedia(accId, { id: e.detail.assetId, url: e.detail.url, filename: e.detail.filename });
+                    this.showThumbnailPicker = false;
+                    this.thumbnailPickerAccId = null;
+                    this.pickerPurpose = 'thumbnail';
+                    return;
+                }
                 if (!this.platformExtras[accId]) this.platformExtras[accId] = {};
                 this.platformExtras[accId].thumbnail_asset_id = e.detail.assetId;
                 this.platformExtras[accId].thumbnail_url = e.detail.url;
@@ -2287,7 +2330,70 @@ function composerApp() {
             document.body.dispatchEvent(new CustomEvent('previewUpdate'));
         },
 
+
+        // ── Media chosen for one channel ────────────────────────────
+        openPlatformMediaPicker(accId) {
+            this.pickerPurpose = 'platform-media';
+            this.thumbnailPickerAccId = accId;
+            this.showThumbnailPicker = true;
+        },
+
+        removePlatformMedia(accId, idx) {
+            const list = (this.platformMedia[accId] || []).slice();
+            list.splice(idx, 1);
+            this.platformMedia[accId] = list;
+            this.triggerPreviewUpdate();
+        },
+
+        _addPlatformMedia(accId, item) {
+            const list = (this.platformMedia[accId] || []).slice();
+            if (!list.some(m => m.id === item.id)) list.push(item);
+            this.platformMedia[accId] = list;
+            this.overrides[accId] = true;
+            this.triggerPreviewUpdate();
+        },
+
+        triggerPlatformMediaUpload(accId) {
+            const input = this.$root.querySelector(
+                `input.platform-media-upload-input[data-pm-upload-for="${accId}"]`
+            );
+            if (input) input.click();
+        },
+
+        uploadPlatformMedia(accId, event) {
+            const files = Array.from(event.target.files || []);
+            event.target.value = '';
+            const images = files.filter(f => f.type.startsWith('image/'));
+            if (!images.length) {
+                if (files.length) {
+                    this.formError = 'Channel media must be an image (JPG or PNG).';
+                    setTimeout(() => { this.formError = ''; }, 4000);
+                }
+                return;
+            }
+            this.platformMediaUploading[accId] = true;
+            const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+            const uploads = images.map(file => {
+                const fd = new FormData();
+                fd.append('file', file, file.name);
+                return fetch('{% url "composer:thumbnail_upload" workspace_id=workspace.id %}', {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': csrf },
+                    body: fd,
+                })
+                    .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+                    .then(data => this._addPlatformMedia(accId, { id: data.asset_id, url: data.url, filename: data.filename }));
+            });
+            Promise.all(uploads)
+                .catch(err => {
+                    this.formError = (err && err.error) || 'Image upload failed.';
+                    setTimeout(() => { this.formError = ''; }, 4000);
+                })
+                .finally(() => { this.platformMediaUploading[accId] = false; });
+        },
+
         openThumbnailPicker(accId) {
+            this.pickerPurpose = 'thumbnail';
             this.thumbnailPickerAccId = accId;
             this.showThumbnailPicker = true;
         },
