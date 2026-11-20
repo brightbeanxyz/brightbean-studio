@@ -122,7 +122,7 @@
         background: transparent;
         color: #1C1917;
         border: none;
-        resize: none; min-height: 180px;
+        resize: vertical; min-height: 180px;
         outline: none;
         width: 100%;
     }
@@ -137,7 +137,7 @@
         border-radius: 10px;
         background: #FFFFFF;
         color: #1C1917;
-        resize: none; min-height: 0;
+        resize: vertical; min-height: 0;
         outline: none;
         width: 100%;
         transition: border-color 150ms ease, box-shadow 150ms ease;
@@ -1375,7 +1375,7 @@
                         <span class="text-[10px] font-semibold text-stone-400 bg-stone-100 px-2 py-0.5 rounded-full uppercase tracking-wider">Internal team only</span>
                     </div>
                     <textarea name="internal_notes"
-                              class="w-full text-sm font-normal px-4 py-3 rounded-xl border border-dashed border-stone-200 bg-stone-50/80 text-stone-600 outline-none focus:border-stone-300 transition-all duration-150 resize-none"
+                              class="w-full text-sm font-normal px-4 py-3 rounded-xl border border-dashed border-stone-200 bg-stone-50/80 text-stone-600 outline-none focus:border-stone-300 transition-all duration-150 resize-y"
                               placeholder="Internal team notes - not visible to clients…"
                               rows="2">{{ form.internal_notes.value|default:"" }}</textarea>
                 </div>
