@@ -4,8 +4,8 @@ Context: calendar_weeks, month_name, prev_month, next_month, day_names, unschedu
 Enhanced with: holidays, custom events, category colors, recurring badges.
 {% endcomment %}
 
-<div class="bg-white overflow-x-auto" style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both">
-  <div class="min-w-[640px]">
+<div class="bg-white overflow-x-auto min-h-full flex flex-col" style="animation: slideUp 200ms cubic-bezier(0.16,1,0.3,1) both">
+  <div class="min-w-[560px] flex-1 flex flex-col">
     <!-- Day headers -->
     <div class="grid grid-cols-7 border-b border-stone-200 bg-stone-50">
         {% for day_name in day_names %}
@@ -15,9 +15,10 @@ Enhanced with: holidays, custom events, category colors, recurring badges.
         {% endfor %}
     </div>
 
-    <!-- Week rows -->
+    <!-- Week rows: fill the available height, each row gets an equal share -->
+    <div class="flex-1 flex flex-col">
     {% for week in calendar_weeks %}
-    <div class="grid grid-cols-7">
+    <div class="grid grid-cols-7 flex-1">
         {% for day in week %}
         <div class="cal-day cal-add-cell cal-drop {% if day.posts %}has-posts{% endif %} {% if day.is_today %}today{% elif day.is_past %}past{% endif %} {% if not day.is_current_month %}other-month{% endif %}"
              data-date="{{ day.date|date:'Y-m-d' }}" data-time="09:00">
@@ -88,5 +89,6 @@ Enhanced with: holidays, custom events, category colors, recurring badges.
         {% endfor %}
     </div>
     {% endfor %}
+    </div>
   </div>
 </div>
