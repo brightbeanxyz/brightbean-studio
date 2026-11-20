@@ -165,6 +165,14 @@ class PlatformOverride(Schema):
     title: str | None = Field(None, max_length=255)
     caption: str | None = Field(None, max_length=10_000)
     first_comment: str | None = Field(None, max_length=10_000)
+    media_asset_ids: list[uuid.UUID] | None = Field(
+        None,
+        description=(
+            "MediaAsset IDs from the workspace library to publish on this account "
+            "instead of the post-level ``media_asset_ids``. Position-ordered. "
+            "Omit or send ``null`` to use the post-level media."
+        ),
+    )
 
 
 class CreatePostRequest(Schema):

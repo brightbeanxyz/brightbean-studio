@@ -5,12 +5,13 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
 
 {% if previews %}
     {% for p in previews %}
+    {% with media_items=p.media_items|default:media_items %}
     <div class="preview-card" style="animation: slideUp 200ms {{ forloop.counter0|add:0 }}50ms cubic-bezier(0.16,1,0.3,1) both">
 
         <!-- Platform label + char badge -->
         <div class="px-3.5 py-2 border-b flex items-center gap-2" style="border-color: #E7E5E4;">
             {% if p.account.platform != "youtube" %}{% include "partials/_platform_icon.html" with platform=p.account.platform size="sm" %}{% endif %}
-            <span class="text-[11px] font-semibold text-stone-500 flex-1">{% if p.account.platform == "youtube" %}YouTube{% else %}{{ p.account.platform|title }}{% endif %} Preview</span>
+            <span class="text-[11px] font-semibold text-stone-500 flex-1">{{ p.account.display_label }}</span>
             <span class="text-[10px] font-semibold tabular-nums px-2 py-0.5 rounded-full
                          {% if p.is_over_limit %}bg-red-50 text-red-600{% else %}bg-stone-100 text-stone-500{% endif %}">
                 {{ p.char_count }}/{{ p.char_limit }}
@@ -554,6 +555,7 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
         </div>
         {% endif %}
     </div>
+    {% endwith %}
     {% endfor %}
 
 {% else %}

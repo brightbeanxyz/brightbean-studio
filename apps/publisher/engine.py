@@ -717,6 +717,41 @@ class PublishEngine:
                 exc_info=True,
             )
 
+    @staticmethod
+    def _effective_attachments(platform_post):
+        """The media this platform publishes.
+
+        A platform post can carry its own list of asset ids in
+        ``platform_specific_media``. When it does, that list replaces the
+        post's shared media for this platform only. The shared attachments
+        still supply alt text for assets that appear in both.
+        """
+        shared = list(platform_post.post.media_attachments.select_related("media_asset").order_by("position"))
+        own_ids = platform_post.platform_specific_media
+        if not own_ids or not isinstance(own_ids, list):
+            return shared
+
+        from apps.composer.models import PostMedia
+        from apps.media_library.models import MediaAsset
+
+        assets = MediaAsset.objects.in_bulk([i for i in own_ids if i])
+        alt_by_asset = {str(pm.media_asset_id): pm.alt_text for pm in shared}
+        own = []
+        for position, raw_id in enumerate(own_ids):
+            asset = next((a for key, a in assets.items() if str(key) == str(raw_id)), None)
+            if asset is None:
+                continue
+            own.append(
+                PostMedia(
+                    post=platform_post.post,
+                    media_asset=asset,
+                    position=position,
+                    alt_text=alt_by_asset.get(str(asset.id), ""),
+                )
+            )
+        # Every chosen asset was deleted: fall back rather than publish without media.
+        return own or shared
+
     def _dispatch_to_provider(self, platform_post, media_cache=None):
         """Dispatch to the appropriate platform provider.
 
@@ -730,7 +765,7 @@ class PublishEngine:
         """
         account = platform_post.social_account
         platform = account.platform
-        attachments = list(platform_post.post.media_attachments.select_related("media_asset").order_by("position"))
+        attachments = self._effective_attachments(platform_post)
 
         # Every scheduled row passes through here, however it was scheduled, so
         # this is where a post the platform can only refuse is stopped for
