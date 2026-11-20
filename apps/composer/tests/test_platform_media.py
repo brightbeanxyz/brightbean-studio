@@ -199,3 +199,23 @@ class PlatformMediaTests(ComposerTestCase):
         self.assertEqual(limits[str(self.instagram.id)]["platform_label"], "Instagram")
         self.assertEqual(limits[str(self.facebook.id)]["platform_label"], "Facebook")
         self.assertContains(response, "channelLabel(accId)")
+
+    def test_preview_shows_the_channel_media(self):
+        post = self._save()
+        PostMedia.objects.create(post=post, media_asset=self.shared, position=0)
+        url = reverse("composer:preview", kwargs={"workspace_id": self.workspace.id})
+        base = {
+            "caption": "body",
+            "selected_accounts": f"{self.instagram.id},{self.facebook.id}",
+            "_autosave_post_id": str(post.id),
+        }
+
+        plain = self.client.post(url, data=base).content.decode()
+        self.assertIn(self.shared.file.url, plain)
+        self.assertNotIn(self.square.file.url, plain)
+
+        own = self.client.post(url, data={**base, f"override_media_{self.instagram.id}": str(self.square.id)})
+        html = own.content.decode()
+        self.assertIn(self.square.file.url, html)
+        # Facebook keeps the post media, so both images are on the page.
+        self.assertIn(self.shared.file.url, html)

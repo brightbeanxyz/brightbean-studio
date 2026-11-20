@@ -2357,7 +2357,7 @@ function composerApp() {
             const list = (this.platformMedia[accId] || []).slice();
             list.splice(idx, 1);
             this.platformMedia[accId] = list;
-            this.triggerPreviewUpdate();
+            this.$nextTick(() => this.triggerPreviewUpdate());
         },
 
         _addPlatformMedia(accId, item) {
@@ -2365,7 +2365,7 @@ function composerApp() {
             if (!list.some(m => m.id === item.id)) list.push(item);
             this.platformMedia[accId] = list;
             this.overrides[accId] = true;
-            this.triggerPreviewUpdate();
+            this.$nextTick(() => this.triggerPreviewUpdate());
         },
 
         triggerPlatformMediaUpload(accId) {
