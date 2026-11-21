@@ -1312,3 +1312,73 @@ def test_clean_collaborators_does_not_cut_a_long_list():
 )
 def test_container_options(extra, reel, expected):
     assert container_options(extra, reel=reel) == expected
+
+
+OPTIONS = {"ig_user_id": "ig-1", "collaborators": ["@alpha", "beta"], "video_cover_timestamp_ms": 2000}
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_a_reel_carries_collaborators_and_its_cover_frame(make_provider, create_url):
+    provider = make_provider()
+
+    _publish(provider, media_urls=[VIDEO_URL], post_type=PostType.REEL, extra=OPTIONS)
+
+    sent = provider._request.call_args_list[0].kwargs["json"]
+    assert sent["media_type"] == "REELS"
+    assert sent["collaborators"] == ["alpha", "beta"]
+    assert sent["thumb_offset"] == 2000
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_an_image_post_carries_collaborators_but_no_cover_frame(make_provider, create_url):
+    provider = make_provider()
+
+    _publish(provider, media_urls=[IMAGE_URL], post_type=PostType.IMAGE, extra=OPTIONS)
+
+    assert provider._request.call_args_list[0].kwargs["json"] == {
+        "image_url": IMAGE_URL,
+        "collaborators": ["alpha", "beta"],
+    }
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_a_story_ignores_collaborators_and_cover_frame(make_provider, create_url):
+    """Meta supports neither field on stories; sending them fails the container."""
+    provider = make_provider()
+
+    _publish(provider, media_urls=[VIDEO_URL], post_type=PostType.STORY, extra=OPTIONS)
+
+    assert provider._request.call_args_list[0].kwargs["json"] == {
+        "media_type": "STORIES",
+        "video_url": VIDEO_URL,
+    }
+
+
+@pytest.mark.parametrize(("make_provider", "create_url"), IG_PUBLISHERS)
+def test_a_carousel_puts_collaborators_on_the_parent_only(make_provider, create_url):
+    provider = make_provider()
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"id": "child-1"}),
+            _resp({"status_code": "FINISHED"}),
+            _resp({"id": "child-2"}),
+            _resp({"status_code": "FINISHED"}),
+            _resp({"id": "carousel-1"}),
+            _resp({"status_code": "FINISHED"}),
+            _resp({"id": "media-1"}),
+        ]
+    )
+
+    provider.publish_post(
+        "token",
+        PublishContent(media_urls=[IMAGE_URL, VIDEO_URL], post_type=PostType.CAROUSEL, extra=OPTIONS),
+    )
+
+    child_1, child_2, parent = (provider._request.call_args_list[i].kwargs["json"] for i in (0, 2, 4))
+    assert "collaborators" not in child_1
+    assert "collaborators" not in child_2
+    assert parent == {
+        "media_type": "CAROUSEL",
+        "children": "child-1,child-2",
+        "collaborators": ["alpha", "beta"],
+    }
