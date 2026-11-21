@@ -829,3 +829,17 @@ class InstagramSettingsTests(AccountScopeTestsBase):
         self.assertIn(response.status_code, (200, 204, 302))
         self.ig_pp.refresh_from_db()
         self.assertEqual(self.ig_pp.platform_extra, {"post_type": "story", "collaborators": ["alpha"]})
+
+    def test_composer_renders_the_instagram_panel_with_saved_values(self):
+        self.ig_pp.platform_extra = {"collaborators": ["alpha", "beta"]}
+        self.ig_pp.save(update_fields=["platform_extra"])
+        edit_url = reverse(
+            "composer:compose_edit",
+            kwargs={"workspace_id": self.workspace.id, "post_id": self.post.id},
+        )
+
+        body = self.client.get(edit_url).content.decode("utf-8")
+
+        self.assertIn("'instagram_collaborators_' + accId", body)
+        self.assertIn("'instagram_video_cover_timestamp_ms_' + accId", body)
+        self.assertIn('"collaborators": ["alpha", "beta"]', body)
