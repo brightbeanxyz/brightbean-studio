@@ -20,6 +20,7 @@ from urllib.parse import urlencode
 
 from .base import SocialProvider
 from .exceptions import APIError, OAuthError, ProviderError, PublishError
+from .instagram_options import container_options
 from .meta_comments import (
     fetch_instagram_comments,
     find_own_instagram_comment,
@@ -345,6 +346,9 @@ class InstagramLoginProvider(SocialProvider):
         else:
             payload["image_url"] = url
 
+        if content.post_type != PostType.STORY:
+            payload.update(container_options(content.extra, reel=payload.get("media_type") == "REELS"))
+
         container_id = self._create_container(access_token, payload)
         self._wait_for_container(access_token, container_id)
         return self._publish_container(access_token, container_id)
@@ -370,6 +374,7 @@ class InstagramLoginProvider(SocialProvider):
         }
         if content.text:
             carousel_payload["caption"] = content.text
+        carousel_payload.update(container_options(content.extra, reel=False))
 
         carousel_id = self._create_container(access_token, carousel_payload)
         self._wait_for_container(access_token, carousel_id)

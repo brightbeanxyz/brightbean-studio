@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 
 from .base import SocialProvider
 from .exceptions import APIError, MessagingError, OAuthError, ProviderError, PublishError, WebhookChannelError
+from .instagram_options import container_options
 from .meta_accounts import fetch_me_accounts, page_can_publish
 from .meta_comments import (
     fetch_instagram_comments,
@@ -366,6 +367,9 @@ class InstagramProvider(SocialProvider):
         else:
             payload["image_url"] = url
 
+        if content.post_type != PostType.STORY:
+            payload.update(container_options(content.extra, reel=payload.get("media_type") == "REELS"))
+
         # Step 1: create container
         container_id = self._create_container(access_token, ig_user_id, payload)
 
@@ -400,6 +404,7 @@ class InstagramProvider(SocialProvider):
         }
         if content.text:
             carousel_payload["caption"] = content.text
+        carousel_payload.update(container_options(content.extra, reel=False))
 
         carousel_id = self._create_container(access_token, ig_user_id, carousel_payload)
         self._wait_for_container(access_token, carousel_id)
