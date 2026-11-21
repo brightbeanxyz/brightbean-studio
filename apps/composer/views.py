@@ -37,6 +37,7 @@ from apps.members.models import WorkspaceMembership
 from apps.social_accounts.models import SocialAccount
 from apps.workspaces.models import Workspace
 from providers import is_video_only, requires_media
+from providers.instagram_options import MAX_COLLABORATORS, clean_collaborators
 from providers.tiktok import VALID_PRIVACY_LEVELS as TIKTOK_PRIVACY_LEVELS
 
 from .forms import ContentCategoryForm, PostForm
@@ -358,7 +359,53 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
                     extra["video_cover_timestamp_ms"] = cover_ms_val
             pp.platform_extra = extra
 
+        elif account.platform in INSTAGRAM_PLATFORMS and f"instagram_panel_{acc_id}" in request.POST:
+            # Gated on the panel marker like Facebook's, and merged into the
+            # existing extras so a post_type hint (e.g. story) survives.
+            extra = {**(pp.platform_extra or {})}
+            collaborators = clean_collaborators(request.POST.get(f"instagram_collaborators_{acc_id}", ""))
+            # Too many names: save_post already answered 400; an autosave keeps the saved list.
+            if len(collaborators) <= MAX_COLLABORATORS:
+                if collaborators:
+                    extra["collaborators"] = collaborators
+                else:
+                    extra.pop("collaborators", None)
+            try:
+                cover_ms_val = int(request.POST.get(f"instagram_video_cover_timestamp_ms_{acc_id}", "").strip())
+            except ValueError:
+                cover_ms_val = -1
+            if cover_ms_val >= 0:
+                extra["video_cover_timestamp_ms"] = cover_ms_val
+            else:
+                extra.pop("video_cover_timestamp_ms", None)
+            pp.platform_extra = extra
+
         pp.save()
+
+
+INSTAGRAM_PLATFORMS = ("instagram", "instagram_login")
+
+
+def _validate_instagram_collaborators(request, workspace):
+    """Meta rejects the whole post past its collaborator limit, so refuse it at save."""
+    selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
+    if not selected_ids:
+        return None
+    accounts = SocialAccount.objects.filter(id__in=selected_ids, workspace=workspace, platform__in=INSTAGRAM_PLATFORMS)
+    for account in accounts:
+        names = clean_collaborators(request.POST.get(f"instagram_collaborators_{account.id}", ""))
+        if len(names) > MAX_COLLABORATORS:
+            return JsonResponse(
+                {
+                    "errors": {
+                        "instagram_collaborators": (
+                            f"Instagram allows up to {MAX_COLLABORATORS} collaborators ({account.account_name})."
+                        )
+                    }
+                },
+                status=400,
+            )
+    return None
 
 
 def _validate_pinterest_board_selection(request, post, workspace):
@@ -1069,6 +1116,10 @@ def save_post(request, workspace_id, post_id=None):
     pinterest_board_error = _validate_pinterest_board_selection(request, post, workspace)
     if pinterest_board_error is not None:
         return pinterest_board_error
+
+    collaborators_error = _validate_instagram_collaborators(request, workspace)
+    if collaborators_error is not None:
+        return collaborators_error
 
     media_error = _validate_required_media(request, post, workspace, action)
     if media_error is not None:

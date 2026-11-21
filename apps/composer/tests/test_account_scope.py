@@ -754,3 +754,78 @@ class TikTokComposerDefaultsTests(AccountScopeTestsBase):
         self.assertIn("ttAllowComment: platformExtras[accId]?.disable_comment === false", html)
         self.assertIn("ttAllowDuet: platformExtras[accId]?.disable_duet === false", html)
         self.assertIn("ttAllowStitch: platformExtras[accId]?.disable_stitch === false", html)
+
+
+class InstagramSettingsTests(AccountScopeTestsBase):
+    def setUp(self):
+        super().setUp()
+        self.instagram = SocialAccount.objects.create(
+            workspace=self.workspace,
+            platform="instagram",
+            account_platform_id="ig-1",
+            account_name="Instagram Account",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        self.ig_pp = PlatformPost.objects.create(
+            post=self.post,
+            social_account=self.instagram,
+            status=PlatformPost.Status.DRAFT,
+            platform_extra={"post_type": "reel"},
+        )
+
+    def _instagram_payload(self, collaborators="", cover_ms="", panel=True):
+        acc = str(self.instagram.id)
+        fields = {}
+        if panel:
+            fields = {
+                f"instagram_panel_{acc}": "1",
+                f"instagram_collaborators_{acc}": collaborators,
+                f"instagram_video_cover_timestamp_ms_{acc}": cover_ms,
+            }
+        return self._payload(selected_accounts=acc, account_scope=acc, **fields)
+
+    def test_collaborators_and_cover_round_trip_into_platform_extra(self):
+        response = self.client.post(self.save_url, data=self._instagram_payload("@alpha, beta", "1500"))
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.ig_pp.refresh_from_db()
+        self.assertEqual(
+            self.ig_pp.platform_extra,
+            {"post_type": "reel", "collaborators": ["alpha", "beta"], "video_cover_timestamp_ms": 1500},
+        )
+
+    def test_blank_fields_clear_both_options(self):
+        self.ig_pp.platform_extra = {"post_type": "reel", "collaborators": ["alpha"], "video_cover_timestamp_ms": 10}
+        self.ig_pp.save(update_fields=["platform_extra"])
+
+        response = self.client.post(self.save_url, data=self._instagram_payload())
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.ig_pp.refresh_from_db()
+        self.assertEqual(self.ig_pp.platform_extra, {"post_type": "reel"})
+
+    def test_more_than_three_collaborators_is_rejected_on_save(self):
+        response = self.client.post(self.save_url, data=self._instagram_payload("a b c d"))
+
+        self.assertEqual(response.status_code, 400)
+        self.ig_pp.refresh_from_db()
+        self.assertEqual(self.ig_pp.platform_extra, {"post_type": "reel"})
+
+    def test_autosave_with_too_many_collaborators_keeps_the_saved_list(self):
+        self.ig_pp.platform_extra = {"collaborators": ["alpha"]}
+        self.ig_pp.save(update_fields=["platform_extra"])
+
+        self.client.post(self.autosave_url, data=self._instagram_payload("a b c d"))
+
+        self.ig_pp.refresh_from_db()
+        self.assertEqual(self.ig_pp.platform_extra["collaborators"], ["alpha"])
+
+    def test_a_save_without_the_panel_leaves_extras_untouched(self):
+        self.ig_pp.platform_extra = {"post_type": "story", "collaborators": ["alpha"]}
+        self.ig_pp.save(update_fields=["platform_extra"])
+
+        response = self.client.post(self.save_url, data=self._instagram_payload(panel=False))
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.ig_pp.refresh_from_db()
+        self.assertEqual(self.ig_pp.platform_extra, {"post_type": "story", "collaborators": ["alpha"]})
