@@ -7,6 +7,7 @@ import pytest
 from providers.exceptions import APIError, PublishError
 from providers.instagram import InstagramProvider
 from providers.instagram_login import InstagramLoginProvider
+from providers.instagram_options import MAX_COLLABORATORS, clean_collaborators, container_options
 from providers.meta_comments import INSTAGRAM_COMMENT_FIELD_SETS
 from providers.types import PostType, PublishContent
 
@@ -1266,3 +1267,48 @@ def test_video_is_a_declared_post_type(provider_cls):
     """An explicit post_type hint can still hand the provider VIDEO, so the
     declared contract has to admit it."""
     assert PostType.VIDEO in provider_cls(IG_CREDS).supported_post_types
+
+
+# ----------------------------------------------------------------------
+# Collaborators and Reel cover frame
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("@alpha, beta\n@ALPHA  gamma", ["alpha", "beta", "gamma"]),
+        (["@x", " ", "y"], ["x", "y"]),
+        ("", []),
+        (None, []),
+    ],
+)
+def test_clean_collaborators_strips_at_signs_blanks_and_repeats(value, expected):
+    assert clean_collaborators(value) == expected
+
+
+def test_clean_collaborators_does_not_cut_a_long_list():
+    """Trimming to the limit would silently drop a name; callers reject instead."""
+    assert len(clean_collaborators("a b c d")) == 4 > MAX_COLLABORATORS
+
+
+@pytest.mark.parametrize(
+    ("extra", "reel", "expected"),
+    [
+        (
+            {"collaborators": ["@a"], "video_cover_timestamp_ms": 1500},
+            True,
+            {"collaborators": ["a"], "thumb_offset": 1500},
+        ),
+        ({"video_cover_timestamp_ms": "2000"}, True, {"thumb_offset": 2000}),
+        ({"video_cover_timestamp_ms": 0}, True, {"thumb_offset": 0}),
+        ({"collaborators": ["a"], "video_cover_timestamp_ms": 1500}, False, {"collaborators": ["a"]}),
+        ({"video_cover_timestamp_ms": -1}, True, {}),
+        ({"video_cover_timestamp_ms": "abc"}, True, {}),
+        ({"video_cover_timestamp_ms": "²"}, True, {}),
+        ({"collaborators": []}, True, {}),
+        ({}, True, {}),
+    ],
+)
+def test_container_options(extra, reel, expected):
+    assert container_options(extra, reel=reel) == expected
