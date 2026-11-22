@@ -38,9 +38,9 @@
             {% if message.sender_handle %}
             <span class="text-[11px] text-stone-400 truncate">@{{ message.sender_handle }}</span>
             {% endif %}
-            <span class="text-[11px] text-stone-400 ml-auto flex-shrink-0" title="{{ message.received_at|date:'N j, Y g:i A' }}">{{ message.received_at|timesince }} ago</span>
+            <span class="text-[11px] text-stone-400 ms-auto flex-shrink-0" title="{{ message.received_at|date:'N j, Y g:i A' }}">{{ message.received_at|timesince }} ago</span>
         </div>
-        <p class="inbox-row-preview text-[12px] text-stone-500 truncate leading-snug">{{ message.body|truncatewords:20 }}</p>
+        <p dir="auto" class="inbox-row-preview text-[12px] text-stone-500 truncate leading-snug">{{ message.body|truncatewords:20 }}</p>
         <div class="flex items-center gap-1.5 mt-1.5">
             <!-- Type badge -->
             <span class="badge-pill badge-type">{{ message.get_message_type_display }}</span>
@@ -57,7 +57,7 @@
             {% endif %}
             <!-- SLA -->
             {% if sla_config and sla_config.is_active and message.status != 'resolved' and message.status != 'archived' %}
-            <span class="sla-countdown ml-auto"
+            <span class="sla-countdown ms-auto"
                   :class="getSlaClass('{{ message.received_at|date:'c' }}')"
                   x-text="formatSla('{{ message.received_at|date:'c' }}')"></span>
             {% endif %}

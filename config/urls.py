@@ -14,6 +14,7 @@ from apps.oauth_server import views as oauth_views
 logger = logging.getLogger(__name__)
 
 urlpatterns = [
+    path("i18n/", include("django.conf.urls.i18n")),
     path("admin/", admin.site.urls),
     path("health/", health_check, name="health_check"),
     path("accounts/", include("apps.accounts.urls")),

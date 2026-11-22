@@ -8,9 +8,9 @@
             <div class="flex items-center gap-2 mb-1">
                 <span class="text-[12px] font-semibold text-stone-800">{{ reply.author.get_short_name|default:reply.author.email }}</span>
                 <span class="badge-pill" style="background: var(--primary-soft); color: var(--brand-700);">Reply</span>
-                <span class="text-[11px] text-stone-400 ml-auto">{{ reply.sent_at|timesince }} ago</span>
+                <span class="text-[11px] text-stone-400 ms-auto">{{ reply.sent_at|timesince }} ago</span>
             </div>
-            <p class="text-[13px] text-stone-700 leading-relaxed whitespace-pre-wrap">{{ reply.body }}</p>
+            <p dir="auto" class="text-[13px] text-stone-700 leading-relaxed whitespace-pre-wrap">{{ reply.body }}</p>
         </div>
     </div>
 </div>

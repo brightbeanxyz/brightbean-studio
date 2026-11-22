@@ -1,16 +1,16 @@
-{% load humanize %}
+{% load humanize i18n %}
 {# One pending reply: a draft awaiting review, or a failed send awaiting retry. #}
 <div class="rounded-lg border px-3 py-2.5 {% if draft.status == 'failed' %}border-red-200 bg-red-50{% else %}border-stone-200 bg-stone-50{% endif %}">
     <div class="flex items-center gap-2 mb-1">
         {% if draft.status == 'failed' %}
         <span class="badge-pill" style="background: #fee2e2; color: #b91c1c;">Failed</span>
         {% else %}
-        <span class="badge-pill" style="background: var(--surface-2); color: var(--stone-600, #57534e);">Draft</span>
+        <span class="badge-pill" style="background: var(--surface-2); color: var(--stone-600, #57534e);">{% translate "Draft" %}</span>
         {% endif %}
         <span class="text-[11px] text-stone-500">{{ draft.author.get_short_name|default:draft.author.email|default:"—" }}</span>
-        <span class="text-[11px] text-stone-400 ml-auto">{{ draft.created_at|timesince }} ago</span>
+        <span class="text-[11px] text-stone-400 ms-auto">{{ draft.created_at|timesince }} ago</span>
     </div>
-    <p class="text-[13px] text-stone-700 leading-relaxed whitespace-pre-wrap">{{ draft.body }}</p>
+    <p dir="auto" class="text-[13px] text-stone-700 leading-relaxed whitespace-pre-wrap">{{ draft.body }}</p>
     {% if draft.status == 'failed' and draft.send_error %}
     <p class="text-[11px] text-red-700 mt-1">Last attempt failed: {{ draft.send_error }}</p>
     {% endif %}

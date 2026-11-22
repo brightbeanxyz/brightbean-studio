@@ -1,0 +1,161 @@
+msgid ""
+msgstr ""
+"Language: fa\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#: .\templates\base.html:855
+msgid "Language"
+msgstr "زبان"
+
+#: .\templates\base.html:860
+msgid "Apply"
+msgstr "اعمال"
+
+#: .\templates\inbox\feed.html:5 .\templates\inbox\feed.html:133
+#: .\templates\inbox\message_detail.html:5
+msgid "Inbox"
+msgstr "صندوق پیام‌ها"
+
+#: .\templates\base.html:658
+msgid "Social Inbox"
+msgstr "صندوق پیام‌های شبکه‌های اجتماعی"
+
+#: .\templates\inbox\message_detail.html:55
+msgid "Back to Inbox"
+msgstr "بازگشت به صندوق پیام‌ها"
+
+#: .\templates\base.html:899
+msgid "Toggle menu"
+msgstr "باز و بسته کردن منو"
+
+#: .\templates\inbox\partials\_reply_composer.html:86
+msgid "Send reply"
+msgstr "ارسال پاسخ"
+
+#: .\templates\inbox\partials\_reply_composer.html:10
+msgid "Pending replies"
+msgstr "پاسخ‌های در انتظار"
+
+#: .\templates\inbox\partials\_reply_composer.html:22
+msgid "Reply"
+msgstr "پاسخ"
+
+#: .\templates\inbox\partials\_reply_composer.html:27
+msgid "Internal Note"
+msgstr "یادداشت داخلی"
+
+#: .\templates\inbox\partials\_reply_composer.html:36
+msgid "Saved Replies"
+msgstr "پاسخ‌های ذخیره‌شده"
+
+#: .\templates\inbox\partials\_reply_composer.html:66
+msgid "Write a reply..."
+msgstr "پاسخی بنویسید…"
+
+#: .\templates\inbox\partials\_reply_composer.html:79
+msgid "Save as draft"
+msgstr "ذخیره به‌عنوان پیش‌نویس"
+
+#: .\templates\inbox\partials\_reply_composer.html:102
+msgid "Add an internal note (only visible to your team)..."
+msgstr "یادداشت داخلی بنویسید (فقط برای تیم شما قابل مشاهده است)…"
+
+#: .\templates\inbox\partials\_reply_composer.html:110
+msgid "Add Note"
+msgstr "افزودن یادداشت"
+
+#: .\templates\inbox\partials\_filter_bar.html:11
+msgid "Search messages..."
+msgstr "جست‌وجوی پیام‌ها…"
+
+#: .\templates\inbox\partials\_filter_bar.html:26
+msgid "All platforms"
+msgstr "همهٔ پلتفرم‌ها"
+
+#: .\templates\inbox\partials\_filter_bar.html:38
+msgid "All types"
+msgstr "همهٔ انواع پیام"
+
+#: .\templates\inbox\partials\_filter_bar.html:39
+msgid "Comments"
+msgstr "دیدگاه‌ها"
+
+#: .\templates\inbox\partials\_filter_bar.html:40
+msgid "Mentions"
+msgstr "اشاره‌ها"
+
+#: .\templates\inbox\partials\_filter_bar.html:41
+msgid "DMs"
+msgstr "پیام‌های خصوصی"
+
+#: .\templates\inbox\partials\_filter_bar.html:42
+msgid "Reviews"
+msgstr "نقدها"
+
+#: .\templates\inbox\partials\_filter_bar.html:51
+msgid "All statuses"
+msgstr "همهٔ وضعیت‌ها"
+
+#: .\templates\inbox\partials\_filter_bar.html:52
+msgid "Unread"
+msgstr "خوانده‌نشده"
+
+#: .\templates\inbox\partials\_filter_bar.html:53
+msgid "Open"
+msgstr "باز"
+
+#: .\templates\inbox\partials\_filter_bar.html:54
+msgid "Resolved"
+msgstr "رسیدگی‌شده"
+
+#: .\templates\inbox\partials\_filter_bar.html:55
+msgid "Archived"
+msgstr "بایگانی‌شده"
+
+#: .\templates\inbox\partials\_filter_bar.html:64
+msgid "All sentiment"
+msgstr "همهٔ احساسات"
+
+#: .\templates\inbox\partials\_filter_bar.html:65
+msgid "Positive"
+msgstr "مثبت"
+
+#: .\templates\inbox\partials\_filter_bar.html:66
+msgid "Neutral"
+msgstr "خنثی"
+
+#: .\templates\inbox\partials\_filter_bar.html:67
+msgid "Negative"
+msgstr "منفی"
+
+#: .\templates\inbox\partials\_empty_state.html:9
+msgid "Your inbox is empty"
+msgstr "صندوق پیام‌ها خالی است"
+
+msgid "Comments, mentions, and DMs from your connected accounts will appear here. Messages are synced every 5 minutes."
+msgstr "دیدگاه‌ها، اشاره‌ها و پیام‌های خصوصی حساب‌های متصل اینجا نمایش داده می‌شوند. پیام‌ها هر ۵ دقیقه همگام می‌شوند."
+
+#: .\templates\inbox\partials\_empty_state.html:17
+msgid "Connect your social accounts to start receiving messages in your inbox."
+msgstr "برای دریافت پیام‌ها، حساب‌های شبکه‌های اجتماعی خود را متصل کنید."
+
+#: .\templates\inbox\partials\_empty_state.html:22
+msgid "Connect Accounts"
+msgstr "اتصال حساب‌ها"
+
+#: .\templates\inbox\partials\_empty_state.html:28
+msgid "No messages match your current filters."
+msgstr "هیچ پیامی با فیلترهای فعلی مطابقت ندارد."
+
+#: .\templates\inbox\partials\_empty_state.html:31
+msgid "Clear all filters"
+msgstr "پاک‌کردن همهٔ فیلترها"
+
+msgid "Draft"
+msgstr "پیش‌نویس"
+
+msgid "Reply preview"
+msgstr "پیش‌نمایش پاسخ"

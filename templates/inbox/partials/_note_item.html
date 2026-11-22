@@ -8,9 +8,9 @@
             <div class="flex items-center gap-2 mb-1">
                 <span class="text-[12px] font-semibold text-amber-900">{{ note.author.get_short_name|default:note.author.email }}</span>
                 <span class="badge-pill" style="background: var(--warning-50); color: var(--warning-700); border: 1px solid rgba(234,179,8,0.2);">Internal</span>
-                <span class="text-[11px] text-stone-400 ml-auto">{{ note.created_at|timesince }} ago</span>
+                <span class="text-[11px] text-stone-400 ms-auto">{{ note.created_at|timesince }} ago</span>
             </div>
-            <p class="text-[13px] text-amber-900 leading-relaxed whitespace-pre-wrap">{{ note.body }}</p>
+            <p dir="auto" class="text-[13px] text-amber-900 leading-relaxed whitespace-pre-wrap">{{ note.body }}</p>
         </div>
     </div>
 </div>
