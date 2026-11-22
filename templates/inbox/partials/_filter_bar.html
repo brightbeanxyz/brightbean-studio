@@ -1,14 +1,15 @@
+{% load i18n %}
 {% load humanize %}
 <!-- Filter bar -->
 <div class="px-4 py-2.5 border-b border-stone-100 flex items-center gap-2 flex-wrap flex-shrink-0" style="background: var(--surface-1);">
     <!-- Search -->
     <div class="relative flex-1 min-w-[160px]">
-        <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-stone-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <svg class="absolute start-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-stone-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input type="text"
                name="q"
                value="{{ active_filters.q|default:'' }}"
-               placeholder="Search messages..."
-               class="w-full pl-8 pr-3 py-1.5 text-[12px] bg-white border border-stone-200 rounded-md focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 transition-all"
+               placeholder="{% translate 'Search messages...' %}"
+               class="w-full ps-8 pe-3 py-1.5 text-[12px] bg-white border border-stone-200 rounded-md focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 transition-all"
                hx-get="{% url 'inbox:feed' workspace_id=workspace.id %}"
                hx-target="#inbox-message-list"
                hx-swap="innerHTML"
@@ -22,7 +23,7 @@
             hx-target="#inbox-message-list"
             hx-swap="innerHTML"
             hx-include="[name='q'],[name='type'],[name='status'],[name='sentiment']">
-        <option value="">All platforms</option>
+        <option value="">{% translate "All platforms" %}</option>
         {% for account in social_accounts %}
         <option value="{{ account.platform }}" {% if account.platform in active_filters.platform %}selected{% endif %}>{% if account.platform == "youtube" %}YouTube{% else %}{{ account.get_platform_display|default:account.platform|title }}{% endif %}</option>
         {% endfor %}
@@ -34,11 +35,11 @@
             hx-target="#inbox-message-list"
             hx-swap="innerHTML"
             hx-include="[name='q'],[name='platform'],[name='status'],[name='sentiment']">
-        <option value="">All types</option>
-        <option value="comment" {% if 'comment' in active_filters.type %}selected{% endif %}>Comments</option>
-        <option value="mention" {% if 'mention' in active_filters.type %}selected{% endif %}>Mentions</option>
-        <option value="dm" {% if 'dm' in active_filters.type %}selected{% endif %}>DMs</option>
-        <option value="review" {% if 'review' in active_filters.type %}selected{% endif %}>Reviews</option>
+        <option value="">{% translate "All types" %}</option>
+        <option value="comment" {% if 'comment' in active_filters.type %}selected{% endif %}>{% translate "Comments" %}</option>
+        <option value="mention" {% if 'mention' in active_filters.type %}selected{% endif %}>{% translate "Mentions" %}</option>
+        <option value="dm" {% if 'dm' in active_filters.type %}selected{% endif %}>{% translate "DMs" %}</option>
+        <option value="review" {% if 'review' in active_filters.type %}selected{% endif %}>{% translate "Reviews" %}</option>
     </select>
 
     <!-- Status filter -->
@@ -47,11 +48,11 @@
             hx-target="#inbox-message-list"
             hx-swap="innerHTML"
             hx-include="[name='q'],[name='platform'],[name='type'],[name='sentiment']">
-        <option value="">All statuses</option>
-        <option value="unread" {% if 'unread' in active_filters.status %}selected{% endif %}>Unread</option>
-        <option value="open" {% if 'open' in active_filters.status %}selected{% endif %}>Open</option>
-        <option value="resolved" {% if 'resolved' in active_filters.status %}selected{% endif %}>Resolved</option>
-        <option value="archived" {% if 'archived' in active_filters.status %}selected{% endif %}>Archived</option>
+        <option value="">{% translate "All statuses" %}</option>
+        <option value="unread" {% if 'unread' in active_filters.status %}selected{% endif %}>{% translate "Unread" %}</option>
+        <option value="open" {% if 'open' in active_filters.status %}selected{% endif %}>{% translate "Open" %}</option>
+        <option value="resolved" {% if 'resolved' in active_filters.status %}selected{% endif %}>{% translate "Resolved" %}</option>
+        <option value="archived" {% if 'archived' in active_filters.status %}selected{% endif %}>{% translate "Archived" %}</option>
     </select>
 
     <!-- Sentiment filter -->
@@ -60,9 +61,9 @@
             hx-target="#inbox-message-list"
             hx-swap="innerHTML"
             hx-include="[name='q'],[name='platform'],[name='type'],[name='status']">
-        <option value="">All sentiment</option>
-        <option value="positive" {% if 'positive' in active_filters.sentiment %}selected{% endif %}>Positive</option>
-        <option value="neutral" {% if 'neutral' in active_filters.sentiment %}selected{% endif %}>Neutral</option>
-        <option value="negative" {% if 'negative' in active_filters.sentiment %}selected{% endif %}>Negative</option>
+        <option value="">{% translate "All sentiment" %}</option>
+        <option value="positive" {% if 'positive' in active_filters.sentiment %}selected{% endif %}>{% translate "Positive" %}</option>
+        <option value="neutral" {% if 'neutral' in active_filters.sentiment %}selected{% endif %}>{% translate "Neutral" %}</option>
+        <option value="negative" {% if 'negative' in active_filters.sentiment %}selected{% endif %}>{% translate "Negative" %}</option>
     </select>
 </div>

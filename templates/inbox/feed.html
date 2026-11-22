@@ -1,7 +1,8 @@
 {% extends "base.html" %}
+{% load i18n %}
 {% load humanize %}
 
-{% block title %}Inbox - {{ workspace.name }} - Brightbean{% endblock %}
+{% block title %}{% translate "Inbox" %} - {{ workspace.name }} - Brightbean{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -18,11 +19,11 @@
 
     /* Split panel */
     .inbox-split { display: flex; flex: 1; min-height: 0; }
-    .inbox-list-pane { width: 100%; border-right: none; display: flex; flex-direction: column; }
+    .inbox-list-pane { width: 100%; border-inline-end: none; display: flex; flex-direction: column; }
     .inbox-detail-pane { display: none; flex-direction: column; overflow: hidden; }
 
     @media (min-width: 768px) {
-        .inbox-list-pane { width: 40%; min-width: 320px; border-right: 1px solid var(--border); }
+        .inbox-list-pane { width: 40%; min-width: 320px; border-inline-end: 1px solid var(--border); }
         .inbox-detail-pane { display: flex; flex: 1; }
         /* On desktop, always show both panels regardless of Alpine state */
         .inbox-list-pane[data-mobile-hidden] { display: flex; }
@@ -43,11 +44,11 @@
         position: relative;
     }
     .inbox-row:hover { background: var(--surface-1); }
-    .inbox-row.is-active { background: var(--primary-soft); border-left: 3px solid var(--primary); padding-left: 13px; }
+    .inbox-row.is-active { background: var(--primary-soft); border-inline-start: 3px solid var(--primary); padding-inline-start: 13px; }
     .inbox-row.is-unread .inbox-row-sender { font-weight: 700; color: var(--text-primary); }
     .inbox-row.is-unread .inbox-row-preview { color: var(--text-primary); }
     .inbox-row.is-unread::before {
-        content: ''; position: absolute; left: 6px; top: 50%; transform: translateY(-50%);
+        content: ''; position: absolute; inset-inline-start: 6px; top: 50%; transform: translateY(-50%);
         width: 6px; height: 6px; border-radius: 50%; background: var(--primary);
     }
 
@@ -83,13 +84,14 @@
     .filter-select {
         font-size: 12px; font-weight: 500; color: var(--text-secondary);
         background: var(--surface-1); border: 1px solid var(--border);
-        border-radius: var(--radius-md); padding: 4px 24px 4px 8px;
+        border-radius: var(--radius-md); padding-block: 4px; padding-inline: 8px 24px;
         transition: all var(--dur-fast) ease; cursor: pointer;
         appearance: none;
         background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2378716C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
         background-repeat: no-repeat;
         background-position: right 8px center;
     }
+    [dir="rtl"] .filter-select { background-position: left 8px center; }
     .filter-select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-ring); }
 
     /* Bulk action bar */
@@ -128,7 +130,7 @@
     <!-- Header -->
     <div class="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-5 py-3 border-b border-stone-200 flex-shrink-0">
         <div class="flex items-center gap-3 sm:gap-4">
-            <h1 class="text-base font-semibold text-stone-900" style="letter-spacing: -0.01em;">Inbox</h1>
+            <h1 class="text-base font-semibold text-stone-900" style="letter-spacing: -0.01em;">{% translate "Inbox" %}</h1>
             <div class="flex items-center gap-1 bg-stone-50 rounded-full p-0.5">
                 <a href="{% url 'inbox:feed' workspace_id=workspace.id %}"
                    class="inbox-tab {% if current_view == 'all' %}active{% endif %}"
@@ -155,7 +157,7 @@
                class="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold text-stone-600 bg-white border border-stone-200 rounded-full hover:border-stone-300 hover:bg-stone-50 transition-all duration-150"
                title="Saved Replies">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>
-                <span class="hidden sm:inline">Saved Replies</span>
+                <span class="hidden sm:inline">{% translate "Saved Replies" %}</span>
             </a>
             {% if sla_config %}
             <a href="{% url 'inbox:sla_config' workspace_id=workspace.id %}"
@@ -188,7 +190,7 @@
                 <button @click="bulkAction('mark_read')">Mark Read</button>
                 <button @click="bulkAction('resolve')">Resolve</button>
                 <button @click="bulkAction('archive')">Archive</button>
-                <button @click="closeBulk()" class="ml-auto" style="border: none;">
+                <button @click="closeBulk()" class="ms-auto" style="border: none;">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>
             </div>
