@@ -157,7 +157,7 @@
                class="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold text-stone-600 bg-white border border-stone-200 rounded-full hover:border-stone-300 hover:bg-stone-50 transition-all duration-150"
                title="Saved Replies">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>
-                <span class="hidden sm:inline">Saved Replies</span>
+                <span class="hidden sm:inline">{% translate "Saved Replies" %}</span>
             </a>
             {% if sla_config %}
             <a href="{% url 'inbox:sla_config' workspace_id=workspace.id %}"
