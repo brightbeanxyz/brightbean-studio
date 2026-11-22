@@ -566,7 +566,7 @@
                 <!-- Facebook video destination (regular Page video by default) -->
                 <template x-for="accId in selectedAccounts" :key="'facebook-video-settings-' + accId">
                     <div x-show="charLimits[accId]?.platform === 'facebook' && hasSingleVideoAttached"
-                         x-data="{ facebookPostType: platformExtras[accId]?.post_type || 'video' }"
+                         x-data="{ facebookPostType: platformExtras[accId]?.post_type || 'video', fbAiGenerated: !!platformExtras[accId]?.is_ai_generated }"
                          class="border border-stone-200 rounded-xl bg-white p-4 space-y-3">
                         {% comment %}
                         Marks the panel as present in the submit even when no video is
@@ -591,6 +591,21 @@
                                 <option value="reel">Facebook Reel</option>
                             </select>
                             <p class="text-[11px] text-stone-400 mt-1">Reels use Facebook's dedicated vertical-video flow and must be 3-90 seconds. Regular Page video suits long-form and landscape uploads.</p>
+                        </div>
+                        <!-- AI disclosure (is_ai_generated): the Page Reels API takes it; regular Page videos don't -->
+                        <div x-show="facebookPostType === 'reel'" class="border-t border-stone-100 pt-3">
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="text-sm text-stone-700">
+                                    AI-generated content
+                                    <span class="block text-[11px] text-stone-400 font-normal">Adds Facebook's AI label to the Reel. Meta requires it for realistic video or audio made or changed with AI, such as a Reel narrated by a realistic AI voice.</span>
+                                </span>
+                                <label class="bb-toggle mt-0.5">
+                                    <input type="checkbox" :name="'facebook_is_ai_generated_' + accId" value="true"
+                                           x-model="fbAiGenerated"
+                                           :disabled="charLimits[accId]?.platform !== 'facebook' || !hasSingleVideoAttached || facebookPostType !== 'reel'">
+                                    <span class="bb-toggle-track"></span>
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </template>

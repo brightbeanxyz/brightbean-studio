@@ -1022,6 +1022,137 @@ def test_publish_reel_requires_a_complete_upload_session():
         )
 
 
+def _reel_content(**extra):
+    return PublishContent(
+        text="Reel caption",
+        media_urls=["https://studio.example.com/media/reel.mp4"],
+        post_type=PostType.REEL,
+        video_duration_sec=24,
+        extra={"page_id": "page-1", **extra},
+    )
+
+
+def test_publish_reel_sends_the_ai_disclosure_on_the_finish_call():
+    """Meta requires the AI label for realistic AI-made video or audio; the Page
+    Reels edge takes ``is_ai_generated`` on the finish call."""
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"video_id": "reel-video-1", "upload_url": "https://rupload.facebook.com/reel-upload"}),
+            _resp({"success": True}),
+            _resp({"success": True}),
+            _resp({"post_id": "page-1_post-9"}),
+        ]
+    )
+
+    provider.publish_post("page-token", _reel_content(is_ai_generated=True))
+
+    finish = provider._request.call_args_list[2]
+    assert finish.kwargs["data"] == {
+        "upload_phase": "finish",
+        "video_id": "reel-video-1",
+        "video_state": "PUBLISHED",
+        "description": "Reel caption",
+        "is_ai_generated": "true",
+    }
+
+
+def test_publish_reel_leaves_the_ai_disclosure_out_when_it_is_off():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"video_id": "reel-video-1", "upload_url": "https://rupload.facebook.com/reel-upload"}),
+            _resp({"success": True}),
+            _resp({"success": True}),
+            _resp({"post_id": "page-1_post-9"}),
+        ]
+    )
+
+    provider.publish_post("page-token", _reel_content(is_ai_generated=False))
+
+    assert "is_ai_generated" not in provider._request.call_args_list[2].kwargs["data"]
+
+
+class _FakeStream:
+    def __init__(self, body: bytes):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def raise_for_status(self):
+        return None
+
+    def iter_bytes(self):
+        yield self.body[:3]
+        yield self.body[3:]
+
+
+def test_publish_reel_uploads_the_bytes_when_meta_cannot_fetch_the_url(monkeypatch):
+    """Bot protection in front of a self-hosted instance can answer Meta's
+    fetcher with a 403 (seen on 13-oct-2026). Meta reports it as
+    FileUrlProcessingError and keeps the session open, so the bytes go
+    through the same session instead."""
+    fetched = []
+    monkeypatch.setattr(
+        "providers.facebook.httpx.stream",
+        lambda method, url, **kw: fetched.append((method, url)) or _FakeStream(b"reel-bytes"),
+    )
+    sent = {}
+
+    def fake_request(method, url, **kwargs):
+        if url.endswith("/video_reels") and kwargs["data"]["upload_phase"] == "start":
+            return _resp({"video_id": "reel-video-1", "upload_url": "https://rupload.facebook.com/reel-upload"})
+        if url == "https://rupload.facebook.com/reel-upload" and "file_url" in kwargs["headers"]:
+            raise APIError(
+                "Facebook API error 422",
+                status_code=422,
+                platform="Facebook",
+                raw_response={
+                    "debug_info": {
+                        "retriable": False,
+                        "type": "FileUrlProcessingError",
+                        "message": "Unable to fetch media from URL, got status code: 403 Forbidden",
+                    }
+                },
+            )
+        if url == "https://rupload.facebook.com/reel-upload":
+            sent["headers"] = kwargs["headers"]
+            sent["body"] = kwargs["data"].read()
+            return _resp({"success": True})
+        if url.endswith("/video_reels"):
+            sent["finish"] = kwargs["data"]
+            return _resp({"success": True})
+        return _resp({"post_id": "page-1_post-9"})
+
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(side_effect=fake_request)
+
+    result = provider.publish_post("page-token", _reel_content(is_ai_generated=True))
+
+    assert fetched == [("GET", "https://studio.example.com/media/reel.mp4")]
+    assert sent["headers"] == {"Authorization": "OAuth page-token", "offset": "0", "file_size": "10"}
+    assert sent["body"] == b"reel-bytes"
+    assert sent["finish"]["is_ai_generated"] == "true"
+    assert result.platform_post_id == "post-9"
+
+
+def test_publish_reel_still_fails_on_other_upload_errors():
+    provider = FacebookProvider({"client_id": "id", "client_secret": "secret"})
+    provider._request = MagicMock(
+        side_effect=[
+            _resp({"video_id": "reel-video-1", "upload_url": "https://rupload.facebook.com/reel-upload"}),
+            APIError("Facebook API error 400", status_code=400, platform="Facebook", raw_response={"error": {}}),
+        ]
+    )
+
+    with pytest.raises(APIError):
+        provider.publish_post("page-token", _reel_content())
+
+
 @pytest.mark.parametrize(
     "lookup_error",
     [
