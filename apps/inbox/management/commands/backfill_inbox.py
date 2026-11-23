@@ -5,7 +5,13 @@ from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.inbox.tasks import InboxSyncEngine, _related_post_key, resolve_related_posts, youtube_message_kwargs
+from apps.inbox.tasks import (
+    InboxSyncEngine,
+    _related_post_key,
+    message_kwargs,
+    resolve_related_posts,
+    youtube_message_kwargs,
+)
 from apps.social_accounts.models import SocialAccount
 from providers import get_provider
 
@@ -67,7 +73,7 @@ class Command(BaseCommand):
                 base_kwargs = (
                     youtube_message_kwargs(account, since=since, deep=True, skip_stored_replies=False)
                     if account.platform == "youtube"
-                    else {"since": since}
+                    else message_kwargs(account, since=since)
                 )
                 while True:
                     kwargs = dict(base_kwargs)

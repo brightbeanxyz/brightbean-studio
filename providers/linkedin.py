@@ -544,10 +544,17 @@ class LinkedInProvider(SocialProvider):
     # Inbox
     # ------------------------------------------------------------------
 
-    def get_messages(self, access_token: str, since: datetime | None = None) -> list[InboxMessage]:
-        # Determine author URN
-        profile = self.get_profile(access_token)
-        author = f"urn:li:person:{profile.platform_id}"
+    def get_messages(
+        self, access_token: str, since: datetime | None = None, organization_id: str | None = None
+    ) -> list[InboxMessage]:
+        # A Company Page lists its own posts: LinkedIn answers 400 ("Member
+        # permissions must be used when using member as author") when an
+        # organization token asks for a person's posts.
+        if organization_id:
+            author = f"urn:li:organization:{organization_id}"
+        else:
+            profile = self.get_profile(access_token)
+            author = f"urn:li:person:{profile.platform_id}"
 
         # Fetch recent posts by this author
         params: dict = {"q": "author", "author": author, "count": 20}
@@ -609,6 +616,7 @@ class LinkedInProvider(SocialProvider):
                                 "post_urn": post_urn,
                                 "comment_urn": comment_urn,
                                 "actor_urn": actor_urn,
+                                "author_urn": author,
                             },
                         )
                     )
@@ -641,8 +649,12 @@ class LinkedInProvider(SocialProvider):
                 platform=self.platform_name,
             )
 
-        profile = self.get_profile(access_token)
-        actor = f"urn:li:person:{profile.platform_id}"
+        # Reply as the post's author, so a Company Page answers as the page
+        # and not as the member who connected it.
+        actor = extra.get("author_urn")
+        if not actor:
+            profile = self.get_profile(access_token)
+            actor = f"urn:li:person:{profile.platform_id}"
 
         resp = self._request(
             "POST",
