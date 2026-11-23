@@ -402,6 +402,53 @@ class FacebookVideoSettingsTests(AccountScopeTestsBase):
         self.assertNotIn("post_type", self.facebook_pp.platform_extra)
 
 
+class InstagramStorySettingsTests(AccountScopeTestsBase):
+    def setUp(self):
+        super().setUp()
+        self.instagram = SocialAccount.objects.create(
+            workspace=self.workspace,
+            platform="instagram",
+            account_platform_id="ig-1",
+            account_name="Instagram Account",
+            connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+        )
+        self.instagram_pp = PlatformPost.objects.create(
+            post=self.post,
+            social_account=self.instagram,
+            status=PlatformPost.Status.DRAFT,
+        )
+        self._attach(MediaAsset.MediaType.IMAGE, "story.jpg", post=self.post)
+
+    def _instagram_payload(self, post_type):
+        account_id = str(self.instagram.id)
+        return self._payload(
+            selected_accounts=account_id,
+            account_scope=account_id,
+            **{
+                f"instagram_panel_{account_id}": "1",
+                f"instagram_post_type_{account_id}": post_type,
+            },
+        )
+
+    def test_story_choice_round_trips_into_platform_extra(self):
+        response = self.client.post(self.save_url, data=self._instagram_payload("story"))
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.instagram_pp.refresh_from_db()
+        self.assertEqual(self.instagram_pp.platform_extra["post_type"], "story")
+
+    def test_story_choice_is_cleared_when_a_second_attachment_arrived(self):
+        self.instagram_pp.platform_extra = {"post_type": "story"}
+        self.instagram_pp.save(update_fields=["platform_extra"])
+        self._attach(MediaAsset.MediaType.IMAGE, "second.jpg", post=self.post)
+
+        response = self.client.post(self.save_url, data=self._instagram_payload("story"))
+
+        self.assertIn(response.status_code, (200, 204, 302))
+        self.instagram_pp.refresh_from_db()
+        self.assertNotIn("post_type", self.instagram_pp.platform_extra)
+
+
 class PinterestBoardSelectionTests(AccountScopeTestsBase):
     def setUp(self):
         super().setUp()

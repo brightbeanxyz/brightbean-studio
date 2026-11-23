@@ -274,6 +274,29 @@ class ResolvePostTypeFacebookReelTest(SimpleTestCase):
             PostType.VIDEO,
         )
 
+    def test_a_story_hint_on_instagram_keeps_a_single_image_as_a_story(self):
+        self.assertEqual(
+            self._resolve(
+                platform="instagram",
+                platform_extra={"post_type": "story"},
+                media_count=1,
+                first_media_type="image",
+            ),
+            PostType.STORY,
+        )
+
+    def test_a_story_hint_is_dropped_when_a_second_attachment_arrived(self):
+        # A Story takes one image or video, so two attachments go back to a carousel.
+        self.assertEqual(
+            self._resolve(
+                platform="instagram",
+                platform_extra={"post_type": "story"},
+                media_count=2,
+                first_media_type="image",
+            ),
+            PostType.CAROUSEL,
+        )
+
     def test_a_video_hint_is_dropped_when_the_video_became_an_image(self):
         """_publish_video posts media_urls[0] to the video endpoint unchecked.
 

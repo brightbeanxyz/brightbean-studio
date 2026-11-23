@@ -933,6 +933,9 @@ class PublishEngine:
         if hint is PostType.REEL:
             # Every Reels API takes exactly one video.
             return media_count == 1 and first_media_type == "video"
+        if hint is PostType.STORY:
+            # Instagram Stories take exactly one image or video.
+            return media_count == 1
         if hint is PostType.VIDEO:
             # _publish_video posts media_urls[0] to the video endpoint as-is.
             return first_media_type == "video"

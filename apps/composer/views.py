@@ -295,6 +295,20 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
                 extra.pop("post_type", None)
             pp.platform_extra = extra
 
+        elif account.platform in ("instagram", "instagram_login") and f"instagram_panel_{acc_id}" in request.POST:
+            # Same gating as Facebook: only a composer save (which renders the
+            # panel marker) may set or clear the hint. A Story takes exactly one
+            # image or video; anything else clears the hint so the publish
+            # engine falls back to feed post / carousel / reel inference.
+            extra = {**(pp.platform_extra or {})}
+            instagram_post_type = request.POST.get(f"instagram_post_type_{acc_id}", "").strip()
+            media_count = post.media_attachments.count()
+            if instagram_post_type == "story" and media_count == 1:
+                extra["post_type"] = "story"
+            else:
+                extra.pop("post_type", None)
+            pp.platform_extra = extra
+
         elif account.platform == "youtube":
             tags_list = parse_and_truncate_youtube_tag_string(request.POST.get(f"yt_tags_{acc_id}", ""))
             privacy_status = request.POST.get(f"yt_privacy_status_{acc_id}", "public")
