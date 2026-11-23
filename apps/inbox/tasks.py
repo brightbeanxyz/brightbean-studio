@@ -146,6 +146,17 @@ def youtube_message_kwargs(account, *, since, deep: bool = False, skip_stored_re
     return kwargs
 
 
+def message_kwargs(account, *, since) -> dict:
+    """Keyword arguments for ``get_messages`` on every provider except YouTube.
+
+    A LinkedIn Company Page needs its organization id to list its own posts.
+    """
+    kwargs: dict = {"since": since}
+    if account.platform == "linkedin_company" and account.account_platform_id:
+        kwargs["organization_id"] = account.account_platform_id
+    return kwargs
+
+
 def _is_recent(ts):
     """True if a provider message timestamp falls within the backlog-notify window."""
     if ts is None:
@@ -412,7 +423,9 @@ class InboxSyncEngine:
                     elif account.inbox_initial_backfill_cursor:
                         next_page_token = account.inbox_initial_backfill_cursor
             else:
-                messages = provider.get_messages(access_token=account.oauth_access_token, since=since)
+                messages = provider.get_messages(
+                    access_token=account.oauth_access_token, **message_kwargs(account, since=since)
+                )
         except NotImplementedError:
             return
         except QuotaExceededError as exc:

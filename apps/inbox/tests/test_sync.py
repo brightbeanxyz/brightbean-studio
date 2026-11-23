@@ -259,6 +259,26 @@ def test_youtube_inbox_token_with_headroom_is_not_refreshed(workspace):
 
 
 @pytest.mark.django_db
+def test_linkedin_company_inbox_passes_the_organization_id(workspace):
+    SocialAccount.objects.create(
+        workspace=workspace,
+        platform="linkedin_company",
+        account_platform_id="98765",
+        account_name="LinkedIn Page Sync Test",
+        oauth_access_token="li-token",
+        connection_status=SocialAccount.ConnectionStatus.CONNECTED,
+    )
+    provider = MagicMock()
+    provider.get_messages.return_value = []
+
+    with patch("apps.inbox.tasks.get_provider", return_value=provider):
+        InboxSyncEngine().sync_all()
+
+    provider.get_messages.assert_called_once()
+    assert provider.get_messages.call_args.kwargs["organization_id"] == "98765"
+
+
+@pytest.mark.django_db
 def test_youtube_inbox_unknown_expiry_refreshes_after_rejection_and_upserts_once(workspace):
     account = _youtube_account(workspace)
     provider = MagicMock()

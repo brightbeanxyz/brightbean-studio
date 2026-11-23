@@ -147,3 +147,50 @@ class TestGetUserPages:
         pages = provider.get_user_pages("token")
 
         assert pages[0]["id"] == "33333"
+
+
+class TestInbox:
+    @patch.object(LinkedInCompanyProvider, "get_profile")
+    @patch.object(LinkedInCompanyProvider, "_request")
+    def test_get_messages_lists_the_organization_posts(self, mock_request, mock_profile):
+        # An organization token asking for a person's posts gets a 400 from
+        # LinkedIn, so the page must list its own posts.
+        post_urn = "urn:li:share:111"
+        mock_request.side_effect = [
+            _make_response({"elements": [{"id": post_urn}]}),
+            _make_response(
+                {
+                    "elements": [
+                        {
+                            "$URN": "urn:li:comment:(urn:li:activity:1,222)",
+                            "actor": "urn:li:person:abc",
+                            "created": {"time": 1_700_000_000_000},
+                            "message": {"text": "Grazie!"},
+                        }
+                    ]
+                }
+            ),
+        ]
+
+        messages = LinkedInCompanyProvider().get_messages("token", organization_id="98765")
+
+        assert mock_request.call_args_list[0].kwargs["params"]["author"] == "urn:li:organization:98765"
+        mock_profile.assert_not_called()
+        assert messages[0].extra["author_urn"] == "urn:li:organization:98765"
+
+    @patch.object(LinkedInCompanyProvider, "get_profile")
+    @patch.object(LinkedInCompanyProvider, "_request")
+    def test_reply_is_sent_as_the_post_author(self, mock_request, mock_profile):
+        resp = _make_response({})
+        resp.headers = {"x-restli-id": "urn:li:comment:(urn:li:activity:1,333)"}
+        mock_request.return_value = resp
+
+        LinkedInCompanyProvider().reply_to_comment(
+            "token",
+            "urn:li:comment:(urn:li:activity:1,222)",
+            "Grazie a te",
+            extra={"post_urn": "urn:li:share:111", "author_urn": "urn:li:organization:98765"},
+        )
+
+        assert mock_request.call_args.kwargs["json"]["actor"] == "urn:li:organization:98765"
+        mock_profile.assert_not_called()

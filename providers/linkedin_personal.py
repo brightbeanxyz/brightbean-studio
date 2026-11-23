@@ -59,9 +59,11 @@ class LinkedInPersonalProvider(LinkedInProvider):
             extra=data,
         )
 
-    def get_messages(self, access_token: str, since: datetime | None = None) -> list[InboxMessage]:
+    def get_messages(
+        self, access_token: str, since: datetime | None = None, organization_id: str | None = None
+    ) -> list[InboxMessage]:
         if not self._is_oidc_mode:
-            return super().get_messages(access_token, since)
+            return super().get_messages(access_token, since, organization_id)
         return []
 
     def publish_comment(self, access_token: str, post_id: str, text: str) -> CommentResult:
