@@ -18,9 +18,20 @@ app_name = "oauth2_provider"
 # Chromium enforces form-action across the whole redirect chain, so the redirect
 # target must be allowlisted on the consent page or the flow dies silently there.
 # csp_update appends to the global CSP_FORM_ACTION, scoping the relaxation here only.
-authorize_view = csp_update(FORM_ACTION="https://claude.ai https://claude.com")(
-    oauth2_views.AuthorizationView.as_view()
-)
+#
+# NOTE: every origin a client can redirect back to must be listed here. Adding a
+# client whose redirect_uri is not on this list produces a silent browser-side
+# failure (the consent form POSTs, then Chromium refuses the redirect).
+#   - claude.ai / claude.com      : Claude custom connector
+#   - oauth-redirect.googleusercontent.com : Google custom-MCP connector (Gemini)
+#   - chatgpt.com / chat.openai.com        : ChatGPT custom connector
+authorize_view = csp_update(
+    FORM_ACTION=(
+        "https://claude.ai https://claude.com "
+        "https://oauth-redirect.googleusercontent.com "
+        "https://chatgpt.com https://chat.openai.com"
+    )
+)(oauth2_views.AuthorizationView.as_view())
 
 urlpatterns = [
     path("authorize/", authorize_view, name="authorize"),
