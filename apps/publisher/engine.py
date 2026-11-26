@@ -730,7 +730,9 @@ class PublishEngine:
         """
         account = platform_post.social_account
         platform = account.platform
-        attachments = list(platform_post.post.media_attachments.select_related("media_asset").order_by("position"))
+        # The platform's own media when it has some, otherwise the post's
+        # attachments — e.g. a 4:5 image for Instagram and a 1:1 for Facebook.
+        assets = platform_post.effective_media_assets()
 
         # Every scheduled row passes through here, however it was scheduled, so
         # this is where a post the platform can only refuse is stopped for
@@ -739,7 +741,7 @@ class PublishEngine:
         # sooner; this is what keeps a path that forgot from mattering.
         blocker = publish_blocker(
             account,
-            media_types=usable_media_types(pm.media_asset for pm in attachments),
+            media_types=usable_media_types(assets),
             platform_extra=platform_post.platform_extra,
         )
         if blocker:
@@ -769,7 +771,7 @@ class PublishEngine:
         # For video-only platforms (YouTube, TikTok), skip non-video attachments
         video_only = set(provider.supported_post_types) <= VIDEO_POST_TYPES
         if video_only:
-            attachments = [pm for pm in attachments if pm.media_asset.media_type == "video"]
+            assets = [asset for asset in assets if asset.media_type == "video"]
 
         # Providers that publish from a hosted URL never read ``media_files``,
         # so pulling the bytes down for them is pure cost — and on a small dyno
@@ -782,8 +784,7 @@ class PublishEngine:
         usable_attachments = 0
         app_url = getattr(settings, "APP_URL", "").rstrip("/")
         try:
-            for pm in attachments:
-                asset = pm.media_asset
+            for asset in assets:
                 if not asset.file:
                     continue
                 usable_attachments += 1

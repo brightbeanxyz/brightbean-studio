@@ -328,6 +328,45 @@ class Post(models.Model):
         return list(self.platform_posts.values_list("social_account__platform", flat=True))
 
 
+def normalize_media_ids(raw) -> list[str]:
+    """Ordered, de-duplicated asset-id strings from a stored or submitted list.
+
+    Accepts a list (the ``platform_specific_media`` JSON field) or a
+    comma-separated string (the composer's hidden form field). Values that are
+    not UUIDs are dropped, so a tampered form or a hand-edited row only ever
+    reaches a database lookup as a valid id.
+    """
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    if not isinstance(raw, list | tuple):
+        return []
+    ids: list[str] = []
+    for value in raw:
+        try:
+            normalized = str(uuid.UUID(str(value).strip()))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if normalized not in ids:
+            ids.append(normalized)
+    return ids
+
+
+def resolve_media_assets(ids, workspace) -> list:
+    """``MediaAsset`` rows for ``ids``, in that order, limited to what ``workspace`` may use.
+
+    That is the workspace's own library plus its organisation's shared one: the
+    same set the composer's media picker offers. Ids outside it are dropped.
+    """
+    from apps.media_library.models import MediaAsset
+
+    ids = normalize_media_ids(ids)
+    if not ids:
+        return []
+    found = MediaAsset.objects.for_workspace_with_shared(workspace.id, workspace.organization_id).filter(id__in=ids)
+    by_id = {str(asset.id): asset for asset in found}
+    return [by_id[i] for i in ids if i in by_id]
+
+
 class PlatformPost(models.Model):
     youtube_video_checked_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
@@ -622,6 +661,33 @@ class PlatformPost(models.Model):
         if self.platform_specific_first_comment is not None:
             return self.platform_specific_first_comment
         return self.post.first_comment
+
+    @property
+    def media_override_ids(self) -> list[str]:
+        """This platform's own media as ordered asset ids; ``[]`` when it uses the post's.
+
+        Null, an empty list or a malformed value all mean "no override", so the
+        platform falls back to the post's attachments rather than to nothing.
+        """
+        return normalize_media_ids(self.platform_specific_media)
+
+    @property
+    def has_media_override(self) -> bool:
+        return bool(self.media_override_ids)
+
+    def effective_media_assets(self) -> list:
+        """The ``MediaAsset`` rows this platform publishes, in publish order.
+
+        The platform's own media when it has an override, otherwise the post's
+        attachments. An override id that no longer resolves to an asset the
+        workspace may use is skipped.
+        """
+        ids = self.media_override_ids
+        if not ids:
+            return [
+                pm.media_asset for pm in self.post.media_attachments.select_related("media_asset").order_by("position")
+            ]
+        return resolve_media_assets(ids, self.post.workspace)
 
     @property
     def platform(self):

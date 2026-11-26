@@ -417,6 +417,24 @@ def post_media_types(post, *, excluding=None) -> set[str]:
     return set(attachments.values_list("media_asset__media_type", flat=True).distinct())
 
 
+def platform_post_media_types(platform_post, *, base_media_types=None) -> set[str]:
+    """``usable_media_types`` for what ``platform_post`` will actually publish.
+
+    A platform with its own media (``platform_specific_media``) is judged on
+    that, not on the post's attachments. ``base_media_types`` is the post's
+    answer when the caller already has it (``media_types_by_post``), so rows
+    without an override cost no extra query.
+    """
+    from apps.composer.models import resolve_media_assets
+
+    override_ids = platform_post.media_override_ids
+    if override_ids:
+        return usable_media_types(resolve_media_assets(override_ids, platform_post.post.workspace))
+    if base_media_types is not None:
+        return base_media_types
+    return post_media_types(platform_post.post)
+
+
 def media_types_by_post(post_ids) -> dict:
     """``post_media_types`` for many posts in one query; absent ids have none."""
     by_post: dict = {}
@@ -464,11 +482,11 @@ def publish_blocker(social_account, *, media_types, platform_extra: dict | None 
 def require_publishable(platform_post, *, media_types=None) -> None:
     """Raise ``ValueError`` if ``platform_post`` is certain to fail at publish time.
 
-    ``media_types`` lets a caller checking many rows answer it for all of them
-    in one query (``media_types_by_post``) instead of one per row.
+    ``media_types`` is the post's attachments' answer, letting a caller checking
+    many rows get it for all of them in one query (``media_types_by_post``)
+    instead of one per row. A row with its own media is judged on that instead.
     """
-    if media_types is None:
-        media_types = post_media_types(platform_post.post)
+    media_types = platform_post_media_types(platform_post, base_media_types=media_types)
     reason = publish_blocker(
         platform_post.social_account,
         media_types=media_types,
@@ -492,6 +510,10 @@ def media_change_blocker(post, *, media_types_after) -> str:
 
     children = post.platform_posts.filter(status=PlatformPost.Status.SCHEDULED).select_related("social_account")
     for child in children:
+        # A platform with its own media never publishes the post's attachments,
+        # so changing them can't strand it.
+        if child.has_media_override:
+            continue
         if media_blocker(child.social_account, media_types=media_types_after):
             platform = child.social_account.get_platform_display()
             need = "a video" if is_video_only(child.social_account.platform) else "an image or a video"

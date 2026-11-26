@@ -1,16 +1,21 @@
 {% comment %}
 Preview Panel - platform-specific post previews.
-Context: previews (list of dicts with account, title, caption, first_comment, char_count, char_limit, is_over_limit, truncated_caption, needs_title), media_items, workspace.
+Context: previews (list of dicts with account, title, caption, first_comment, char_count, char_limit, is_over_limit, truncated_caption, needs_title, media_items, has_media_override), media_items, workspace.
+Each preview renders its own media_items: the account's own media when it has some, else the post's.
 {% endcomment %}
 
 {% if previews %}
     {% for p in previews %}
+    {% with media_items=p.media_items|default:media_items %}
     <div class="preview-card" style="animation: slideUp 200ms {{ forloop.counter0|add:0 }}50ms cubic-bezier(0.16,1,0.3,1) both">
 
         <!-- Platform label + char badge -->
         <div class="px-3.5 py-2 border-b flex items-center gap-2" style="border-color: #E7E5E4;">
             {% if p.account.platform != "youtube" %}{% include "partials/_platform_icon.html" with platform=p.account.platform size="sm" %}{% endif %}
             <span class="text-[11px] font-semibold text-stone-500 flex-1">{% if p.account.platform == "youtube" %}YouTube{% else %}{{ p.account.platform|title }}{% endif %} Preview</span>
+            {% if p.has_media_override %}
+            <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-orange-50 text-orange-700" title="This platform publishes its own media instead of the post's">Own media</span>
+            {% endif %}
             <span class="text-[10px] font-semibold tabular-nums px-2 py-0.5 rounded-full
                          {% if p.is_over_limit %}bg-red-50 text-red-600{% else %}bg-stone-100 text-stone-500{% endif %}">
                 {{ p.char_count }}/{{ p.char_limit }}
@@ -74,7 +79,7 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
             {% if media_items %}
             {% if media_items|length > 1 %}
             {# ─── Carousel ─── #}
-            <div class="relative bg-stone-100" style="aspect-ratio: 1/1;" x-data="{ slide: 0, count: {{ media_items|length }} }">
+            <div class="relative bg-stone-100" style="aspect-ratio: {{ media_items.0.ig_aspect|default:'1' }};" x-data="{ slide: 0, count: {{ media_items|length }} }">
                 {% for m in media_items %}
                 <div x-show="slide === {{ forloop.counter0 }}" class="absolute inset-0">
                     {% if m.is_video %}
@@ -104,7 +109,7 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
             {% else %}
             {# ─── Single media ─── #}
             {% with m=media_items.0 %}
-            <div class="relative bg-stone-100" style="aspect-ratio: 1/1;">
+            <div class="relative bg-stone-100" style="aspect-ratio: {{ m.ig_aspect|default:'1' }};">
                 {% if m.is_video %}
                 <video src="{{ m.url }}#t=0.5" class="w-full h-full object-cover" muted preload="metadata"></video>
                 {% else %}
@@ -554,6 +559,7 @@ Context: previews (list of dicts with account, title, caption, first_comment, ch
         </div>
         {% endif %}
     </div>
+    {% endwith %}
     {% endfor %}
 
 {% else %}

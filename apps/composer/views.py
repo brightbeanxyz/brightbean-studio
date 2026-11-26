@@ -52,11 +52,14 @@ from .models import (
     PostTemplate,
     PostVersion,
     Tag,
+    normalize_media_ids,
+    resolve_media_assets,
 )
 from .services import (
     _require_approval_gate_passes,
     media_blocker,
     media_change_blocker,
+    platform_post_media_types,
     post_media_types,
     publish_blocker,
     require_publishable,
@@ -237,6 +240,44 @@ def _readonly_rejection(request, post):
     )
 
 
+def _posted_media_override(request, account_id, workspace):
+    """The media the composer submitted for one account's own use, as assets.
+
+    ``None`` when the form had no media panel for the account (a save from
+    somewhere other than the composer), so whatever is stored must be left
+    alone. Otherwise the assets in order; an empty list means the account uses
+    the post's media.
+    """
+    if f"override_media_panel_{account_id}" not in request.POST:
+        return None
+    ids = normalize_media_ids(request.POST.get(f"override_media_{account_id}", ""))
+    return resolve_media_assets(ids, workspace)
+
+
+# Instagram crops feed images to between 4:5 (portrait) and 1.91:1 (landscape),
+# so the preview shows an image at its own ratio, clamped to that range.
+_IG_FEED_MIN_RATIO = 4 / 5
+_IG_FEED_MAX_RATIO = 1.91
+
+
+def _preview_media_item(asset):
+    """What the preview panel (and the composer's media state) needs for one asset."""
+    item = {
+        "id": str(asset.id),
+        "url": asset.file.url if asset.file else "",
+        "thumb_url": asset.thumbnail.url if asset.thumbnail else (asset.file.url if asset.file else ""),
+        "is_video": asset.is_video,
+        "filename": asset.filename,
+        "width": asset.width or 0,
+        "height": asset.height or 0,
+        "ig_aspect": "",
+    }
+    if not asset.is_video and asset.width and asset.height:
+        ratio = min(max(asset.width / asset.height, _IG_FEED_MIN_RATIO), _IG_FEED_MAX_RATIO)
+        item["ig_aspect"] = f"{ratio:.4f}"
+    return item
+
+
 def _sync_platform_posts(request, post, workspace, initial_status=None):
     """Sync platform post selections from form data.
 
@@ -267,6 +308,13 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
         pp.platform_specific_caption = override_caption if override_caption else None
         pp.platform_specific_first_comment = override_comment if override_comment else None
 
+        # This account's own media (e.g. a 4:5 image for Instagram while
+        # Facebook keeps the post's 1:1). Stored only as ids the workspace may
+        # use; an empty choice clears it so the account uses the post's media.
+        override_assets = _posted_media_override(request, acc_id, workspace)
+        if override_assets is not None:
+            pp.platform_specific_media = [str(asset.id) for asset in override_assets] or None
+
         # Per-platform extras
         if account.platform == "facebook" and f"facebook_panel_{acc_id}" in request.POST:
             # Gated on the panel's hidden marker, which the composer renders for
@@ -280,7 +328,10 @@ def _sync_platform_posts(request, post, workspace, initial_status=None):
             # that sends a text or image post to Facebook's Reel endpoint.
             extra = {**(pp.platform_extra or {})}
             facebook_post_type = request.POST.get(f"facebook_post_type_{acc_id}", "").strip()
-            media_types = list(post.media_attachments.values_list("media_asset__media_type", flat=True)[:2])
+            if pp.has_media_override:
+                media_types = [asset.media_type for asset in pp.effective_media_assets()[:2]]
+            else:
+                media_types = list(post.media_attachments.values_list("media_asset__media_type", flat=True)[:2])
             has_exactly_one_video = media_types == ["video"]
             if facebook_post_type == "reel" and has_exactly_one_video:
                 extra["post_type"] = "reel"
@@ -470,8 +521,24 @@ def _validate_required_media(request, post, workspace, action):
     # Skip the media lookup when no selected platform cares about it.
     if not any(requires_media(account.platform) for account in accounts):
         return None
-    media_types = _composer_media_types(request, post, workspace)
-    blocked = [account for account in accounts if media_blocker(account, media_types=media_types)]
+    post_types = None
+    blocked = []
+    for account in accounts:
+        # An account with its own media is judged on that, not the post's.
+        override_assets = _posted_media_override(request, account.id, workspace)
+        if override_assets:
+            media_types = usable_media_types(override_assets)
+        elif override_assets is None and not post._state.adding:
+            stored = post.platform_posts.filter(social_account=account).first()
+            media_types = platform_post_media_types(stored) if stored and stored.has_media_override else None
+        else:
+            media_types = None
+        if media_types is None:
+            if post_types is None:
+                post_types = _composer_media_types(request, post, workspace)
+            media_types = post_types
+        if media_blocker(account, media_types=media_types):
+            blocked.append(account)
     if not blocked:
         return None
 
@@ -513,6 +580,7 @@ def _save_version(post, user):
                 "title_override": pp.platform_specific_title,
                 "caption_override": pp.platform_specific_caption,
                 "first_comment_override": pp.platform_specific_first_comment,
+                "media_override": pp.media_override_ids,
                 "platform_extra": authored_youtube_settings(pp.platform_extra)
                 if pp.social_account.platform == "youtube"
                 else pp.platform_extra or {},
@@ -822,25 +890,30 @@ def compose(request, workspace_id, post_id=None):
     ]
 
     # Build media_items for the initial preview render
-    media_items = []
-    for att in media_attachments:
-        asset = att.media_asset
-        media_items.append(
-            {
-                "url": asset.file.url if asset.file else "",
-                "is_video": asset.is_video,
-                "filename": asset.filename,
-            }
-        )
+    media_items = [_preview_media_item(att.media_asset) for att in media_attachments]
     if not media_items:
-        for asset in pending_assets:
-            media_items.append(
-                {
-                    "url": asset.file.url if asset.file else "",
-                    "is_video": asset.is_video,
-                    "filename": asset.filename,
-                }
-            )
+        media_items = [_preview_media_item(asset) for asset in pending_assets]
+
+    # Saved per-account overrides, so reopening a post shows them (and a save
+    # keeps them) instead of an empty "Customize" panel that clears them.
+    platform_overrides = {}
+    override_asset_ids = list(dict.fromkeys(aid for pp in platform_post_list for aid in pp.media_override_ids))
+    override_assets_by_id = (
+        {str(a.id): a for a in resolve_media_assets(override_asset_ids, workspace)} if override_asset_ids else {}
+    )
+    for pp in platform_post_list:
+        override_media = [
+            _preview_media_item(override_assets_by_id[aid])
+            for aid in pp.media_override_ids
+            if aid in override_assets_by_id
+        ]
+        if pp.platform_specific_title is None and pp.platform_specific_caption is None and not override_media:
+            continue
+        platform_overrides[str(pp.social_account_id)] = {
+            "title": pp.platform_specific_title or "",
+            "caption": pp.platform_specific_caption or "",
+            "media": override_media,
+        }
 
     # Resolve thumbnail/cover image URLs for per-account assets already saved
     thumb_ids = [
@@ -874,6 +947,7 @@ def compose(request, workspace_id, post_id=None):
         "social_accounts": social_accounts,
         "selected_account_ids": [str(aid) for aid in selected_account_ids],
         "platform_extras": platform_extras,
+        "platform_overrides": platform_overrides,
         "media_attachments": media_attachments,
         "media_items": media_items,
         "char_limits": char_limits,
@@ -1588,13 +1662,31 @@ def preview(request, workspace_id):
     """Live preview endpoint - renders platform-specific preview from form state.
 
     Called via HTMX with debounced POST from the composer.
-    Stateless - no DB queries except social account lookup.
+    Stateless - no DB queries except social account and media lookups.
     """
     workspace = _get_workspace(request, workspace_id)
     title = request.POST.get("title", "")
     caption = request.POST.get("caption", "")
     first_comment = request.POST.get("first_comment", "")
     selected_ids = _parse_selected_account_ids(request.POST.get("selected_accounts", ""))
+
+    # The post's media: its attachments once saved, else the session's pending uploads.
+    media_items = []
+    post_id_str = request.POST.get("_autosave_post_id", "")
+    if post_id_str:
+        try:
+            post_obj = Post.objects.get(id=post_id_str, workspace=workspace)
+            for att in post_obj.media_attachments.select_related("media_asset").all():
+                media_items.append(_preview_media_item(att.media_asset))
+        except (Post.DoesNotExist, ValidationError, ValueError):
+            pass
+
+    if not media_items:
+        session_key = f"pending_media_{workspace.id}"
+        pending_ids = request.session.get(session_key, [])
+        if pending_ids:
+            for asset in MediaAsset.objects.filter(id__in=pending_ids, workspace=workspace):
+                media_items.append(_preview_media_item(asset))
 
     # Build preview data per platform
     previews = []
@@ -1612,6 +1704,7 @@ def preview(request, workspace_id):
             # Counted after escaping, so the badge matches what gets published.
             char_count = account.caption_wire_length(effective_caption)
             field_config = account.field_config
+            override_assets = _posted_media_override(request, account.id, workspace)
             previews.append(
                 {
                     "account": account,
@@ -1625,43 +1718,13 @@ def preview(request, workspace_id):
                     if len(effective_caption) > char_limit
                     else effective_caption,
                     "needs_title": field_config["needs_title"],
+                    # This account's own media when it has some, else the post's.
+                    "media_items": [_preview_media_item(a) for a in override_assets]
+                    if override_assets
+                    else media_items,
+                    "has_media_override": bool(override_assets),
                 }
             )
-
-    # Gather media for preview - check pending session media or post attachments
-    from apps.media_library.models import MediaAsset
-
-    media_items = []
-    post_id_str = request.POST.get("_autosave_post_id", "")
-
-    if post_id_str:
-        try:
-            post_obj = Post.objects.get(id=post_id_str, workspace=workspace)
-            for att in post_obj.media_attachments.select_related("media_asset").all():
-                asset = att.media_asset
-                media_items.append(
-                    {
-                        "url": asset.file.url if asset.file else "",
-                        "is_video": asset.is_video,
-                        "filename": asset.filename,
-                    }
-                )
-        except Post.DoesNotExist:
-            pass
-
-    if not media_items:
-        # Check session pending media
-        session_key = f"pending_media_{workspace.id}"
-        pending_ids = request.session.get(session_key, [])
-        if pending_ids:
-            for asset in MediaAsset.objects.filter(id__in=pending_ids, workspace=workspace):
-                media_items.append(
-                    {
-                        "url": asset.file.url if asset.file else "",
-                        "is_video": asset.is_video,
-                        "filename": asset.filename,
-                    }
-                )
 
     return render(
         request,
@@ -1755,6 +1818,51 @@ def thumbnail_upload(request, workspace_id):
             "filename": asset.filename,
         }
     )
+
+
+@login_required
+@require_GET
+def override_media_picker(request, workspace_id):
+    """Library picker for one account's own media (images, GIFs and videos).
+
+    Selecting an asset dispatches a client-side event; nothing is attached to
+    the post server-side. Offers the same assets as the post's media picker.
+    """
+    workspace = _get_workspace(request, workspace_id)
+    assets = (
+        MediaAsset.objects.for_workspace_with_shared(workspace.id, workspace.organization_id)
+        .filter(media_type__in=[MediaAsset.MediaType.IMAGE, MediaAsset.MediaType.GIF, MediaAsset.MediaType.VIDEO])
+        .order_by("-created_at")[:50]
+    )
+    return render(
+        request,
+        "composer/partials/override_media_picker.html",
+        {"assets": assets, "workspace": workspace},
+    )
+
+
+@login_required
+@require_permission("create_posts")
+@require_POST
+def override_media_upload(request, workspace_id):
+    """Upload an image or video to the library for one account's own media.
+
+    Unlike ``upload_media`` it attaches nothing to the post: the composer adds
+    the returned asset to that account's override. Returns the same item shape
+    the composer's preview uses.
+    """
+    workspace = _get_workspace(request, workspace_id)
+    uploaded_file = request.FILES.get("file")
+    if not uploaded_file:
+        return JsonResponse({"error": "No file provided"}, status=400)
+    if sniff_mime(uploaded_file) not in ALLOWED_MIME_TYPES["image"] + ALLOWED_MIME_TYPES["video"]:
+        return JsonResponse({"error": "Only image and video files can be used here"}, status=400)
+    try:
+        asset = _store_composer_upload(request, workspace, uploaded_file)
+    except _UploadRejectedError as exc:
+        return JsonResponse({"error": str(exc)}, status=exc.status)
+    asset.refresh_from_db()
+    return JsonResponse(_preview_media_item(asset))
 
 
 _RANGE_HEADER_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
