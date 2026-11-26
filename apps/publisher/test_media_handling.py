@@ -46,6 +46,8 @@ def _dispatch_mocks(platform, *, needs_local_media, attachments=(), supported=(P
     platform_post = MagicMock()
     platform_post.social_account = account
     platform_post.post.media_attachments.select_related.return_value.order_by.return_value = list(attachments)
+    # The engine publishes what the row resolves to (its own media, else the post's).
+    platform_post.effective_media_assets.return_value = [pm.media_asset for pm in attachments]
     platform_post.post.tags = []
     platform_post.effective_caption = "hello"
     platform_post.effective_title = None

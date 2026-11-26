@@ -614,7 +614,7 @@
                                   x-html="platformIconSvg(charLimits[accId]?.platform || '')"></span>
                             <span class="text-xs font-semibold text-stone-600" x-text="charLimits[accId]?.name + ' - Pin Settings'"></span>
                         </div>
-                        <p x-show="!hasMediaAttached" class="px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                        <p x-show="!hasMediaAttached && !(overrides[accId] && (overrideMedia[accId] || []).length)" class="px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
                             <span class="font-semibold">Pinterest needs an image or a video.</span>
                             Add one to schedule this post, or deselect the account.
                         </p>
@@ -747,7 +747,7 @@
                             <a :href="charLimits[accId]?.youtube_url || 'https://www.youtube.com/'" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold text-stone-600 underline underline-offset-2">YouTube</a>
                             <span class="text-xs font-semibold text-stone-600" x-text="charLimits[accId]?.name + ' - Video Settings'"></span>
                         </div>
-                        <p x-show="!hasVideoAttached" class="px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                        <p x-show="!hasVideoAttached && !(overrides[accId] && (overrideMedia[accId] || []).some(m => m.is_video))" class="px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
                             <span class="font-semibold">YouTube only publishes videos.</span>
                             Add a video to schedule this post, or deselect the account.
                         </p>
@@ -917,7 +917,7 @@
                             <span class="text-xs font-semibold text-stone-600" x-text="charLimits[accId]?.name + ' - Post Settings'"></span>
                             <span class="ml-auto text-[11px] text-stone-400" x-show="tt?.creator_nickname" x-text="'Posting to @' + (tt?.creator_nickname || '')"></span>
                         </div>
-                        <p x-show="!hasVideoAttached" class="px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                        <p x-show="!hasVideoAttached && !(overrides[accId] && (overrideMedia[accId] || []).some(m => m.is_video))" class="px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
                             <span class="font-semibold">TikTok only publishes videos.</span>
                             Add a video to schedule this post, or deselect the account.
                         </p>
@@ -1155,15 +1155,16 @@
                         <button type="button"
                                 class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-full border transition-all duration-150 cursor-pointer"
                                 :class="overrides[accId] ? 'border-orange-200 bg-orange-50 text-orange-700' : 'border-stone-200 bg-white text-stone-400 hover:text-stone-600 hover:border-stone-300'"
-                                @click="overrides[accId] = !overrides[accId]"
+                                @click="overrides[accId] = !overrides[accId]; triggerPreviewUpdate()"
                                 x-show="!overrides[accId]">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                            <span x-text="'Customize ' + (charLimits[accId]?.platform === 'youtube' ? 'YouTube' : (charLimits[accId]?.platform || ''))"></span>
+                            <span x-text="'Customize ' + platformLabel(charLimits[accId]?.platform)"
+                                  title="Use a different caption or different images/videos for this platform"></span>
                         </button>
                     </template>
                 </div>
 
-                <!-- Platform-specific overrides -->
+                <!-- Platform-specific overrides (text and media) -->
                 <template x-for="accId in selectedAccounts" :key="'override-' + accId">
                     <div class="border border-stone-200 rounded-xl bg-white p-4"
                          x-show="overrides[accId]" x-transition>
@@ -1172,7 +1173,7 @@
                                   :class="'pi-' + (charLimits[accId]?.platform || '')"
                                   x-html="platformIconSvg(charLimits[accId]?.platform || '')"></span>
                             <span class="text-xs font-semibold text-stone-600" x-text="charLimits[accId]?.name + ' - Custom Override'"></span>
-                            <button type="button" class="ml-auto text-xs text-red-400 hover:text-red-500 cursor-pointer" @click="overrides[accId] = false">Remove override</button>
+                            <button type="button" class="ml-auto text-xs text-red-400 hover:text-red-500 cursor-pointer" @click="removeOverride(accId)">Remove override</button>
                         </div>
                         <!-- Title override (only for platforms that need it) -->
                         <template x-if="charLimits[accId]?.needs_title">
@@ -1180,17 +1181,85 @@
                                 <label class="block text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-1"
                                        x-text="(charLimits[accId]?.title_label || 'Title') + ' Override'"></label>
                                 <input type="text" :name="'override_title_' + accId"
+                                       x-init="$el.value = savedOverrides[accId]?.title || ''"
+                                       :disabled="!overrides[accId]"
+                                       @input="debouncedPreviewUpdate()"
                                        class="w-full text-sm px-3 py-2 rounded-lg border border-stone-200 bg-white outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100 transition-all"
                                        :placeholder="'Custom ' + (charLimits[accId]?.title_label || 'title') + '…'"
                                        :maxlength="charLimits[accId]?.title_max_length || 255">
                             </div>
                         </template>
+                        {% comment %}
+                        Disabled while the panel is closed, so a removed override is
+                        not submitted from a hidden field (and a save clears it).
+                        {% endcomment %}
                         <textarea :name="'override_caption_' + accId"
+                                  x-init="$el.value = savedOverrides[accId]?.caption || ''"
+                                  :disabled="!overrides[accId]"
+                                  @input="debouncedPreviewUpdate()"
                                   class="w-full text-sm px-3 py-2 rounded-lg border border-stone-200 bg-white outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100 transition-all resize-none"
                                   style="font-family: system-ui, -apple-system, sans-serif;"
-                                  :placeholder="'Custom ' + (charLimits[accId]?.caption_label || 'caption') + ' for this platform...'"
+                                  :placeholder="'Custom ' + (charLimits[accId]?.caption_label || 'caption') + ' for this platform (leave empty to use the main one)...'"
                                   rows="3"></textarea>
 
+                        <!-- Media override: this account publishes its own images/videos -->
+                        <div class="mt-3 pt-3 border-t border-stone-100">
+                            {% comment %}
+                            The marker is always submitted for a rendered panel, so a
+                            composer save can clear the media while a save from anywhere
+                            else (which has no panel) leaves the stored choice alone.
+                            {% endcomment %}
+                            <input type="hidden" :name="'override_media_panel_' + accId" value="1">
+                            <input type="hidden" :name="'override_media_' + accId"
+                                   :value="(overrideMedia[accId] || []).map(m => m.id).join(',')"
+                                   :disabled="!overrides[accId]">
+                            <div class="flex items-center justify-between mb-1.5">
+                                <label class="block text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Media for this platform</label>
+                                <span class="text-[11px] text-stone-400" x-show="!(overrideMedia[accId] || []).length">Uses the post's media</span>
+                            </div>
+                            <p class="text-[11px] text-stone-400 mb-2" x-show="mediaRatioHint(accId)" x-text="'Recommended: ' + mediaRatioHint(accId)"></p>
+                            <div class="flex flex-wrap items-start gap-2">
+                                <template x-for="(m, idx) in (overrideMedia[accId] || [])" :key="accId + '-om-' + m.id">
+                                    <div class="relative w-20 h-20 rounded-lg overflow-hidden border border-stone-200 bg-stone-100 flex-shrink-0">
+                                        <template x-if="m.is_video && !m.thumb_url">
+                                            <video :src="m.url + '#t=0.5'" class="w-full h-full object-cover" muted preload="metadata"></video>
+                                        </template>
+                                        <template x-if="!m.is_video || m.thumb_url">
+                                            <img :src="m.thumb_url || m.url" class="w-full h-full object-cover" :alt="m.filename">
+                                        </template>
+                                        <span class="absolute bottom-1 left-1 px-1.5 py-px rounded bg-black/60 text-[10px] font-medium text-white tabular-nums"
+                                              x-show="ratioLabel(m)" x-text="ratioLabel(m)"></span>
+                                        <span class="absolute top-1 left-1 w-4 h-4 rounded-full bg-black/55 text-[9px] font-semibold text-white flex items-center justify-center"
+                                              x-show="(overrideMedia[accId] || []).length > 1" x-text="idx + 1"></span>
+                                        <button type="button" @click="removeOverrideMedia(accId, idx)" title="Remove"
+                                                class="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/55 hover:bg-red-500 text-white flex items-center justify-center transition-colors cursor-pointer">
+                                            <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12"/></svg>
+                                        </button>
+                                    </div>
+                                </template>
+                                <button type="button" @click="triggerOverrideMediaUpload(accId)"
+                                        class="w-20 h-20 rounded-lg border-2 border-dashed border-stone-200 bg-stone-50 hover:border-orange-300 hover:bg-orange-50 transition-colors flex flex-col items-center justify-center gap-1 cursor-pointer"
+                                        @dragover.prevent="$el.classList.add('border-orange-400', 'bg-orange-50')"
+                                        @dragleave="$el.classList.remove('border-orange-400', 'bg-orange-50')"
+                                        @drop.prevent="handleOverrideMediaDrop(accId, $event); $el.classList.remove('border-orange-400', 'bg-orange-50')">
+                                    <svg class="w-5 h-5 text-stone-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4v16m8-8H4"/></svg>
+                                    <span class="text-[10px] text-stone-400" x-text="overrideMediaUploading[accId] ? 'Uploading…' : 'Upload'"></span>
+                                </button>
+                            </div>
+                            <input type="file"
+                                   :data-override-upload-for="accId"
+                                   accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm"
+                                   multiple
+                                   class="hidden override-upload-input"
+                                   @change="uploadOverrideMedia(accId, $event)">
+                            <button type="button" @click="openOverrideMediaPicker(accId)"
+                                    class="mt-2 text-xs font-medium text-stone-400 hover:text-orange-600 transition-colors flex items-center gap-1.5 cursor-pointer">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                                Media Library
+                            </button>
+                            <p x-show="mediaRatioWarning(accId)" x-text="mediaRatioWarning(accId)"
+                               class="mt-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800"></p>
+                        </div>
                     </div>
                 </template>
 
@@ -1768,6 +1837,40 @@
     </div>
 
     <!-- ════════════════════════════════════════════════════════════
+         PER-PLATFORM MEDIA PICKER MODAL
+         ════════════════════════════════════════════════════════════ -->
+    <div x-show="showOverrideMediaPicker" x-cloak
+         class="fixed inset-0 z-[60] flex items-center justify-center"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+        <div class="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" @click="showOverrideMediaPicker = false"></div>
+        <div class="relative bg-white rounded-2xl shadow-xl border border-stone-200 w-[calc(100vw-1rem)] sm:w-[640px] mx-2 sm:mx-0 max-h-[85vh] sm:max-h-[70vh] overflow-hidden">
+            <div class="px-4 sm:px-6 py-4 border-b border-stone-100 flex items-center justify-between">
+                <div>
+                    <h2 class="text-base font-semibold text-stone-900"
+                        x-text="'Media for ' + (charLimits[overrideMediaPickerAccId]?.name || 'this platform')"></h2>
+                    <p class="text-xs text-stone-400" x-show="mediaRatioHint(overrideMediaPickerAccId)"
+                       x-text="'Recommended: ' + mediaRatioHint(overrideMediaPickerAccId)"></p>
+                </div>
+                <button @click="showOverrideMediaPicker = false"
+                        class="w-8 h-8 rounded-lg border border-stone-200 text-stone-400 hover:text-stone-600 hover:border-stone-300 flex items-center justify-center transition-all duration-150 cursor-pointer">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="p-4 sm:p-6 overflow-y-auto max-h-[calc(85vh-72px)] sm:max-h-[calc(70vh-72px)]"
+                 x-init="$watch('showOverrideMediaPicker', v => { if (v) htmx.ajax('GET', '{% url "composer:override_media_picker" workspace_id=workspace.id %}', { target: $el, swap: 'innerHTML' }) })">
+                <div class="flex items-center justify-center py-12 text-stone-400">
+                    <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════
          UNSPLASH SEARCH MODAL (only rendered when an API key is configured)
          ════════════════════════════════════════════════════════════ -->
     {% if unsplash_enabled %}
@@ -2041,6 +2144,7 @@
 {{ char_limits|json_script:"composer-char-limits" }}
 {{ platform_extras|json_script:"composer-platform-extras" }}
 {{ media_items|json_script:"composer-media-items" }}
+{{ platform_overrides|json_script:"composer-platform-overrides" }}
 <script nonce="{{ request.csp_nonce }}">
 function composerApp() {
     return {
@@ -2050,6 +2154,13 @@ function composerApp() {
         selectedAccounts: JSON.parse(document.getElementById('composer-selected-accounts').textContent),
         charLimits: JSON.parse(document.getElementById('composer-char-limits').textContent),
         overrides: {},
+        // Saved per-account overrides ({accId: {title, caption, media}}) and
+        // the media each account publishes instead of the post's.
+        savedOverrides: JSON.parse(document.getElementById('composer-platform-overrides').textContent) || {},
+        overrideMedia: {},
+        showOverrideMediaPicker: false,
+        overrideMediaPickerAccId: null,
+        overrideMediaUploading: {},
         advancedOpen: {},
         platformExtras: JSON.parse(document.getElementById('composer-platform-extras').textContent) || {},
         showMediaPicker: false,
@@ -2192,11 +2303,23 @@ function composerApp() {
         },
 
         init() {
-            // Initialize overrides map
+            // Initialize overrides map. A post reopened with saved overrides
+            // shows them, so saving again keeps them rather than clearing them.
             this.selectedAccounts.forEach(id => {
-                this.overrides[id] = false;
+                const saved = this.savedOverrides[id];
+                this.overrides[id] = !!saved;
+                this.overrideMedia[id] = saved ? [...(saved.media || [])] : [];
                 this.advancedOpen[id] = false;
                 if (!this.platformExtras[id]) this.platformExtras[id] = {};
+            });
+
+            // A library pick for one account's own media
+            this.$root.addEventListener('override-media-selected', (e) => {
+                const accId = this.overrideMediaPickerAccId;
+                if (!accId) return;
+                this._addOverrideMedia(accId, e.detail);
+                this.showOverrideMediaPicker = false;
+                this.overrideMediaPickerAccId = null;
             });
 
             // Listen for thumbnail selection events dispatched from the picker
@@ -2263,10 +2386,12 @@ function composerApp() {
             if (idx > -1) {
                 this.selectedAccounts.splice(idx, 1);
                 delete this.overrides[id];
+                delete this.overrideMedia[id];
                 delete this.advancedOpen[id];
             } else {
                 this.selectedAccounts.push(id);
                 this.overrides[id] = false;
+                this.overrideMedia[id] = [];
                 this.advancedOpen[id] = false;
                 if (!this.platformExtras[id]) this.platformExtras[id] = {};
             }
@@ -2285,6 +2410,130 @@ function composerApp() {
 
         triggerPreviewUpdate() {
             document.body.dispatchEvent(new CustomEvent('previewUpdate'));
+        },
+
+        // ── Per-platform overrides ──────────────────────────────────
+        platformLabel(platform) {
+            const labels = {
+                facebook: 'Facebook', instagram: 'Instagram', instagram_login: 'Instagram',
+                threads: 'Threads', linkedin_personal: 'LinkedIn', linkedin_company: 'LinkedIn',
+                linkedin: 'LinkedIn', tiktok: 'TikTok', youtube: 'YouTube', pinterest: 'Pinterest',
+                bluesky: 'Bluesky', mastodon: 'Mastodon', google_business: 'Google Business', devto: 'DEV',
+            };
+            return labels[platform] || platform || '';
+        },
+
+        removeOverride(accId) {
+            this.overrides[accId] = false;
+            this.overrideMedia[accId] = [];
+            this.$nextTick(() => this.triggerPreviewUpdate());
+        },
+
+        openOverrideMediaPicker(accId) {
+            this.overrideMediaPickerAccId = accId;
+            this.showOverrideMediaPicker = true;
+        },
+
+        _addOverrideMedia(accId, item) {
+            if (!item || !item.id) return;
+            const list = this.overrideMedia[accId] || [];
+            if (!list.some(m => m.id === item.id)) list.push(item);
+            this.overrideMedia[accId] = list;
+            this.$nextTick(() => this.triggerPreviewUpdate());
+        },
+
+        removeOverrideMedia(accId, idx) {
+            const list = [...(this.overrideMedia[accId] || [])];
+            list.splice(idx, 1);
+            this.overrideMedia[accId] = list;
+            this.$nextTick(() => this.triggerPreviewUpdate());
+        },
+
+        triggerOverrideMediaUpload(accId) {
+            const input = this.$root.querySelector(
+                `input.override-upload-input[data-override-upload-for="${accId}"]`
+            );
+            if (input) input.click();
+        },
+
+        uploadOverrideMedia(accId, event) {
+            const files = Array.from(event.target.files || []);
+            event.target.value = '';
+            this._uploadOverrideFiles(accId, files);
+        },
+
+        handleOverrideMediaDrop(accId, event) {
+            this._uploadOverrideFiles(accId, Array.from(event.dataTransfer.files || []));
+        },
+
+        async _uploadOverrideFiles(accId, files) {
+            const usable = files.filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'));
+            if (usable.length !== files.length) {
+                this.formError = 'Only images and videos can be used as platform media.';
+                setTimeout(() => { this.formError = ''; }, 4000);
+            }
+            if (!usable.length) return;
+            const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+            this.overrideMediaUploading[accId] = true;
+            try {
+                // One at a time, so the override keeps the order they were picked in.
+                for (const file of usable) {
+                    const fd = new FormData();
+                    fd.append('file', file, file.name);
+                    const resp = await fetch('{% url "composer:override_media_upload" workspace_id=workspace.id %}', {
+                        method: 'POST',
+                        headers: { 'X-CSRFToken': csrf },
+                        body: fd,
+                    });
+                    const data = await resp.json().catch(() => ({}));
+                    if (!resp.ok) {
+                        this.formError = data.error || `Upload of ${file.name} failed.`;
+                        setTimeout(() => { this.formError = ''; }, 5000);
+                        continue;
+                    }
+                    this._addOverrideMedia(accId, data);
+                }
+            } finally {
+                this.overrideMediaUploading[accId] = false;
+            }
+        },
+
+        ratioLabel(m) {
+            if (!m || !m.width || !m.height) return '';
+            const r = m.width / m.height;
+            const known = [[1, '1:1'], [4 / 5, '4:5'], [9 / 16, '9:16'], [16 / 9, '16:9'], [1.91, '1.91:1'],
+                           [2 / 3, '2:3'], [3 / 4, '3:4'], [4 / 3, '4:3'], [3 / 2, '3:2']];
+            for (const [value, label] of known) {
+                if (Math.abs(r - value) / value < 0.02) return label;
+            }
+            return r >= 1 ? `${r.toFixed(2)}:1` : `1:${(1 / r).toFixed(2)}`;
+        },
+
+        mediaRatioHint(accId) {
+            const hints = {
+                instagram: '4:5 portrait (1080×1350) or 1:1 for feed posts; 9:16 video for Reels',
+                instagram_login: '4:5 portrait (1080×1350) or 1:1 for feed posts; 9:16 video for Reels',
+                facebook: '1:1 (1080×1080) or 4:5 for feed images',
+                threads: '4:5 or 1:1',
+                linkedin_personal: '1.91:1 (1200×627) or 1:1',
+                linkedin_company: '1.91:1 (1200×627) or 1:1',
+                pinterest: '2:3 (1000×1500)',
+                tiktok: '9:16 vertical video',
+                youtube: '16:9 video, or 9:16 under 3 minutes for Shorts',
+                bluesky: '16:9 or 1:1',
+                mastodon: '16:9 or 1:1',
+                google_business: '4:3 (1200×900)',
+            };
+            return hints[this.charLimits[accId]?.platform] || '';
+        },
+
+        mediaRatioWarning(accId) {
+            const platform = this.charLimits[accId]?.platform;
+            if (platform !== 'instagram' && platform !== 'instagram_login') return '';
+            const off = (this.overrideMedia[accId] || []).filter(m =>
+                !m.is_video && m.width && m.height && (m.width / m.height < 0.79 || m.width / m.height > 1.92));
+            if (!off.length) return '';
+            return `Instagram feed posts must be between 4:5 and 1.91:1. ${off.map(m => this.ratioLabel(m)).join(', ')} will be rejected or cropped.`;
         },
 
         openThumbnailPicker(accId) {

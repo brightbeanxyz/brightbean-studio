@@ -113,6 +113,8 @@ def _build_dispatch_mocks(platform: str, account_platform_id: str, platform_extr
     platform_post = MagicMock()
     platform_post.social_account = account
     platform_post.post.media_attachments.select_related.return_value.order_by.return_value = []
+    # The engine publishes what the row resolves to (its own media, else the post's).
+    platform_post.effective_media_assets.return_value = []
     platform_post.post.tags = []
     platform_post.effective_caption = "hello"
     platform_post.effective_title = None
@@ -817,6 +819,7 @@ class MediaTypePropagationTest(SimpleTestCase):
             account_platform_id="ig-1",
         )
         platform_post.post.media_attachments.select_related.return_value.order_by.return_value = attachments
+        platform_post.effective_media_assets.return_value = [pm.media_asset for pm in attachments]
         with (
             patch("apps.publisher.engine.get_provider", return_value=mock_provider),
             patch("apps.publisher.engine._resolve_publish_credentials", return_value={}),
